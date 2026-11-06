@@ -2346,9 +2346,8 @@ class BinaryDeserializer
     std::vector<OpenValue> openValues;
     std::vector<StackSlot> openSlots;
 
-    // Keep in sync with lib/text/binary.flow and JSBinflowBuffer.
     // Count every array, struct and ref, including empty containers, but not scalar leaves or the footer.
-    static const unsigned maxNestingDepth = 512;
+    unsigned maxNestingDepth;
 
     bool openValue(OpenValue::Kind kind, unsigned size, unsigned struct_idx, StackSlot &value);
     void storeValue(const OpenValue &frame, const StackSlot &value);
@@ -2360,7 +2359,10 @@ class BinaryDeserializer
     StackSlot damagedInput();
 
 public:
-    BinaryDeserializer(RUNNER_VAR) : RUNNER(RUNNER) {
+    // The default nesting limit; keep in sync with lib/text/binary.flow and JSBinflowBuffer.
+    static const unsigned defaultMaxNestingDepth = 2048;
+
+    BinaryDeserializer(RUNNER_VAR, unsigned maxDepth = defaultMaxNestingDepth) : RUNNER(RUNNER), maxNestingDepth(maxDepth) {
         //
     }
 
@@ -2955,11 +2957,9 @@ StackSlot ByteCodeRunner::fromBinary2(RUNNER_ARGS)
     return fromBinary(RUNNER, new_args);
 }
 
-StackSlot ByteCodeRunner::fromBinary(RUNNER_ARGS)
+static StackSlot deserializeBinary(RUNNER_VAR, const StackSlot &value, const StackSlot &defval, const StackSlot &fixups, unsigned maxDepth)
 {
-    RUNNER_PopArgs3(value, defval, fixups);
-
-    BinaryDeserializer worker(RUNNER);
+    BinaryDeserializer worker(RUNNER, maxDepth);
 
 #ifdef DEBUG_FLOW
     double start_time = GetCurrentTime();
@@ -2972,6 +2972,20 @@ StackSlot ByteCodeRunner::fromBinary(RUNNER_ARGS)
 #endif
 
     return rv;
+}
+
+StackSlot ByteCodeRunner::fromBinary(RUNNER_ARGS)
+{
+    RUNNER_PopArgs3(value, defval, fixups);
+    return deserializeBinary(RUNNER, value, defval, fixups, BinaryDeserializer::defaultMaxNestingDepth);
+}
+
+// A negative depth allows only a scalar value
+StackSlot ByteCodeRunner::fromBinaryWithDepth(RUNNER_ARGS)
+{
+    RUNNER_PopArgs4(value, defval, fixups, depth);
+    RUNNER_CheckTag(TInt, depth);
+    return deserializeBinary(RUNNER, value, defval, fixups, depth.GetInt() < 0 ? 0 : unsigned(depth.GetInt()));
 }
 
 // Read 8 bytes of the string in UTF-16 and converts to a double

@@ -1,10 +1,12 @@
 import text/binary;
+import dynamic;
 import math/bits;
 import math/math;
 import sys/target;
 
 // Tests of deserializeBinary (lib/text/binary.flow): values built by toBinary round-trip unchanged,
-// nesting up to 512 containers decodes and can be printed/written again, and input that is too deep,
+// nesting up to 2048 containers decodes and can be printed/written again, deserializeBinary3 takes
+// another limit, and input that is too deep,
 // cut short, declares too many elements, has a footer of the wrong shape or a footer offset outside
 // the input yields the default value. Other damaged inputs are checked only on the Flow fallback.
 
@@ -20,6 +22,9 @@ BinTestEmpty();
 
 failures : ref int = ref 0;
 defaultValue = flow(BinTestDefault());
+
+// The default nesting limit of deserializeBinary and deserializeBinary2
+limit = 2048;
 
 failed(name : string, detail : string) -> void {
 	failures := ^failures + 1;
@@ -136,20 +141,22 @@ testRoundTrips() -> void {
 	checkRoundTrip("long array", flow(generate(0, 70000, \i -> i)));
 	checkRoundTrip("struct", sampleLeaf);
 	checkRoundTrip("zero-field struct", flow(BinTestEmpty()));
-	checkRoundTrip("arrays nested 512 deep", nestedArrays(512, flow(1)));
-	checkRoundTrip("refs nested 512 deep", nestedRefs(512, flow(1)));
-	checkRoundTrip("structs nested 512 deep", nestedStructs(512, flow(1)));
+	checkRoundTrip("arrays nested " + i2s(limit) + " deep", nestedArrays(limit, flow(1)));
+	checkRoundTrip("refs nested " + i2s(limit) + " deep", nestedRefs(limit, flow(1)));
+	checkRoundTrip("structs nested " + i2s(limit) + " deep", nestedStructs(limit, flow(1)));
 	checkRoundTrip("ref", flow(ref 5));
 	checkRoundTrip("nested value", sampleNode);
-	checkRoundTrip("nodes nested 256 deep (512 containers)", nestedNodes(256, flow(1)));
-	checkRoundTrip("siblings each use their own depth", flow([nestedArrays(511, flow(1)), nestedRefs(511, flow(1)), nestedStructs(511, flow(1))]));
+	checkRoundTrip("nodes nested " + i2s(limit / 2) + " deep (" + i2s(limit) + " containers)", nestedNodes(limit / 2, flow(1)));
+	checkRoundTrip("siblings each use their own depth", flow([nestedArrays(limit - 1, flow(1)), nestedRefs(limit - 1, flow(1)), nestedStructs(limit - 1, flow(1))]));
+	// Each link of a List is a struct, and so is its EmptyList: a List of 2047 is as deep as the limit allows
+	checkRoundTrip("a List of " + i2s(limit - 1), flow(fold(enumFromTo(1, limit - 1), makeList(), \acc, i -> Cons(i, acc))));
 }
 
-// BinTestChain, 510 Cons structs and EmptyList together use exactly 512 containers.
-// Longer linked lists now need a shallower representation, such as an array, to be decoded.
+// BinTestChain, 2046 Cons structs and EmptyList together use exactly 2048 containers.
+// Longer linked lists need deserializeBinary3, or a shallower representation such as an array.
 testChainDecoding() -> void {
-	name = "a struct holding a List of 510 decodes";
-	items = enumFromTo(1, 510);
+	name = "a struct holding a List of " + i2s(limit - 2) + " decodes";
+	items = enumFromTo(1, limit - 2);
 	// Struct tags 0xFFF4 with the footer indexes of BinTestChain, Cons and EmptyList
 	body = words2s(concat3([0xFFF4, 0], concatA(map(items, \i -> [0xFFF4, 1, i])), [0xFFF4, 2]));
 	footer = words2s(concat([0xFFF8, 3], concat3(structDef(1, "BinTestChain"), structDef(2, "Cons"), structDef(0, "EmptyList"))));
@@ -161,7 +168,7 @@ testChainDecoding() -> void {
 	} else {
 		failed(name, "actual: " + strLeft(toString(decoded), 200));
 	}
-	iter([511, 3000], \count -> {
+	iter([limit - 1, 3000], \count -> {
 		longerBody = words2s(concat3([0xFFF4, 0], concatA(map(enumFromTo(1, count), \i -> [0xFFF4, 1, i])), [0xFFF4, 2]));
 		checkDamaged("a struct holding a List of " + i2s(count), assemble(longerBody, footer));
 	});
@@ -176,57 +183,83 @@ testNestingLimit() -> void {
 	emptyFooter = fromCharCode(0xFFF7);
 	boxFooter = words2s(concat([0xFFF8, 1], structDef(1, "BinTestBox")));
 	emptyStructFooter = words2s(concat([0xFFF8, 1], structDef(0, "BinTestEmpty")));
-	iter([511, 512, 513], \depth -> {
+	iter([limit - 1, limit, limit + 1], \depth -> {
 		iter([[0xFFF8, 1], [0xFFF9, 1, 0]], \prefix -> {
 			input = assemble(nestedBody(prefix, depth, [5]), emptyFooter);
 			name = "array nesting " + i2s(depth) + " tag " + i2s(prefix[0]);
-			if (depth <= 512) checkDecoded(name, input, nestedArrays(depth, flow(5)))
+			if (depth <= limit) checkDecoded(name, input, nestedArrays(depth, flow(5)))
 			else checkDamaged(name, input);
 		});
 		refs = assemble(nestedBody([0xFFF6], depth, [5]), emptyFooter);
 		structs = assemble(nestedBody([0xFFF4, 0], depth, [5]), boxFooter);
-		if (depth <= 512) {
+		if (depth <= limit) {
 			checkDecoded("ref nesting " + i2s(depth), refs, nestedRefs(depth, flow(5)));
 			checkDecoded("struct nesting " + i2s(depth), structs, nestedStructs(depth, flow(5)));
 		} else {
-			checkDamaged("ref nesting 513", refs);
-			checkDamaged("struct nesting 513", structs);
+			checkDamaged("ref nesting " + i2s(depth), refs);
+			checkDamaged("struct nesting " + i2s(depth), structs);
 		}
 	});
 	// Empty containers still add one level, although they do not leave an open frame
-	iter([511, 512], \depth -> {
+	iter([limit - 1, limit], \depth -> {
 		iter([[0xFFF7], [0xFFF8, 0], [0xFFF9, 0, 0]], \leaf -> {
 			input = assemble(nestedBody([0xFFF6], depth, leaf), emptyFooter);
 			empty : [flow] = [];
-			if (depth == 511) checkDecoded("empty array at 512 tag " + i2s(leaf[0]), input, nestedRefs(depth, flow(empty)))
-			else checkDamaged("empty array at 513 tag " + i2s(leaf[0]), input);
+			name = "empty array at " + i2s(depth + 1) + " tag " + i2s(leaf[0]);
+			if (depth < limit) checkDecoded(name, input, nestedRefs(depth, flow(empty)))
+			else checkDamaged(name, input);
 		});
 		input = assemble(nestedBody([0xFFF8, 1], depth, [0xFFF4, 0]), emptyStructFooter);
-		if (depth == 511) checkDecoded("empty struct at 512", input, nestedArrays(depth, flow(BinTestEmpty())))
-		else checkDamaged("empty struct at 513", input);
+		name = "empty struct at " + i2s(depth + 1);
+		if (depth < limit) checkDecoded(name, input, nestedArrays(depth, flow(BinTestEmpty())))
+		else checkDamaged(name, input);
 	});
 	// Scalar leaves do not count, and mixed container kinds share one budget
 	iter([flow(5), flow(123456789), flow(3.25), flow(true), flow(false), flow("s"), flow("")], \leaf -> {
-		checkRoundTrip("scalar below 512 containers", nestedArrays(512, leaf));
+		checkRoundTrip("scalar below " + i2s(limit) + " containers", nestedArrays(limit, leaf));
 	});
-	checkRoundTrip("mixed nesting 512", nestedArrays(170, nestedRefs(171, nestedStructs(171, flow(5)))));
-	checkDamaged("mixed nesting 513", toBinary(nestedArrays(171, nestedRefs(171, nestedStructs(171, flow(5))))));
+	third = limit / 3;
+	checkRoundTrip("mixed nesting " + i2s(limit), nestedArrays(limit - 2 * (third + 1), nestedRefs(third + 1, nestedStructs(third + 1, flow(5)))));
+	checkDamaged("mixed nesting " + i2s(limit + 1), toBinary(nestedArrays(limit + 1 - 2 * (third + 1), nestedRefs(third + 1, nestedStructs(third + 1, flow(5))))));
 	// No struct constructor fixup runs on a chain rejected before its innermost value
 	calls = ref 0;
 	fixups = setTree(makeTree(), "BinTestBox", \args -> {
 		calls := ^calls + 1;
 		flow(BinTestBox(args[0]));
 	});
-	accepted = assemble(nestedBody([0xFFF4, 0], 512, [5]), boxFooter);
-	check("fixups at depth 512", deserializeBinary2(accepted, fixups, defaultValue), nestedStructs(512, flow(5)));
-	check("512 fixup calls", flow(^calls), flow(512));
+	accepted = assemble(nestedBody([0xFFF4, 0], limit, [5]), boxFooter);
+	check("fixups at depth " + i2s(limit), deserializeBinary2(accepted, fixups, defaultValue), nestedStructs(limit, flow(5)));
+	check(i2s(limit) + " fixup calls", flow(^calls), flow(limit));
 	calls := 0;
-	rejected = assemble(nestedBody([0xFFF4, 0], 513, [5]), boxFooter);
-	check("fixups at depth 513", deserializeBinary2(rejected, fixups, defaultValue), defaultValue);
+	rejected = assemble(nestedBody([0xFFF4, 0], limit + 1, [5]), boxFooter);
+	check("fixups at depth " + i2s(limit + 1), deserializeBinary2(rejected, fixups, defaultValue), defaultValue);
 	check("no rejected fixup calls", flow(^calls), flow(0));
 	// Former unbounded-depth cases now exercise prompt default handling instead
 	checkDamaged("arrays nested 100000 deep", assemble(nestedBody([0xFFF8, 1], 100000, [5]), emptyFooter));
 	checkDamaged("refs nested 100000 deep", assemble(nestedBody([0xFFF6], 100000, [5]), emptyFooter));
+}
+
+// How many arrays of one element are nested around v; a loop, as a value this deep cannot be printed
+arrayDepth(v : flow, depth : int) -> int {
+	if (isArray(v) && length(cast(v : flow -> [flow])) == 1) arrayDepth(cast(v : flow -> [flow])[0], depth + 1) else depth;
+}
+
+testCustomLimit() -> void {
+	emptyFooter = fromCharCode(0xFFF7);
+	noFixups : Tree<string, ([flow]) -> flow> = makeTree();
+	// A lower limit
+	iter([10, 11], \depth -> {
+		input = assemble(nestedBody([0xFFF8, 1], depth, [5]), emptyFooter);
+		expected = if (depth <= 10) nestedArrays(depth, flow(5)) else defaultValue;
+		check("arrays nested " + i2s(depth) + " deep with limit 10", deserializeBinary3(input, noFixups, defaultValue, 10), expected);
+	});
+	check("a scalar with limit 0", deserializeBinary3(toBinary(flow(5)), noFixups, defaultValue, 0), flow(5));
+	empty : [flow] = [];
+	check("an empty array with limit 0", deserializeBinary3(toBinary(flow(empty)), noFixups, defaultValue, 0), defaultValue);
+	// A higher limit, as a compiler reading its own cache passes
+	deep = 100000;
+	decoded = deserializeBinary3(assemble(nestedBody([0xFFF8, 1], deep, [5]), emptyFooter), noFixups, defaultValue, 1000000);
+	check("arrays nested " + i2s(deep) + " deep with limit 1000000", flow(arrayDepth(decoded, 0)), flow(deep));
 }
 
 testMoreElementsThanInput() -> void {
@@ -319,6 +352,7 @@ main() {
 	testRoundTrips();
 	testChainDecoding();
 	testNestingLimit();
+	testCustomLimit();
 	if (usesFlowFallback()) {
 		testDamagedInputs();
 	} else {

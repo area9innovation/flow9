@@ -65,9 +65,10 @@ class JSBinflowBuffer {
 	private static inline var arrayFrame = 0;
 	private static inline var structFrame = 1;
 	private static inline var refFrame = 2;
-	// Keep in sync with lib/text/binary.flow and the C++ BinaryDeserializer.
+	// The default nesting limit; keep in sync with lib/text/binary.flow and the C++ BinaryDeserializer.
 	// Arrays, structs (even empty ones) and refs count; scalar leaves and the footer do not.
-	private static inline var maxNestingDepth = 512;
+	public static inline var defaultMaxNestingDepth = 2048;
+	private var maxNestingDepth : Int = defaultMaxNestingDepth;
 
 	// A result index below zero marks damaged input: the whole value becomes the default
 	private static inline var damagedBinaryIndex = -1;
@@ -266,11 +267,12 @@ class JSBinflowBuffer {
 	private var DefValue : Dynamic;
 	private var Fixups : Dynamic;
 	private var endIndex : Int;
-	public function deserialise(defvalue : Dynamic, fixups : Dynamic) : Dynamic {
+	public function deserialise(defvalue : Dynamic, fixups : Dynamic, maxDepth : Int = defaultMaxNestingDepth) : Dynamic {
 		if (FlowIllegalStruct == null) FlowIllegalStruct = Native.makeStructValue("IllegalStruct", [], null);
 
 		DefValue = defvalue;
 		Fixups = fixups;
+		maxNestingDepth = maxDepth;
 		// Another call may bring other fixups and another footer
 		StructDefs = [];
 		StructFixupCache = new Map();

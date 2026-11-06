@@ -1348,6 +1348,7 @@ private:
     static StackSlot toBinary(ByteCodeRunner*,StackSlot*);
     static StackSlot fromBinary(ByteCodeRunner*,StackSlot*);
     static StackSlot fromBinary2(ByteCodeRunner*,StackSlot*);
+    static StackSlot fromBinaryWithDepth(ByteCodeRunner*,StackSlot*);
     static StackSlot stringbytes2double(ByteCodeRunner*,StackSlot*);
     static StackSlot stringbytes2int(ByteCodeRunner*,StackSlot*);
     static StackSlot getCurrentDate(ByteCodeRunner*,StackSlot*);

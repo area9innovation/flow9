@@ -15,13 +15,15 @@ export {
 	// Also, make sure that when you save a binary file using flow, use setFileContentUTF16.
 	// You have to use httpRequest to retrieve it (and not downloadfile), and the BOM marker from
 	// the server will make our end understand that it is UCS-2 (camouflaged as UTF-16).
-	// Binary readers accept at most 512 nested containers in the encoded value: arrays, structs
-	// and refs each count once, including empty arrays and zero-field structs. Scalars add no depth;
-	// the footer is separate. Deeper input is damaged and returns default_, even if toBinary wrote it.
-	// This keeps decoded values within the recursive writers' and printers' supported nesting range.
+	// Binary readers accept at most 2048 nested containers in the encoded value: arrays, structs
+	// and refs each count once, including empty arrays and zero-field structs, and so does each
+	// link of a List. Scalars add no depth; the footer is separate. Deeper input is damaged and
+	// returns default_, even if toBinary wrote it. toString, toBinary and == recurse, and with
+	// default stack sizes they overflow on Java and JS from about 3000 levels; the limit keeps
+	// decoded values below that. Use deserializeBinary3 for a different limit.
 	// Runtime errors during the decode are handled as in deserializeBinary2.
 	deserializeBinary(value : string, default_ : flow) -> flow;
-	// The same encoded-input limit applies before fixups; fixups remain responsible for their results.
+	// The same limit applies before fixups; fixups remain responsible for their results.
 	// Fixups receive the original fields, including older schemas, so check their count and
 	// types before a cast. Fixup results are not schema-checked. On Java and JS, a runtime
 	// error during the decode, in a fixup or elsewhere, is printed and the whole decode
@@ -29,12 +31,22 @@ export {
 	// overflow only, not other JVM errors such as running out of memory. Other runtimes
 	// retain their normal runtime-error handling.
 	deserializeBinary2(value : string, structFixups : Tree<string, (args : [flow]) -> flow>, default_ : flow) -> flow;
+	// As deserializeBinary2, with at most maxDepth nested containers instead of 2048. A reader
+	// with a larger stack, such as a compiler reading its own cache, can pass more. Runtimes
+	// without the fromBinaryWithDepth native use their fromBinary, with its own limit, if any.
+	deserializeBinary3(value : string, structFixups : Tree<string, (args : [flow]) -> flow>, default_ : flow, maxDepth : int) -> flow;
 	native toBinary : (value : flow) -> string = Native.toBinary;
 	native stringbytes2double : (str : string) -> double = Native.stringbytes2double;
 	native stringbytes2int : (str : string) -> int = Native.stringbytes2int;
 }
 
 native fromBinary : (s : string, default_ : flow, fixups : (string)->Maybe<([flow])->flow>) -> flow = Native.fromBinary;
+
+// The value, or s itself when the runtime has no decoder of its own for it
+native fromBinaryWithDepth : (s : string, default_ : flow, fixups : (string)->Maybe<([flow])->flow>, maxDepth : int) -> flow = Native.fromBinaryWithDepth;
+fromBinaryWithDepth(s, default_, fixups, __) {
+	fromBinary(s, default_, fixups);
+}
 
 // fn's result, or onError's result with the error's text if fn raised a runtime error.
 // Only Java and JS can catch one; flow itself has no exception handler. A fail() is not caught.
@@ -48,11 +60,15 @@ deserializeBinary(s, default_) {
 }
 
 deserializeBinary2(s, structFixups, default_) {
+	deserializeBinary3(s, structFixups, default_, binaryMaxNestingDepth);
+}
+
+deserializeBinary3(s, structFixups, default_, maxDepth) {
 	// One guard for the native decoder and the flow one
 	catchDecodeError(\ -> {
-		rv = fromBinary(s, default_, \name -> lookupTree(structFixups, name));
+		rv = fromBinaryWithDepth(s, default_, \name -> lookupTree(structFixups, name), maxDepth);
 		if (rv == flow(s)) { // Not implemented
-			deserializeBinaryFlow(s, structFixups, default_);
+			deserializeBinaryFlow(s, structFixups, default_, maxDepth);
 		} else {
 			rv;
 		}
@@ -62,8 +78,9 @@ deserializeBinary2(s, structFixups, default_) {
 	});
 }
 
-// The input up to the end of the value being read, and the struct definitions its footer declares
-BinaryInput(s : string, endIndex : int, structDefs : [BinaryStructDef]);
+// The input up to the end of the value being read, the struct definitions its footer declares,
+// and how many containers may be open at once
+BinaryInput(s : string, endIndex : int, structDefs : [BinaryStructDef], maxDepth : int);
 BinaryStructDef(arity : int, name : string, fixup : Maybe<([flow]) -> flow>);
 
 // A value still being read around the current one, linked to the one around it. The elements of the
@@ -79,9 +96,9 @@ damagedBinaryIndex = -1;
 damagedBinaryInt = Pair(0, damagedBinaryIndex);
 damagedBinaryString = Pair("", damagedBinaryIndex);
 
-// Keep in sync with JSBinflowBuffer and the C++ BinaryDeserializer. As with JSON's limit,
-// count containers, not scalar leaves; refs also recurse in binary writers and value printers.
-binaryMaxNestingDepth = 512;
+// The default nesting limit; keep in sync with JSBinflowBuffer and the C++ BinaryDeserializer.
+// Count containers, not scalar leaves; refs also recurse in binary writers and value printers.
+binaryMaxNestingDepth = 2048;
 
 damagedBinary(default_ : flow) -> Pair<flow, int> {
 	Pair(default_, damagedBinaryIndex);
@@ -110,18 +127,18 @@ getFooterOffset(s : string) -> Pair<int, int> {
 	}
 }
 
-deserializeBinaryFlow(s : string, structFixups : Tree<string, ([flow]) -> flow>, default_ : flow) -> flow {
+deserializeBinaryFlow(s : string, structFixups : Tree<string, ([flow]) -> flow>, default_ : flow, maxDepth : int) -> flow {
 	footer = getFooterOffset(s);
 	footerOffset = footer.first;
 	bodyStart = footer.second;
 	// The footer lies after the header words and holds at least one word
 	defs = if (bodyStart < footerOffset && footerOffset < strlen(s)) {
-		readBinaryFooter(BinaryInput(s, strlen(s), []), footerOffset, structFixups);
+		readBinaryFooter(BinaryInput(s, strlen(s), [], maxDepth), footerOffset, structFixups);
 	} else {
 		None();
 	}
 	r = switch (defs) {
-		Some(structDefs): readBinary(BinaryInput(s, footerOffset, structDefs), bodyStart, BinaryNoFrame(), 0, 0, makeList(), false, default_, default_);
+		Some(structDefs): readBinary(BinaryInput(s, footerOffset, structDefs, maxDepth), bodyStart, BinaryNoFrame(), 0, 0, makeList(), false, default_, default_);
 		None(): damagedBinary(default_);
 	}
 	if (isDamagedBinary(r)) {
@@ -258,7 +275,7 @@ readBinary(input : BinaryInput, index : int, frames : BinaryFrame, depth : int, 
 			readBinary(input, ni, frames, depth, remaining, elements, true, flow(word), default_);
 		} else if (word == 0xFFF4) {
 			// A struct: the next word is its index in the footer, then its fields, each of at least one word
-			if (depth >= binaryMaxNestingDepth || ni >= end) {
+			if (depth >= input.maxDepth || ni >= end) {
 				damagedBinary(default_);
 			} else {
 				structIndex = getCharCodeAt(s, ni);
@@ -290,7 +307,7 @@ readBinary(input : BinaryInput, index : int, frames : BinaryFrame, depth : int, 
 			if (end - ni < 2) damagedBinary(default_)
 			else readBinary(input, ni + 2, frames, depth, remaining, elements, true, flow(stringbytes2int(substring(s, ni, 2))), default_);
 		} else if (word == 0xFFF6) {
-			if (depth >= binaryMaxNestingDepth) damagedBinary(default_)
+			if (depth >= input.maxDepth) damagedBinary(default_)
 			else readBinary(input, ni, BinaryRefFrame(frames), depth + 1, remaining, elements, false, default_, default_);
 		} else if (word == 0xFFF7 || word == 0xFFF8 || word == 0xFFF9) {
 			// An array: no elements, a count in the next word, or a count in an int; each element takes at least one word
@@ -298,7 +315,7 @@ readBinary(input : BinaryInput, index : int, frames : BinaryFrame, depth : int, 
 				else if (word == 0xFFF8) { if (ni >= end) -1 else getCharCodeAt(s, ni) }
 				else { if (end - ni < 2) -1 else stringbytes2int(substring(s, ni, 2)) };
 			start = if (word == 0xFFF7) ni else if (word == 0xFFF8) ni + 1 else ni + 2;
-			if (depth >= binaryMaxNestingDepth || count < 0 || count > end - start) {
+			if (depth >= input.maxDepth || count < 0 || count > end - start) {
 				damagedBinary(default_);
 			} else if (count == 0) {
 				empty : [flow] = [];
