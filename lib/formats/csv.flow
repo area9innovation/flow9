@@ -170,9 +170,10 @@ CSVSeparatorInfo(
 // Detect the most likely separator and column structure
 detectCsvSeparator(s : string) -> CSVSeparatorInfo {
 	sampleText = strLeft(s, 2000);
+	cut = strlen(s) > strlen(sampleText);
 	counts = map([",", ";", "\t"], \sep -> {
 		if (strCountOf(sampleText, sep) > 0) {
-			bestRowInfo = getBestRowCount(sampleText, sep);
+			bestRowInfo = getBestRowCount(sampleText, sep, cut);
 			Triple(bestRowInfo.rowCount, sep, bestRowInfo.columnCount)
 		} else {
 			Triple(0, sep, 0)
@@ -197,10 +198,11 @@ CSVBestRowInfo(
 );
 
 // Determine the most common column count and how many rows have it
-getBestRowCount(content : string, sep : string) -> CSVBestRowInfo {
+// cut: content is the start of a longer text, so its last quoted cell may be unclosed
+getBestRowCount(content : string, sep : string, cut : bool) -> CSVBestRowInfo {
 	// Calculate how many columns we'll have in each row
 	// Ignore rows with only one column in them, it means the delimiter is simply not there
-	columnCounts = filtermap(scanCsvRecords(content, sep, true), \row -> {
+	columnCounts = filtermap(doScanCsvRecords(content, sep, true, cut), \row -> {
 		columnCount = length(row);
 		if (columnCount == 1) None() else Some(columnCount);
 	});
@@ -223,10 +225,16 @@ parseCsvLineWithQuotedSeparators(s: string, sep: string) -> [string] {
 // The text stays fixed throughout the scan. Fields and rows are accumulated in
 // reverse lists and converted once, rather than copying the remaining input or
 // growing arrays at every separator. For a fixed separator the work is O(n).
-CsvScanInput(text : string, separator : string, size : int, separatorSize : int, records : bool);
+// cut: the text is the start of a longer one, as in separator detection, so a
+// quoted cell left open at its end runs to that end instead of being literal.
+CsvScanInput(text : string, separator : string, size : int, separatorSize : int, records : bool, cut : bool);
 
 scanCsvRecords(s : string, sep : string, records : bool) -> [[string]] {
-	input = CsvScanInput(s, sep, strlen(s), strlen(sep), records);
+	doScanCsvRecords(s, sep, records, false);
+}
+
+doScanCsvRecords(s : string, sep : string, records : bool, cut : bool) -> [[string]] {
+	input = CsvScanInput(s, sep, strlen(s), strlen(sep), records, cut);
 	scanCsvRecordsAt(input, 0, 0, 0, -1, -1, false, makeList(), makeList());
 }
 
@@ -273,7 +281,8 @@ scanCsvRecordsAt(input : CsvScanInput, pos : int, start : int, rowStart : int,
 			// Jump over a quoted span, including its line breaks and separators.
 			// The next span starts after this one, so these searches never overlap.
 			// Doubled quotes close one span and open the next. An unmatched final
-			// quote remains literal, as in the previous permissive line reader.
+			// quote remains literal, as in the previous permissive line reader,
+			// unless it opens a quoted cell that the cut text ends inside.
 			newFirst = if (firstQuote < 0) pos else firstQuote;
 			// Spaces before the opening quote are allowed, as parseCsvFile trims them
 			newQuoted = if (firstQuote < 0) csvBlank(input, start, pos)
@@ -282,7 +291,8 @@ scanCsvRecordsAt(input : CsvScanInput, pos : int, start : int, rowStart : int,
 			newSecond = if (firstQuote < 0) close else secondQuote;
 			// Unlike parseCsvData, the line API permits quote-containing separators.
 			// A match at either quote boundary is outside the quoted span.
-			next = if (close < 0) pos + 1 else if (csvSeparatorAt(input, close)) close else close + 1;
+			next = if (close < 0) { if (newQuoted && input.cut) input.size else pos + 1 }
+				else if (csvSeparatorAt(input, close)) close else close + 1;
 			scanCsvRecordsAt(input, next, start, rowStart,
 				newFirst, newSecond, newQuoted, cells, rows);
 		} else {
@@ -349,12 +359,15 @@ makeCsvFileSep(rows : [[string]], sep: string) -> string {
 
 // Parse CSV file with automatic separator detection
 parseCsvFile(content : string, onlyRectangular : bool) -> [[string]] {
-	sepInfo = detectCsvSeparator(content);
+	// Drop the BOM that makeCsvFile writes, or the first cell would keep it
+	bom = fromCharCode(0xFEFF);
+	text = if (startsWith(content, bom)) strRight(content, 1) else content;
+	sepInfo = detectCsvSeparator(text);
 
 	// Handle line endings
 	newline = fromCharCode(10);
 	carriageReturn = fromCharCode(13);
-	trimmedContent = trim2(trim2(content, newline), carriageReturn);
+	trimmedContent = trim2(trim2(text, newline), carriageReturn);
 
 	// Parse into rows
 	parsedRows = if (strContains(trimmedContent, newline) || strContains(trimmedContent, carriageReturn)) {
