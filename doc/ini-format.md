@@ -47,9 +47,11 @@ In marked documents:
   only spaces or tabs between, as in `"key" = value`. Embedded quotes are
   doubled. Empty names, literal line breaks, and delimiters are allowed inside
   quoted names. Backslashes remain literal.
-- Names not starting with a quote use the legacy rules, except that an unquoted
-  key ends at its line: a line with no `=` before its end is skipped, rather
-  than joined to the next line. Values are unchanged.
+- Names not starting with a quote use the legacy rules, except that they end at
+  their line. A key line with no `=` before its end is skipped, rather than
+  joined to the next line. A header with no `]` before its line end is dropped
+  with the rest of its line and its keys, rather than taking later lines into
+  its name. Values are unchanged.
 - A quoted name whose closing quote is not followed by its delimiter is
   malformed. A malformed key is dropped with the rest of its line, unless a `[`
   on that line starts a section. A malformed section header is dropped together
