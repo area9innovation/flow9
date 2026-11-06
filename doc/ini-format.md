@@ -51,10 +51,10 @@ In marked documents:
 - A quoted name whose closing quote is not followed by its delimiter is skipped
   with the rest of its line, and parsing goes on with the next line. Such a
   section header is dropped together with its keys; such a key is dropped.
-- A quoted name whose closing quote never comes, or that reaches the end of the
-  input before its delimiter, stops parsing rather than reading its contents
-  again as keys or sections. Such a section is retained with its collected name
-  and no keys; such a key is not retained.
+- A quoted name whose closing quote never comes, or that is followed only by
+  spaces or tabs up to the end of the input, stops parsing rather than reading
+  its contents again as keys or sections. Such a section is retained with its
+  collected name and no keys; such a key is not retained.
 - `parseIniFile` does not report syntax errors.
 
 ## Serializer policy and interoperability
