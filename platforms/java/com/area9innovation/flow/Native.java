@@ -8,7 +8,6 @@ import java.io.*;
 import java.lang.*;
 import java.lang.reflect.*;
 import java.math.BigInteger;
-import java.net.URLDecoder;
 import java.nio.charset.*;
 import java.nio.file.*;
 import java.security.*;
@@ -2307,14 +2306,87 @@ public class Native extends NativeHost {
 		};
 	}
 
+	// The same as the flow urlDecode2 in lib/formats/html/html.flow: '+' is a space, a '%' that
+	// does not start an escape stays as it is, and bytes that are not UTF-8 give U+FFFD.
 	public static final String urlDecode(String s) {
-		try {
-			return URLDecoder.decode(s, "UTF-8");
-		} catch (UnsupportedEncodingException | IllegalArgumentException e) {
-			System.out.println(e.toString());
-			e.printStackTrace();
-			return "";
+		int n = s.length();
+		StringBuilder sb = new StringBuilder(n);
+		int i = 0;
+		while (i < n) {
+			char c = s.charAt(i);
+			int b = urlPercentByte(s, i);
+			if (c == '+') {
+				sb.append(' ');
+				i++;
+			} else if (b == -1) {
+				sb.append(c);
+				i++;
+			} else if (b < 0x80) {
+				sb.append((char) b);
+				i += 3;
+			} else {
+				i = urlDecodeUtf8(s, i + 3, b, sb);
+			}
 		}
+		return sb.toString();
+	}
+
+	// The byte of the escape %XX at 'at', or -1 if there is none
+	private static final int urlPercentByte(String s, int at) {
+		if (at + 2 < s.length() && s.charAt(at) == '%') {
+			int hi = hexDigitValue(s.charAt(at + 1));
+			int lo = hexDigitValue(s.charAt(at + 2));
+			return (hi == -1 || lo == -1) ? -1 : hi * 16 + lo;
+		} else {
+			return -1;
+		}
+	}
+
+	private static final int hexDigitValue(char c) {
+		if ('0' <= c && c <= '9') return c - '0';
+		if ('A' <= c && c <= 'F') return c - 'A' + 10;
+		if ('a' <= c && c <= 'f') return c - 'a' + 10;
+		return -1;
+	}
+
+	// Appends the character from the lead byte and the escapes from 'at' on, and returns where
+	// to go on. A byte that does not fit gives U+FFFD and is read again.
+	private static final int urlDecodeUtf8(String s, int at, int lead, StringBuilder sb) {
+		int count = 0;
+		int code = 0;
+		int lower = 0x80;
+		int upper = 0xBF;
+		if (0xC2 <= lead && lead <= 0xDF) {
+			count = 1;
+			code = lead - 0xC0;
+		} else if (0xE0 <= lead && lead <= 0xEF) {
+			count = 2;
+			code = lead - 0xE0;
+			if (lead == 0xE0) lower = 0xA0;
+			if (lead == 0xED) upper = 0x9F;
+		} else if (0xF0 <= lead && lead <= 0xF4) {
+			count = 3;
+			code = lead - 0xF0;
+			if (lead == 0xF0) lower = 0x90;
+			if (lead == 0xF4) upper = 0x8F;
+		} else {
+			sb.append((char) 0xFFFD);
+			return at;
+		}
+		while (count > 0) {
+			int b = urlPercentByte(s, at);
+			if (b < lower || b > upper) {
+				sb.append((char) 0xFFFD);
+				return at;
+			}
+			code = code * 64 + (b - 0x80);
+			at += 3;
+			count--;
+			lower = 0x80;
+			upper = 0xBF;
+		}
+		sb.appendCodePoint(code);
+		return at;
 	}
 
 	private static ConcurrentHashMap<String, Object> host_call_funcs = new ConcurrentHashMap<String, Object>();
