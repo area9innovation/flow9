@@ -6,7 +6,8 @@ import ds/tree;
 import string;
 
 // Tests of the binary format decoder (lib/text/binary.flow): round trips through
-// toBinary, hand-built inputs that are cut short or out of range, and very deep nesting.
+// toBinary, hand-built inputs that are cut short or out of range, and the 2048-container depth limit
+// with the limits deserializeBinary3 takes.
 // The damaged and deep inputs are only checked where the C++ runner decodes them.
 
 Point(x : double, y : double);
@@ -141,13 +142,26 @@ refChain(v : flow, depth : int) -> Pair<int, flow> {
 	}
 }
 
-// toBinary recurses, so the deep inputs are built by hand
+// Build the boundary and deeper inputs independently of the recursive writer.
+// Keep the former 100000-level cases as regressions for the intentional default behavior.
 testDeep() -> void {
-	n = 100000;
-	arrays = arrayChain(decode(binary(strRepeat(chars([0xFFF8, 1]), n) + chars([7]), noStructs)), 0);
-	check("arrays nested " + i2s(n) + " deep", arrays == Pair(n, flow(7)));
-	refs = refChain(decode(binary(strRepeat(chars([0xFFF6]), n) + chars([7]), noStructs)), 0);
-	check("refs nested " + i2s(n) + " deep", refs == Pair(n, flow(7)));
+	iter([2047, 2048, 2049, 100000], \n -> {
+		arrays = decode(binary(strRepeat(chars([0xFFF8, 1]), n) + chars([7]), noStructs));
+		refs = decode(binary(strRepeat(chars([0xFFF6]), n) + chars([7]), noStructs));
+		if (n <= 2048) {
+			check("arrays nested " + i2s(n) + " deep", arrayChain(arrays, 0) == Pair(n, flow(7)));
+			check("refs nested " + i2s(n) + " deep", refChain(refs, 0) == Pair(n, flow(7)));
+		} else {
+			check("arrays nested " + i2s(n) + " deep give the default", arrays == defaultValue);
+			check("refs nested " + i2s(n) + " deep give the default", refs == defaultValue);
+		}
+	});
+	// deserializeBinary3 passes its own limit to the C++ decoder
+	noFixups : Tree<string, ([flow]) -> flow> = makeTree();
+	deep = binary(strRepeat(chars([0xFFF8, 1]), 100000) + chars([7]), noStructs);
+	check("arrays nested 100000 deep with limit 1000000", arrayChain(deserializeBinary3(deep, noFixups, defaultValue, 1000000), 0) == Pair(100000, flow(7)));
+	shallow = binary(strRepeat(chars([0xFFF8, 1]), 11) + chars([7]), noStructs);
+	check("arrays nested 11 deep with limit 10 give the default", deserializeBinary3(shallow, noFixups, defaultValue, 10) == defaultValue);
 }
 
 main() {
