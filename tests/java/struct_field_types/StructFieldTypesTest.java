@@ -9,15 +9,22 @@ public final class StructFieldTypesTest {
 	}
 
 	private static final class TestStruct extends Struct {
+		private final int id;
+		private final String name;
 		private final RuntimeType[] types;
 		private final FieldType[] descriptors;
 		private Object[] fields;
 		TestStruct(RuntimeType[] types, FieldType[] descriptors) {
+			this(0, "Test", types, descriptors);
+		}
+		TestStruct(int id, String name, RuntimeType[] types, FieldType[] descriptors) {
+			this.id = id;
+			this.name = name;
 			this.types = types;
 			this.descriptors = descriptors;
 		}
-		public int getTypeId() { return 0; }
-		public String getTypeName() { return "Test"; }
+		public int getTypeId() { return id; }
+		public String getTypeName() { return name; }
 		public String[] getFieldNames() { return new String[types.length]; }
 		public RuntimeType[] getFieldTypes() { return types; }
 		public FieldType[] getFieldTypeDescriptors() { return descriptors; }
@@ -85,6 +92,18 @@ public final class StructFieldTypesTest {
 		check(FieldType.arrayOf(integer).accepts(large), "large array");
 		large[large.length - 1] = "x";
 		check(!FieldType.arrayOf(integer).accepts(large), "last element is checked");
+		Object[] rows = new Object[1000000];
+		for (int i = 0; i < rows.length; i++) rows[i] = new Object[] { 1.0, 2.0 };
+		check(FieldType.arrayOf(FieldType.arrayOf(FieldType.of(RuntimeType.DOUBLE))).accepts(rows), "a million small rows are not each remembered");
+		((Object[])rows[rows.length - 1])[1] = 2;
+		check(!FieldType.arrayOf(FieldType.arrayOf(FieldType.of(RuntimeType.DOUBLE))).accepts(rows), "last row is checked");
+		rows = null;
+		Object[] row = new Object[1000];
+		Arrays.fill(row, 1);
+		Object[] sharedRows = new Object[1000];
+		Arrays.fill(sharedRows, row);
+		check(FieldType.arrayOf(FieldType.arrayOf(integer)).accepts(sharedRows), "shared long rows");
+		check(FieldType.of(RuntimeType.INT) == integer, "shallow types are shared");
 
 		TestStruct fallback = new TestStruct(new RuntimeType[0], null);
 		TestStruct prototype = new TestStruct(new RuntimeType[] { RuntimeType.ARRAY }, new FieldType[] { FieldType.arrayOf(integer) });
@@ -102,6 +121,27 @@ public final class StructFieldTypesTest {
 		check(FlowRuntime.makeStructValue(0, fields, fallback) != fallback, "legacy metadata accepts arrays");
 		check(FlowRuntime.makeStructValue(0, new Object[] { 1 }, fallback) == fallback, "legacy metadata checks outer type");
 		check(FlowRuntime.makeStructValue(0, new Object[] { new Object[] { "x" } }, fallback) != fallback, "legacy metadata cannot infer element types");
+		check(FlowRuntime.makeStructValueUnchecked(0, new Object[] { 1 }, fallback) != fallback, "unchecked construction skips validation");
+
+		RuntimeType[] noTypes = new RuntimeType[0];
+		TestStruct none = new TestStruct(10, "None", noTypes, null);
+		TestStruct some = new TestStruct(11, "Some", noTypes, null);
+		TestStruct pair = new TestStruct(12, "Pair", noTypes, null);
+		FlowRuntime.struct_prototypes = new Struct[] { none, some, pair };
+		FlowRuntime.struct_ids.clear();
+		FlowRuntime.struct_ids.put("None", 0);
+		FlowRuntime.struct_ids.put("Some", 1);
+		FlowRuntime.struct_ids.put("Pair", 2);
+		FlowRuntime.union_members.put("Maybe", new String[] { "None", "Some" });
+		FieldType maybe = FieldType.named("Maybe");
+		check(maybe.accepts(none) && maybe.accepts(some), "union members");
+		check(!maybe.accepts(pair), "struct outside the union");
+		check(!maybe.accepts("x") && !maybe.accepts(null), "named type needs a struct");
+		check(FieldType.named("Pair").accepts(pair) && !FieldType.named("Pair").accepts(some), "single struct");
+		check(FieldType.named("Unknown").accepts(pair), "unknown name accepts any struct");
+		check(FieldType.arrayOf(maybe).accepts(new Object[] { some, none }), "union array elements");
+		check(!FieldType.arrayOf(maybe).accepts(new Object[] { some, pair }), "struct outside the union in an array");
+		check(!FieldType.refTo(maybe).accepts(new Reference<Object>(pair)), "struct outside the union in a ref");
 		System.out.println("Java field type harness passed " + checks + " checks");
 	}
 }

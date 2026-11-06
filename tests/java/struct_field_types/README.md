@@ -23,6 +23,13 @@ java -cp "$test_dir/classes:platforms/java/lib/*" tests.java_struct_field_types.
 ```
 
 Older generated classes remain supported through shallow `RuntimeType` metadata.
-Nested validation requires regenerated classes; unconstrained generic/flow fields
-intentionally have no payload restriction. Named struct membership continues to
-use the generated Java casts, not new recursive struct inspection.
+Nested validation requires regenerated classes; an incremental build regenerates
+struct classes whose descriptors predate the current form. Unconstrained
+generic/flow fields intentionally have no payload restriction.
+
+A field that names a struct or a union accepts only that struct or the union's
+members (`FieldType.named`, resolved through `FlowRuntime.union_members`, which
+the generated `Structs.init` fills). Type arguments such as the `int` in
+`Maybe<int>` are not checked, and struct contents are not inspected: each struct
+was checked when it was built. Runtime code that builds fields of the right types
+itself uses `FlowRuntime.makeStructValueUnchecked`.

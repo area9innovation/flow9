@@ -11,6 +11,7 @@ export {
 	generateJavaModules(gctx : JavaGlobalContext, output_dir : string) -> void;
 	generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void;
 	type2javaObjType(gctx : JavaGlobalContext, t : FiType, field : bool, no_args : bool, in_native : bool) -> string;
+	javaFieldUnions(gctx : JavaGlobalContext) -> [Pair<string, [string]>];
 }
 
 indexJavaModules(program : FiProgram) -> Pair<Tree<string, JavaModule>, [JavaModule]> {
@@ -354,7 +355,8 @@ generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 		if (length(sdata.fields) > 0) {
 			fname = pathCombine(output_dir, "Struct_" + sdata.javaName + ".java");
 			mod_name = pathCombine(output_dir, "Module_" + sdata.csmodule.id + ".java");
-			if (fileExists(fname) && usePreviouslyGeneratedModules(gctx, sdata.csmodule.module, mod_name)) {
+			if (fileExists(fname) && usePreviouslyGeneratedModules(gctx, sdata.csmodule.module, mod_name)
+				&& strContains(getFileContent(fname), javaFieldTypeMarker)) {
 				if (gctx.program.config.verbose > 1) {
 					fcPrintln("Java struct module '" + fname + "' is already generated - keeping it", gctx.program.config.threadId);
 				}
@@ -431,7 +433,7 @@ generateJavaStructDefs(gctx : JavaGlobalContext, output_dir : string) -> void {
 
 				pushstr("\n\t};\n\tpublic String[] getFieldNames() { return field_names; }\n");
 				pushstr("\tpublic RuntimeType[] getFieldTypes() { return field_types; }\n");
-				pushstr("\n\tprivate static final FieldType[] field_type_descriptors = new FieldType[] {\n\t\t");
+				pushstr("\n\t" + javaFieldTypeMarker + "\n\tprivate static final FieldType[] field_type_descriptors = new FieldType[] {\n\t\t");
 				pushstr(strGlue(map(sdata.fields, \f -> type2javaFieldType(f.type)), ", "));
 				pushstr("\n\t};\n\tpublic FieldType[] getFieldTypeDescriptors() { return field_type_descriptors; }\n");
 
@@ -1381,11 +1383,36 @@ javaVerifyFiTypeFunction(t : FiType) -> Maybe<FiTypeFunction> {
 	}
 }
 
+// Marks struct classes whose descriptors have the current form, so that older ones are regenerated.
+javaFieldTypeMarker = "// Field type descriptors: nested, with struct names";
+
 type2javaFieldType(t : FiType) -> string {
 	switch (t) {
 		FiTypeArray(element): "FieldType.arrayOf(" + type2javaFieldType(element) + ")";
 		FiTypeRef(element): "FieldType.refTo(" + type2javaFieldType(element) + ")";
+		FiTypeName(name, __): "FieldType.named(\"" + name + "\")";
 		default: "FieldType.of(" + type2javaRuntimeType(t) + ")";
+	}
+}
+
+// Struct members of each union that a struct field names, for FlowRuntime.union_members.
+javaFieldUnions(gctx : JavaGlobalContext) -> [Pair<string, [string]>] {
+	names = foldTree(gctx.cstructs, makeSet(), \__, sdata : JavaStruct, acc ->
+		fold(sdata.fields, acc, \acc2, f -> javaTypeUnionNames(gctx.program, f.type, acc2))
+	);
+	filtermap(set2array(names), \name ->
+		maybeMap(lookupTree(gctx.program.names.unions, name), \union ->
+			Pair(name, map(fiUnion2structs(gctx.program, union), \struct -> struct.name))
+		)
+	);
+}
+
+javaTypeUnionNames(program : FiProgram, t : FiType, acc : Set<string>) -> Set<string> {
+	switch (t) {
+		FiTypeArray(element): javaTypeUnionNames(program, element, acc);
+		FiTypeRef(element): javaTypeUnionNames(program, element, acc);
+		FiTypeName(name, __): if (containsKeyTree(program.names.unions, name)) insertSet(acc, name) else acc;
+		default: acc;
 	}
 }
 
