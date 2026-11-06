@@ -53,11 +53,14 @@ In marked documents:
 - A quoted name whose closing quote is not followed by its delimiter is
   malformed. A malformed key is dropped with the rest of its line, unless a `[`
   on that line starts a section. A malformed section header is dropped together
-  with its keys. This holds at the end of the input too.
+  with the rest of its line and its keys. This holds at the end of the input too.
 - When a malformed name's closing quote is on a later line, or never comes, its
-  opening quote is taken as a stray one: only the rest of the line it starts on
-  is skipped, and parsing goes on with the next line. A quote on a later line
-  therefore cannot pair with it and take valid keys or sections along.
+  opening quote is taken as a stray one, and the rules above apply to the line
+  it starts on. Parsing goes on with the next line, so the lines between it and
+  a later quote are still read.
+- A quoted name may span lines, so a stray quote followed on a later line by a
+  quote and its delimiter, as in `label" = 2`, cannot be told apart from a
+  multiline name: the lines between become part of that name.
 - `parseIniFile` does not report syntax errors.
 
 ## Serializer policy and interoperability
