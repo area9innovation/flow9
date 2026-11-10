@@ -228,7 +228,7 @@ MDynamicDataTable2TInner(
 		headers =
 			MDTTitles(state, p, sorting, defaultHS, headerStyle, isSome(reorderList), rowsCountB, page);
 		footer =
-			MDTFooter(manager, p, paginationState, rowsCountB, state.scrollEnabled, noFooter, footerHeight, footerMinWidth, m2t);
+			MDTFooter(manager, p, paginationState, rowsCountB, extractStruct(style, MPaginationMoreRows(const(false))).more, state.scrollEnabled, noFooter, footerHeight, footerMinWidth, m2t);
 
 		onHoverHandler = \rowIdxM : Maybe<int> -> \t : Tropic -> {
 			if (state.onHover.onHover != nop1) {
@@ -2034,6 +2034,8 @@ MDTFooter(
 	parent : MFocusGroup,
 	paginationState : MPaginationState,
 	rowsCountB : Transform<int>,
+	// The rows are only the first part of all rows, the rest is loading
+	moreRowsB : Transform<bool>,
 	scrollEnabled : Transform<bool>,
 	noFooter : bool,
 	footerHeight : double,
@@ -2048,7 +2050,7 @@ MDTFooter(
 	footer =
 		if (paginationState.anyType)
 			MSelect2T(manager, parent, "MDynamicDataTableFooter", [], rowsCountB, \rowsCount, p2 -> {
-				makeFooterButton = \title : string, tooltipText : string, makeUpdatedRow : (Pair<int, int>) -> int, makeEnabled : (Pair<int, int>) -> bool ->
+				makeFooterButton2 = \title : string, tooltipText : string, makeUpdatedRow : (Pair<int, int>) -> int, enabled : Transform<bool> ->
 					MIconButton2T(
 						manager,
 						p2,
@@ -2056,11 +2058,13 @@ MDTFooter(
 							title,
 							\ -> paginationState.updatePageNumber(makeUpdatedRow(getValue(page))),
 							[],
-							[MEnabled(fselect(page, FLift(makeEnabled))), MButtonTitle(const(tooltipText)), MTooltipText(const(tooltipText))]
+							[MEnabled(enabled), MButtonTitle(const(tooltipText)), MTooltipText(const(tooltipText))]
 						),
 						m2t
 					)
 					|> TCenterY;
+				makeFooterButton = \title : string, tooltipText : string, makeUpdatedRow : (Pair<int, int>) -> int, makeEnabled : (Pair<int, int>) -> bool ->
+					makeFooterButton2(title, tooltipText, makeUpdatedRow, fselect(page, FLift(makeEnabled)));
 
 				showFooter =
 					eitherMap(minA(pagination.rowsPerPage),
@@ -2106,14 +2110,14 @@ MDTFooter(
 						[],
 
 					[
-						TSelect(page, \pg -> {
+						TSelect(fpair(page, moreRowsB), unpairC(\pg, moreRows -> {
 							text =  formatString(
-								_("%3-%2 of %1"),
+								if (moreRows) _("%3-%2 of %1+") else _("%3-%2 of %1"),
 								[i2s(rowsCount), i2s(max(min(pg.first + pg.second, rowsCount), 0)), i2s(min(pg.first + 1, rowsCount))]
 							);
 
 							MText2T(p2, text, [MCaption()])
-						})
+						}))
 							|> TCenterY
 							|> TBorderEnd(16., parent.rtl),
 						makeFooterButton(
@@ -2135,11 +2139,12 @@ MDTFooter(
 							\pg -> min(pg.first + pg.second, rowsCount - if (fgetValue(scrollEnabled)) pg.second else 0),
 							\pg -> (rowsCount > 0) && (pg.first + pg.second < rowsCount)
 						),
-						makeFooterButton(
+						makeFooterButton2(
 							"last_page",
 							_("Last page"),
 							\pg -> min((rowsCount - 1) / pg.second * pg.second, rowsCount - if (fgetValue(scrollEnabled)) pg.second else 0),
-							\pg -> pg.first + pg.second < rowsCount
+							// The last page is unknown while the rest of rows is loading
+							fselect2Lift(page, moreRowsB, \pg, moreRows -> !moreRows && pg.first + pg.second < rowsCount)
 						)
 							|> hideIfLittlePages(rowsCount, paginationState.rowsPerPage)
 					]
