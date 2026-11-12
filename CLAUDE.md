@@ -13,6 +13,10 @@ hands someone an attack.
   needs no native build. `bin/flowc1 lint=1 <file.flow>` runs the linter.
 - Entry points that cover most of the tree: `tools/flowc/flowc.flow` (the
   compiler) and `lib/material/material.flow` (the UI library and most of `lib/`).
+- The JavaScript targets (`js=`, `es6=`, `nodejs=1`, `html=`, `ts=`) run Haxe.
+  `mise install` provides it and `mise run haxelib-setup` installs its libraries
+  into `.haxelib/`, which haxelib reads only from the repository root: compile
+  these targets from there, as `mise exec -- bin/flowc1 …`.
 - The native runner (`bin/flowcpp`) needs `bin/setup-linux`: Qt 6, git LFS and
   the asmjit submodule. Most checks do not need it.
 - `tools/flowc/flowc.jar` is rebuilt with `bin/build-flowc` and committed by a
