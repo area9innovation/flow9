@@ -1694,46 +1694,6 @@ public final class FlowRunnerWrapper implements GLSurfaceView.Renderer {
         nOnMediaStreamError(cPtr(), id, error);
     }
 
-    private FlowWebRTCSupport webRTCSupport = null;
-
-    public void setFlowWebRTCSupport(FlowWebRTCSupport webRTCSupport) {
-        this.webRTCSupport = webRTCSupport;
-    }
-
-    private synchronized void cbMakeMediaSender(String serverUrl, String roomId, String[] stunUrls, String[][] turnServers,
-                                                FlowMediaStreamSupport.FlowMediaStreamObject stream,
-                                                int onMediaSenderReadyRoot, int onNewParticipantRoot, int onParticipantLeaveRoot, int onErrorRoot) {
-        webRTCSupport.makeMediaSender(serverUrl, roomId, stunUrls, turnServers, stream, onMediaSenderReadyRoot, onNewParticipantRoot, onParticipantLeaveRoot, onErrorRoot);
-    }
-
-    private synchronized void cbStopMediaSender(FlowWebRTCSupport.FlowMediaSenderObject mediaSender) {
-        webRTCSupport.stopMediaSender(mediaSender);
-    }
-
-    private native void nOnMediaSenderReady(long ptr, int id, FlowWebRTCSupport.FlowMediaSenderObject flowMediaSender);
-
-    synchronized void cbOnMediaSenderReady(int id, FlowWebRTCSupport.FlowMediaSenderObject flowMediaSender) {
-        nOnMediaSenderReady(cPtr(), id, flowMediaSender);
-    }
-
-    private native void nOnMediaSenderNewParticipant(long ptr, int id, String participant_id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream);
-
-    synchronized void cbOnMediaSenderNewParticipant(int id, String participant_id, FlowMediaStreamSupport.FlowMediaStreamObject flowMediaStream) {
-        nOnMediaSenderNewParticipant(cPtr(), id, participant_id, flowMediaStream);
-    }
-
-    private native void nOnMediaSenderParticipantLeave(long ptr, int id, String participant_id);
-
-    synchronized void cbOnMediaSenderParticipantLeave(int id, String participant_id) {
-        nOnMediaSenderParticipantLeave(cPtr(), id, participant_id);
-    }
-
-    private native void nOnMediaSenderError(long ptr, int id, String error);
-
-    synchronized void cbOnMediaSenderError(int id, String error) {
-        nOnMediaStreamError(cPtr(), id, error);
-    }
-
     private FlowMediaRecorderSupport mediaRecorderSupport = null;
 
     public void setFlowMediaRecorderSupport(FlowMediaRecorderSupport mediaRecorderSupport) {
