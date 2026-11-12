@@ -96,6 +96,10 @@ routines:
     engine: { cli: claude-code, model: claude-opus-5, effort: medium }
     verify: bin/flowc1 tools/flowc/flowc.flow && bin/flowc1 lib/material/material.flow
     limits: { runMinutes: 120 }
+    # Parts of the review method in this prompt are adapted from the
+    # `security-review` command of anthropics/claude-code-security-review
+    # (https://github.com/anthropics/claude-code-security-review),
+    # MIT License, Copyright (c) 2025 Anthropic.
     prompt: |
       This repository is PUBLIC. Nothing you commit, write in a pull request or
       say in a comment names an internal host, a path on this machine, an
@@ -107,10 +111,15 @@ routines:
 
       Review everything committed since this routine last ran
       ({{sinceSha}}..{{headSha}}, {{commitCount}} commits; recent history when
-      that reads empty) for security defects. Follow the `security-review-range`
-      skill (`.claude/skills/security-review-range/SKILL.md`), not the built-in
-      `/security-review`: that one reviews a branch against its base, and this
-      branch starts at its base.
+      that reads empty) for security defects. Follow the method below, not the
+      built-in `/security-review`: that one reviews a branch against its base,
+      and this branch starts at its base, so its diff is empty. It also leaves
+      out resource exhaustion and missing hardening, which are in scope here,
+      and it forbids running commands, while this review measures.
+
+      Report only what the range introduced. A defect that was there before the
+      range is not a finding of this review; note it in one line as "seen, not
+      new".
 
       A defect in flow9 is a defect in every product built on it. Give specific
       attention to changes in:
@@ -134,18 +143,136 @@ routines:
         - the PHP files under www/ and the compile server
           (tools/flowc/flowc_server.flow, server-mode=http).
 
+      Read the range. Diff the range, never the branch against its base:
+
+        git log --no-merges --format='%h %s' {{sinceSha}}..{{headSha}}
+        git diff --stat {{sinceSha}}..{{headSha}}
+        git diff {{sinceSha}}..{{headSha}} -- <path>
+
+      When that log is empty, recent history is the last 20 commits on master;
+      say in the report that you used it. Read a large change one commit at a
+      time (`git show <sha> -- <path>`).
+
+      Sort the changed files into two groups, and keep the list for the report:
+
+        - read closely: code that takes input from the network, a document or a
+          file; the runtimes; server natives; the areas above;
+        - skipped, each with its reason: documentation, files that only tests
+          use, changes that are only layout or wording.
+
+      Before you judge a change, learn how the code around it protects itself:
+      the escaping, sanitising and validation functions in use, and where the
+      siblings of the changed function call them; where input enters, and which
+      side of a trust boundary the changed code is on; the checks a similar
+      decoder, parser or native already makes. A change that leaves an
+      established pattern, or that opens a new way in, is the first place to
+      look.
+
+      Read the whole function and its callers, not only the changed lines, and
+      follow the data from where it enters to where it is used. Look for:
+
+        - input and memory: a length, index, offset or count from the input
+          that is used before it is checked; a size computation that can
+          overflow; in the C++ runtime a read or a write outside a buffer or a
+          use after free; a loop or a recursion that scans the rest of the
+          input again for each element; a recursion whose depth the input sets;
+          a pattern that backtracks without bound;
+        - injection and code execution: input that reaches SQL, a shell or a
+          process argument, `eval`, a file path (path traversal) or a URL whose
+          host or protocol it controls; HTML or script that reaches the page
+          without the sanitiser its siblings use; XML entities; serialised data
+          decoded into structures that the caller then trusts;
+        - authentication and authorisation: a path that skips a check its
+          siblings make; a way to act as another user or with more rights; the
+          signature, algorithm, expiry and audience of a JWT; a cookie without
+          the flags its siblings set;
+        - cryptography and secrets: a key, password or token written in the
+          code; a weak algorithm or mode; a predictable source of randomness; a
+          comparison of a secret that is not constant-time; certificate or
+          signature validation that is skipped or made optional;
+        - data exposure: a secret, a password or personal data in a log, an
+          error message or a response; debug output or an endpoint that returns
+          more than its caller may see;
+        - consistency: a sibling of the changed function has a check that this
+          one lacks.
+
+      A rewrite of a parser or a decoder is one unit of work for a sub-agent.
+      Give it the diff, the version before the range and these questions, and
+      ask it to compare the old and the new code on the same inputs.
+
+      What you find this way is a candidate. It is a finding only after you
+      verify it, each candidate independently of the others; a sub-agent for
+      each one is the usual way.
+
+        - Trace the input. Find the guards above the code, and confirm that
+          input from outside reaches it.
+        - Measure when a measure exists. Compile a small driver (`bin/flowc1
+          jar=…` needs only Java; CLAUDE.md says how to compile). For time, run
+          it at sizes that double and read the growth. For behaviour, compare
+          the output before and after the range.
+        - Keep drivers and their output outside the tree, or delete them before
+          a commit.
+
+      Drop a candidate that matches one of these, unless you can show a
+      concrete path from outside input to harm:
+
+        - a missing rate limit, or load that any service has under many
+          requests (time or memory that grows faster than the input is a
+          finding);
+        - a general best practice the code does not follow, with no input that
+          makes it matter (a missing bound on input from outside is a finding);
+        - missing validation of a field that no security decision depends on;
+        - a secret or credential on disk that is otherwise protected;
+        - a value from an environment variable or a command-line flag: the
+          person who runs the program sets them, and they are trusted;
+        - a missing permission check in client-side code, or missing validation
+          of input the client only sends on: the server is where both must be;
+        - a race or a timing attack that is only theoretical;
+        - an outdated third-party library: the dependency audit handles those;
+        - a memory-safety defect in a memory-safe language (flow, Java, Haxe,
+          JavaScript, safe Rust); in C++ it is a finding;
+        - unsanitised input in a log line, and the logging of a URL or of data
+          that is neither secret nor personal;
+        - a request forgery that controls only the path of a URL;
+        - input in a regular expression as such (unbounded backtracking is a
+          finding);
+        - a missing audit log, a resource that is not released, a file
+          descriptor leak;
+        - a file that only tests use, a notebook, a documentation file;
+        - a shell script or a CI workflow, unless input nobody trusts reaches
+          it;
+        - tabnabbing, cross-site leaks, prototype pollution and open redirects,
+          unless the path is certain;
+        - a guessed UUID: a UUID may be taken as unguessable.
+
+      Give each candidate that is left a confidence from 1 to 10 that it is
+      real. 8 to 10: the path from input to effect is traced, and measured or
+      reproduced where that is possible. 4 to 7: a suspicious pattern that
+      needs conditions you could not confirm. 1 to 3: probably noise. Only 8
+      and above is a finding. Each candidate below 8 is dropped, and you name
+      it with its score and the reason. When the effect would be serious and
+      the score is 6 or 7, say so: a person decides whether to look again.
+
+      Give each finding a severity. High: directly usable for code execution,
+      a data breach or an authentication bypass. Medium: needs specific
+      conditions, and the effect is significant. Low: defence in depth, a
+      missing bound or a slow path with no practical way to use it against a
+      deployment.
+
       Two kinds of finding, and only the first becomes a pull request here:
 
-        1. Hardening with no practical exploit path: a missing bound, a
-           quadratic decoder, a check made consistent with its siblings. Fix it
-           at the root, verify, push, and describe the behaviour change in the
-           body, never the input that triggers it.
-        2. A defect exploitable against a product built on this runtime. DO NOT
-           PUSH. This repository is public, and a fix pushed here is a
-           disclosure before anyone deploying flow9 has the fix. Say the finding
-           to the box (file, line, the class of defect, worded for a maintainer)
-           and report `cannot-resolve`. A person takes it through private
-           vulnerability reporting.
+        1. Hardening with no practical exploit path (severity low): a missing
+           bound, a quadratic decoder, a check made consistent with its
+           siblings. Fix it at the root, with a test that fails without the
+           fix, verify, push, and describe the behaviour change in the body,
+           never the input that triggers it.
+        2. A defect exploitable against a product built on this runtime
+           (severity medium or high). DO NOT PUSH. This repository is public,
+           and a fix pushed here is a disclosure before anyone deploying flow9
+           has the fix. Say the finding to the box (file, line, the class of
+           defect, severity, confidence and how you verified it, worded for a
+           maintainer) and report `cannot-resolve`. A person takes it through
+           private vulnerability reporting.
 
       If you are not sure which kind a finding is, it is the second.
 
@@ -154,6 +281,17 @@ routines:
       says the finding; the say line is what the person reads.
 
       If the commits contain nothing security-relevant, report `nothing-to-do`.
+
+      The report has a public part and a private part. The pull request body
+      holds the range and the number of commits, the files read closely, the
+      files skipped with their reasons, and for each fix the file, the
+      behaviour change and how it was verified. With no pull request, the same
+      range and file lists go with the outcome you report. Everything else
+      goes to the box with `wt routine say`, one line each, whatever the run
+      reports: each finding of the second kind, each dropped candidate with
+      its score and reason, each defect seen that is not new, and what you
+      could not verify. A list of suspected defects with file and line is a
+      map; it never enters a commit, a pull request or a comment.
 
   - id: dependency-audit
     title: Dependency audit and safe upgrades
