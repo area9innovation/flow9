@@ -1,0 +1,106 @@
+import lingo/compiler/compile_lingo;
+import tools/gringo/gringo_parse;
+import sys/target;
+
+// Checks that a character range starting at 0, or a literal NUL, does not match
+// at the end of the input.
+//
+// Past the end of a string, getCharCodeAt gives 0 on some targets (the C++ runner)
+// and -1 or NaN on others. Code that read the character and then compared it with
+// 0 matched one character past the end on the first kind, so "any character"
+// ('\u0000'-'\uFFFF') matched at the end of the input and "not any character"
+// never did.
+//
+// The gringo interpreter checks run the parse, so they fail on the C++ runner
+// against the old code. The lingo checks look at the code compileSyntaxWithGrammar
+// writes for a grammar, so they fail on every target against the old code.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+checkContains(name : string, text : string, part : string, expected : bool) -> void {
+	check(name, b2s(strContains(text, part)), b2s(expected));
+}
+
+interpret(input : string, term : GTerm) -> string {
+	env = GringoEnv(input, makeTree(), makeGringoAction(), "", makeTree(), 0, false, 0);
+	r = gringoParse(env, term);
+	"fail " + b2s(r.fail) + ", i " + i2s(r.i);
+}
+
+makeGringoAction() -> GringoAction<string> {
+	GringoAction(\o : string, __ -> o, \o : string, __ -> o);
+}
+
+testInterpreter() -> void {
+	abc = GString("abc");
+	anyChar = GRange(0, 65535);
+	check("interpreted any character after the last one fails",
+		interpret("abc", GSeq(abc, anyChar)),
+		"fail true, i 3"
+	);
+	check("interpreted not any character at the end matches",
+		interpret("abc", GSeq(abc, GNegate(anyChar))),
+		"fail false, i 3"
+	);
+	check("interpreted range 0-0 at the end fails",
+		interpret("abc", GSeq(abc, GRange(0, 0))),
+		"fail true, i 3"
+	);
+	check("interpreted range 0-0 still matches a NUL",
+		interpret("abc\u0000", GSeq(abc, GRange(0, 0))),
+		"fail false, i 4"
+	);
+	check("interpreted optional any character at the end",
+		interpret("abc", GSeq(abc, GSeq(GOpt(anyChar), GNegate(anyChar)))),
+		"fail false, i 3"
+	);
+}
+
+compileLingo(grammar : string) -> string {
+	r = compileSyntaxWithGrammar("test.lingo", grammar, []);
+	if (r.first != "") "ERROR " + r.first else r.second;
+}
+
+testLingo() -> void {
+	anyChar = compileLingo("t = \"a\" !c; c = '\\u0000'-'\\uFFFF';");
+	checkContains("lingo range from 0 checks the length",
+		anyChar, "acc.i < acc.length && 0 <= c && c <= 65535", true
+	);
+	nul = compileLingo("t = \"a\" \"\\u0000\";");
+	checkContains("lingo NUL checks the length",
+		nul, "acc.i < acc.length && getCharCodeAt(acc.input, acc.i) == 0 ", true
+	);
+	nulPair = compileLingo("t = \"a\" \"b\\u0000\";");
+	checkContains("lingo two characters with a NUL check the length",
+		nulPair, "acc.i + 1 < acc.length && getCharCodeAt(acc.input, acc.i) == 98 ", true
+	);
+	plain = compileLingo("t = \"a\" \"bc\" 'x'-'z';");
+	checkContains("lingo without a NUL is unchanged",
+		plain, "acc.length &&", false
+	);
+	checkContains("lingo range without 0 is unchanged",
+		plain, "{c = getCharCodeAt(acc.input, acc.i); 120 <= c && c <= 122}", true
+	);
+}
+
+main() {
+	testInterpreter();
+	testLingo();
+
+	if (^failures == 0) {
+		println("parser end of input tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " parser end of input test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
