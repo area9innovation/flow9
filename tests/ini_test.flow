@@ -160,6 +160,139 @@ testRoundTrip() -> void {
 	check("round trip of section names", parseIniFile(iniFile2string(names)), names);
 }
 
+testLegacyNames() -> void {
+	text = strGlue([
+		"[\"Section\"]",
+		"\"Key\"=\"value\"",
+		"'single'=plain",
+		"a\"\"b=double",
+		"C:\\new\\tab=\\n\\r\\t",
+		"[  Mixed Case \t]",
+		"  Mixed Key \t=value",
+		"[\"\"\"quoted\"\"\"]",
+		"\"\"=empty quotes",
+		"[C:\\new\\tab]",
+		"key=path"
+	], "\n");
+	names = IniFile([
+		IniSection("\"Section\"", [KeyValue("\"Key\"", "value"), KeyValue("'single'", "plain"),
+			KeyValue("a\"\"b", "double"), KeyValue("C:\\new\\tab", "\\n\\r\\t")]),
+		IniSection("  Mixed Case \t", [KeyValue("Mixed Key", "value")]),
+		IniSection("\"\"\"quoted\"\"\"", [KeyValue("\"\"", "empty quotes")]),
+		IniSection("C:\\new\\tab", [KeyValue("key", "path")])
+	]);
+	check("unmarked names keep quotes, case, whitespace and backslashes", parseIniFile(text), names);
+	check("legacy quoted names round trip without reinterpretation", parseIniFile(iniFile2string(names)), names);
+	check("legacy names do not enable the extension", strLeft(iniFile2string(names), 1), "[");
+	// Only the exact first line is reserved; ordinary comments and later lookalikes stay comments.
+	iter(["; flow9-ini: quoted-names-v1 \n", "; before\n; flow9-ini: quoted-names-v1\n", "; flow9-ini: quoted-names-v2\n"], \prefix -> {
+		check("marker lookalike keeps legacy names", parseIniFile(prefix + "[\"s\"]\n\"k\"=v\n"),
+			IniFile([IniSection("\"s\"", [KeyValue("\"k\"", "v")])]));
+	});
+}
+
+testQuotedNames() -> void {
+	marker = "; flow9-ini: quoted-names-v1\n";
+	file = IniFile([
+		IniSection("a]b", [KeyValue("a=b;[c]", "v"), KeyValue("\"legacy\"", "\\n\\t")]),
+		IniSection("\"literal\"", [KeyValue("safe", "\"quoted\"")])
+	]);
+	printed = marker + "[\"a]b\"]\n\"a=b;[c]\"=v\n\"\"\"legacy\"\"\"=\\n\\t\n\n"
+		+ "[\"\"\"literal\"\"\"]\n\"safe\"=\"\"\"quoted\"\"\"\n\n";
+	check("unrepresentable names select marked, fully quoted output", iniFile2string(file), printed);
+	check("marked output reads back", parseIniFile(printed), file);
+	check("marked output is stable", iniFile2string(parseIniFile(printed)), printed);
+	check("CRLF marker", parseIniFile(strReplace(printed, "\n", "\u000d\n")), file);
+	check("marked input may mix plain and quoted names", parseIniFile(marker + "[plain]\n\"a=b\"=x\nraw=y\n[\"q]s\"]\n\"\"=z\n"),
+		IniFile([IniSection("plain", [KeyValue("a=b", "x"), KeyValue("raw", "y")]), IniSection("q]s", [KeyValue("", "z")])]));
+	check("multiline names do not introduce keys or sections", parseIniFile(marker + "[\"a\n[b]=c;d\"]\n\"a\n[b]=c;d\"=v\n\"next\"=kept\n"),
+		IniFile([IniSection("a\n[b]=c;d", [KeyValue("a\n[b]=c;d", "v"), KeyValue("next", "kept")])]));
+	check("an unterminated quoted key skips only its line", parseIniFile(marker + "[\"s\"]\n\"a=1\nk=v\n[\"t\"]\nj=1"),
+		IniFile([IniSection("s", [KeyValue("k", "v")]), IniSection("t", [KeyValue("j", "1")])]));
+	check("a section on the line of an unterminated quoted key is read", parseIniFile(marker + "[\"a\"]\n\"k [b]\nj=1"),
+		IniFile([IniSection("a", []), IniSection("b", [KeyValue("j", "1")])]));
+	check("an unquoted header without ] on its line is dropped with its keys", parseIniFile(marker + "[abc\nk=v\n[\"real\"]\nx=1\n"),
+		IniFile([IniSection("real", [KeyValue("x", "1")])]));
+	check("an unquoted header without ] at the end of input is dropped", parseIniFile(marker + "[\"a\"]\nk=v\n[abc"),
+		IniFile([IniSection("a", [KeyValue("k", "v")])]));
+	check("unquoted headers still work in marked documents", parseIniFile(marker + "[plain]\nk=v\n[ spaced ]\u000d\nj=1\u000d\n"),
+		IniFile([IniSection("plain", [KeyValue("k", "v")]), IniSection(" spaced ", [KeyValue("j", "1")])]));
+	check("the rest of a malformed header line is not read as keys", parseIniFile(marker + "[\"s\" note=\"see\n[\"b\"]\nk=v\n"),
+		IniFile([IniSection("b", [KeyValue("k", "v")])]));
+	check("a stray quote pairs with a later quote and =, as a multiline name", parseIniFile(marker + "[\"a\"]\n\"note\nk=v\nlabel\" = 2\n"),
+		IniFile([IniSection("a", [KeyValue("note\nk=v\nlabel", "2")])]));
+	check("a stray quote in a key does not pair with a later header", parseIniFile(marker + "[\"a\"]\n\"note\n[\"sec\"]\nk=v\n"),
+		IniFile([IniSection("a", []), IniSection("sec", [KeyValue("k", "v")])]));
+	check("a stray quote in a header does not pair with the next header", parseIniFile(marker + "[\"abc]\nlost=1\n[\"real\"]\nk=v\n"),
+		IniFile([IniSection("real", [KeyValue("k", "v")])]));
+	check("a stray quote in a comment header does not take the first section", parseIniFile(marker + "; use [\"odd names\n[\"real\"]\nk=v"),
+		IniFile([IniSection("real", [KeyValue("k", "v")])]));
+	check("a multiline quoted name without = skips its first line", parseIniFile(marker + "[\"s\"]\n\"a\nb\" x\n\"c\"=1\n"),
+		IniFile([IniSection("s", [KeyValue("c", "1")])]));
+	check("quoted key without adjacent = skips its line", parseIniFile(marker + "[\"s\"]\n\"a\" tail=x\n[other]\nk=v"),
+		IniFile([IniSection("s", []), IniSection("other", [KeyValue("k", "v")])]));
+	check("quoted section without adjacent ] is dropped with its keys", parseIniFile(marker + "[\"s\" tail]\nk=v\n\"q\"=[x]\n[\"other\"]\nk2=v2"),
+		IniFile([IniSection("other", [KeyValue("k2", "v2")])]));
+	check("a quoted name alone on a line is skipped", parseIniFile(marker + "[\"a\"]\n\"note\"\n\"k\"=1\n[\"b\"]\n\"x\"=2"),
+		IniFile([IniSection("a", [KeyValue("k", "1")]), IniSection("b", [KeyValue("x", "2")])]));
+	check("a quoted token after a quoted value is skipped", parseIniFile(marker + "[\"s\"]\n\"k\"=\"v\" \"trailing\"\n\"n\"=2\n"),
+		IniFile([IniSection("s", [KeyValue("k", "v"), KeyValue("n", "2")])]));
+	check("quoted section with junk at the end of input is dropped", parseIniFile(marker + "[\"a\"]\nk=v\n[\"s\" tail"),
+		IniFile([IniSection("a", [KeyValue("k", "v")])]));
+	iter(["", "\n", "\u000d\n"], \ending -> {
+		check("quoted section without ] at the end of input is dropped: " + toString(ending), parseIniFile(marker + "[\"a\"]\nk=v\n[\"s\" " + ending),
+			IniFile([IniSection("a", [KeyValue("k", "v")])]));
+		check("quoted key without = at the end of input is dropped: " + toString(ending), parseIniFile(marker + "[\"a\"]\nk=v\n\"s\" " + ending),
+			IniFile([IniSection("a", [KeyValue("k", "v")])]));
+	});
+	check("a section on the line of a malformed quoted key is read", parseIniFile(marker + "[\"a\"]\n\"k\" [b]\nj=1\n"),
+		IniFile([IniSection("a", []), IniSection("b", [KeyValue("j", "1")])]));
+	check("a stray line does not join the next quoted key", parseIniFile(marker + "[\"s\"]\nstray\n\"a=b\"=1\n"),
+		IniFile([IniSection("s", [KeyValue("a=b", "1")])]));
+	check("text after a quoted value does not join the next quoted key", parseIniFile(marker + "[\"s\"]\n\"k\"=\"v\" tail\n\"a=b\"=1\n"),
+		IniFile([IniSection("s", [KeyValue("k", "v"), KeyValue("a=b", "1")])]));
+	check("a stray CRLF line is skipped", parseIniFile(marker + "[\"s\"]\u000d\nstray\u000d\nk=v\u000d\n"),
+		IniFile([IniSection("s", [KeyValue("k", "v")])]));
+	check("a quote left open after doubled quotes skips only its line", parseIniFile(marker + "[\"s\"]\nk=v\n\"a\"\"=1\n[\"t\"]\n"),
+		IniFile([IniSection("s", [KeyValue("k", "v")]), IniSection("t", [])]));
+	check("spaces and tabs may precede a quoted section name", parseIniFile(marker + "[ \t\"a]b\" ]\nk=v\n[ plain ]\n"),
+		IniFile([IniSection("a]b", [KeyValue("k", "v")]), IniSection(" plain ", [])]));
+	check("spaces and tabs may follow a quoted name", parseIniFile(marker + "[\"s\" \t]\n\"timeout\" = 30\n\"k=\"\t=\"v\"\n[\"t\" ]\nk=v\n"),
+		IniFile([IniSection("s", [KeyValue("timeout", "30"), KeyValue("k=", "v")]), IniSection("t", [KeyValue("k", "v")])]));
+	check("a line break after a quoted name skips it, and the next line is read on its own", parseIniFile(marker + "[\"s\"]\n\"a\"\n=x\n[other]\nk=v"),
+		IniFile([IniSection("s", [KeyValue("", "x")]), IniSection("other", [KeyValue("k", "v")])]));
+	bom = "\uFEFF";
+	check("marker after a byte order mark", parseIniFile(bom + printed), file);
+	check("unmarked text after a byte order mark", parseIniFile(bom + "[\"s\"]\n\"k\"=v\n"),
+		IniFile([IniSection("\"s\"", [KeyValue("\"k\"", "v")])]));
+	check("an unterminated quoted section skips only its line", parseIniFile(marker + "[\"a\n[other]\nk=v"),
+		IniFile([IniSection("other", [KeyValue("k", "v")])]));
+	check("an unterminated quote at the end of input", parseIniFile(marker + "[\"s\"]\nk=v\n\"open"),
+		IniFile([IniSection("s", [KeyValue("k", "v")])]));
+	check("whitespace before a quoted key is outside its name", parseIniFile(marker + "[\"s\"]\n; comment\n\t \" padded \"=v\n"),
+		IniFile([IniSection("s", [KeyValue(" padded ", "v")])]));
+	check("marker is omitted when parsed names need no extension", iniFile2string(parseIniFile(marker + "[\"s\"]\n\"k\"=v\n")), "[s]\nk=v\n\n");
+	check("empty marked document", parseIniFile(marker), IniFile([]));
+
+	parts = ["", "normal", "Mixed Case", "=", "[", "]", ";", "a=b;[c]", "\"", "\"\"", "\"quoted\"", "'single'",
+		" ", " leading", "trailing ", "\t", "\tleading", "trailing\t", "\n", "\u000d", "\u000d\n",
+		"a\nb", "a\u000db", "a\u000d\nb", "\n[other]\nk=v\n;comment", "\\", "\\n\\r\\t", "\\\"", "\"\\", "C:\\new\\tab", "æøå 😀"];
+	iter(parts, \name -> {
+		one = IniFile([IniSection(name, map(parts, \key -> KeyValue(key, name))), IniSection("tail", [KeyValue("next", "kept")])]);
+		check("name and value matrix: " + toString(name), parseIniFile(iniFile2string(one)), one);
+		// Safe names and empty names also work without forcing the marked path via another key.
+		single = IniFile([IniSection(name, [KeyValue(name, name)])]);
+		check("single name and value: " + toString(name), parseIniFile(iniFile2string(single)), single);
+	});
+	// Combine characters around quotes and delimiters, rather than only checking them in isolation.
+	atoms = ["", "a", "=", "[", "]", ";", "\"", "\\", " ", "\t", "\n", "\u000d"];
+	combinations = mapConcat(atoms, \a -> map(atoms, \b -> a + b));
+	combined = IniFile(map(combinations, \name -> IniSection(name, [KeyValue(name, name)])));
+	check("combined name and value characters", parseIniFile(iniFile2string(combined)), combined);
+	duplicates = IniFile([IniSection("s]", [KeyValue("k=", "1"), KeyValue("k=", "2")]), IniSection("s]", []), IniSection("", [])]);
+	check("marked duplicate names and empty sections keep their order", parseIniFile(iniFile2string(duplicates)), duplicates);
+}
+
 makeIni(sections : int, keysPerSection : int) -> string {
 	concatStrings(generate(0, sections, \i -> {
 		"[section" + i2s(i) + "]\n"
@@ -206,6 +339,16 @@ testPerformance() -> void {
 	measureParse("20000 headers on one line", concatStrings(generate(0, 20000, \i -> "[s" + i2s(i) + "]")), 20000, 0);
 	measureParse("20000 comment marks after the last line end", "[s]\n" + strRepeat(";x", 20000), 1, 0);
 	measureParse("20000 quoted values on one line", "[s]\n" + strRepeat("k=\"v\" ", 20000), 1, 20000);
+	marker = "; flow9-ini: quoted-names-v1\n";
+	measureParse("20000 quoted names on one line", marker + "[\"s\"]\n" + strRepeat("\"k=[;\"=\"v\" ", 20000), 1, 20000);
+	measureParse("20000 quoted headers on one line", marker + strRepeat("[\"s]\"]", 20000), 20000, 0);
+	measureParse("20000 lines with a stray quote", marker + "[\"s\"]\n" + strRepeat("\"x\n", 20000) + "k=v\n", 1, 1);
+	measureParse("20000 unquoted headers on one line in a marked document", marker + concatStrings(generate(0, 20000, \i -> "[s" + i2s(i) + "]")), 20000, 0);
+	measureParse("20000 headers with a stray quote",marker + strRepeat("[\"x\n", 20000) + "[\"s\"]\nk=v\n", 1, 1);
+	// A marked header looks for its "]" on its own line only. These use more lines than the tests
+	// above, because reading the rest of the text for each one is only slow once there are many
+	measureParse("200000 headers without ] in a marked document", marker + strRepeat("[\n", 200000) + "[\"s\"]\nk=v\n", 1, 1);
+	measureParse("200000 headers before a ] further down", marker + strRepeat("[\n", 200000) + "tail]\n[\"s\"]\nk=v\n", 1, 1);
 }
 
 main() {
@@ -213,6 +356,8 @@ main() {
 	testEdgeCases();
 	testPrint();
 	testRoundTrip();
+	testLegacyNames();
+	testQuotedNames();
 	testPerformance();
 
 	if (^failures == 0) {

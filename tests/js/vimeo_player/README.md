@@ -15,11 +15,14 @@ npm run test:flow --prefix tests/js/vimeo_player
 npm run test:all --prefix tests/js/vimeo_player
 ```
 
-The runner appends `size-regression.flow` to a temporary copy of the production
+The runner appends `readiness-regression.flow` and `size-regression.flow` to a temporary copy of the production
 `material_player.flow`, compiles it to bytecode, and runs its assertions. This
 keeps private helpers private and leaves repository sources untouched. Coverage
 includes feedback prevention, fallback retention across reloads, late layout
 availability, intrinsic dimensions taking precedence, and YouTube's original
-per-message sizing behavior.
+per-message sizing behavior. Readiness coverage includes no sends before wrapper load,
+initial autoplay preservation, latest pending play/pause/seek/volume/loop commands,
+load-before-state ordering, iframe replacement, repeated identical load commands,
+reload state restoration, inbound-state feedback prevention, and disposal.
 
 These are locally runnable checks; this change does not add a CI job.

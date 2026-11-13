@@ -3,61 +3,156 @@ import string;
 import ds/list;
 
 export {
-	// An .ini file. Uses "" for quoting " in value. Without " in values, whitespace is trimmed
-	// Use ; for comments at the start of lines
+	// An .ini file. Uses "" for quoting " in values; unquoted values are trimmed.
+	// Use ; for comments at the start of lines. Backslashes are always literal.
+	// Name quoting is enabled only by an exact first line of "; flow9-ini: quoted-names-v1"
+	// (LF or CRLF), after a byte order mark if there is one. Without that marker, quotes in
+	// keys and section names stay literal.
 	parseIniFile(v : string) -> IniFile;
 
-	// Values are quoted as needed to read back the same. Keys and section names have no quoting:
-	// a key with =, [ or ;, or with spaces, tabs or line breaks at either end, and a section name
-	// with ] do not read back as written
+	// Values are quoted as needed to read back the same. Legacy name spelling is kept unless a
+	// key contains =, [ or ;, has edge whitespace, or either kind of name contains a line break
+	// or a section name contains ]. Such files start with the marker above and quote every name,
+	// doubling embedded quotes, just like values. This is a Flow INI extension: other readers
+	// need support for the marker and quoted names to read these files with the same meaning.
 	iniFile2string(v : IniFile) -> string;
 		IniFile(sections : [IniSection]);
 		IniSection(name : string, keys : [KeyValue]);
 }
 
+iniQuotedNamesMarker = "; flow9-ini: quoted-names-v1";
+iniMarkerLf = iniQuotedNamesMarker + "\n";
+iniMarkerCrlf = iniQuotedNamesMarker + "\u000d\n";
+
+// Trimmed from the ends of unquoted keys; a key with any of these at an end is printed quoted
+iniKeySpace = "\n \u000d\t";
+
 parseIniFile(v : string) -> IniFile {
-	IniFile(list2array(doParseIniFile(v, 0, -1, makeList())));
+	// Editors on Windows often save with a byte order mark
+	bom = if (strLeft(v, 1) == "\uFEFF") 1 else 0;
+	markerEnd = if (strContainsAt(v, bom, iniMarkerLf)) bom + strlen(iniMarkerLf)
+		else if (strContainsAt(v, bom, iniMarkerCrlf)) bom + strlen(iniMarkerCrlf)
+		else -1;
+	IniFile(list2array(doParseIniFile(v, max(markerEnd, bom), -1, markerEnd != -1, makeList())));
 }
 
 // The keys of one section, the position where they stop and the line end found last
 IniKeys(keys : List<KeyValue>, next : int, lineEnd : int);
 
+// A section name or key read up to its delimiter
+IniName ::= IniNameFound, IniNameMalformed;
+	// The name and the position of its delimiter
+	IniNameFound(name : string, delimiter : int);
+	// A name without its delimiter on its line. The rest of the line from skipFrom is not read.
+	IniNameMalformed(skipFrom : int);
+
 // The text is scanned by position; only section names, keys and values are copied out
-doParseIniFile(v : string, start : int, lineEnd : int, acc : List<IniSection>) -> List<IniSection> {
+doParseIniFile(v : string, start : int, lineEnd : int, quotedNames : bool, acc : List<IniSection>) -> List<IniSection> {
 	n = strlen(v);
 	lb = strRangeIndexOf(v, "[", start, n);
 	if (lb == -1 || lb + 1 >= n) {
 		acc
 	} else {
 		nameStart = lb + 1;
-		rb = strRangeIndexOf(v, "]", nameStart, n);
-		if (rb == -1) {
+		quoteStart = if (quotedNames) iniSkipAny(v, nameStart, n, " \t") else nameStart;
+		quoted = quotedNames && quoteStart < n && getCharAt(v, quoteStart) == "\"";
+		// In marked documents a header ends at its line, so its "]" is looked for on that line
+		// only: searching the rest of the text for every "[" would make the scan quadratic
+		headerLine = if (quotedNames) iniLineEnd(v, nameStart, lineEnd) else n;
+		rb = if (quoted) -1 else strRangeIndexOf(v, "]", nameStart, headerLine);
+		if (!quotedNames && rb == -1) {
+			// A header without ] takes the rest as its name
 			Cons(IniSection(strRight(v, nameStart), []), acc)
 		} else {
-			name = substring(v, nameStart, rb - nameStart);
-			headerEnd = iniLineEnd(v, rb + 1, lineEnd);
-			keys = doParseIniKeys(v, iniNextLine(rb + 1, headerEnd, n), headerEnd, makeList());
-			doParseIniFile(v, keys.next, keys.lineEnd, Cons(IniSection(name, list2array(keys.keys)), acc));
+			name = if (quoted) grabIniQuotedName(v, quoteStart, "]")
+				// A marked header with no "]" on its line
+				else if (rb == -1) IniNameMalformed(nameStart)
+				else IniNameFound(substring(v, nameStart, rb - nameStart), rb);
+			switch (name) {
+				IniNameFound(title, close): {
+					headerEnd = iniLineEnd(v, close + 1, lineEnd);
+					keys = doParseIniKeys(v, iniNextLine(close + 1, headerEnd, n), headerEnd, quotedNames, makeList());
+					doParseIniFile(v, keys.next, keys.lineEnd, quotedNames, Cons(IniSection(title, list2array(keys.keys)), acc));
+				}
+				IniNameMalformed(skipFrom): {
+					// The header is dropped with the rest of its line and its keys, which are still read
+					// to find the next header
+					nl = strRangeIndexOf(v, "\n", skipFrom, n);
+					keys = doParseIniKeys(v, if (nl == -1) n else nl + 1, lineEnd, quotedNames, makeList());
+					doParseIniFile(v, keys.next, keys.lineEnd, quotedNames, acc);
+				}
+			}
 		}
 	}
 }
 
-// Keys up to the next "["; a ";" before the "=" starts a comment
-doParseIniKeys(v : string, start : int, lineEnd : int, acc : List<KeyValue>) -> IniKeys {
+// Keys up to the next "["; a ";" before the "=" starts a comment, except inside a quoted name.
+// In marked documents a key ends at its line: a line without "=" is skipped.
+doParseIniKeys(v : string, start : int, lineEnd : int, quotedNames : bool, acc : List<KeyValue>) -> IniKeys {
 	n = strlen(v);
-	special = iniFindAny(v, start, n, "=[;");
+	keyStart = if (quotedNames) iniSkipAny(v, start, n, iniKeySpace) else start;
+	quoted = quotedNames && keyStart < n && getCharAt(v, keyStart) == "\"";
+	name : Maybe<IniName> = if (quoted) Some(grabIniQuotedName(v, keyStart, "=")) else None();
+	special = switch (name) {
+		None(): iniFindAny(v, keyStart, n, if (quotedNames) "=[;\n" else "=[;");
+		Some(quotedName): switch (quotedName) {
+			IniNameFound(__, eqPos): eqPos;
+			// The rest of the line is skipped, unless a section starts on it
+			IniNameMalformed(skipFrom): iniFindAny(v, skipFrom, n, "[\n");
+		}
+	};
 	found = if (special == n) "" else getCharAt(v, special);
 	if (found == "=") {
-		key = trim2(substring(v, start, special - start), "\n \u000d\t");
+		key = switch (name) {
+			None(): trim2(substring(v, keyStart, special - keyStart), iniKeySpace);
+			Some(quotedName): switch (quotedName) {
+				IniNameFound(text, __): text;
+				IniNameMalformed(__): "";
+			}
+		};
 		valueEnd = iniLineEnd(v, special + 1, lineEnd);
 		value = parseIniValue(v, special + 1, valueEnd);
-		doParseIniKeys(v, value.second, valueEnd, Cons(KeyValue(key, value.first), acc));
+		doParseIniKeys(v, value.second, valueEnd, quotedNames, Cons(KeyValue(key, value.first), acc));
 	} else if (found == ";") {
 		commentEnd = iniLineEnd(v, special + 1, lineEnd);
-		doParseIniKeys(v, iniNextLine(special + 1, commentEnd, n), commentEnd, acc);
+		doParseIniKeys(v, iniNextLine(special + 1, commentEnd, n), commentEnd, quotedNames, acc);
+	} else if (found == "\n") {
+		doParseIniKeys(v, special + 1, lineEnd, quotedNames, acc);
 	} else {
 		IniKeys(acc, special, lineEnd)
 	}
+}
+
+// A quoted name must be followed by its delimiter, with only spaces or tabs between, as in
+// "key" = value. The name is copied out only when the delimiter is there. Otherwise, when the
+// quote closes on its own line, the line is skipped after the closing quote. When it closes on a
+// later line or never, the quote is taken as a stray one and the line is skipped after it, so a
+// quote on a later line does not pair with it and take the lines between along.
+grabIniQuotedName(v : string, start : int, delimiter : string) -> IniName {
+	n = strlen(v);
+	closed = iniQuotedEnd(v, start + 1, n);
+	after = if (closed == -1) n else iniSkipAny(v, closed, n, " \t");
+	if (closed != -1 && after < n && getCharAt(v, after) == delimiter) {
+		IniNameFound(grabIniQuoted(v, start + 1, makeList()).first, after)
+	} else if (closed != -1 && strRangeIndexOf(v, "\n", start + 1, closed) == -1) {
+		IniNameMalformed(closed)
+	} else {
+		IniNameMalformed(start + 1)
+	}
+}
+
+// The position after the quote that closes quoted text starting at start, or -1 when none does
+iniQuotedEnd(v : string, start : int, n : int) -> int {
+	closing = strRangeIndexOf(v, "\"", start, n);
+	if (closing == -1) -1
+	else if (closing + 1 < n && getCharAt(v, closing + 1) == "\"") iniQuotedEnd(v, closing + 2, n)
+	else closing + 1;
+}
+
+// Position of the first char not in chars in [start, end), or end when there is none
+iniSkipAny(v : string, start : int, end : int, chars : string) -> int {
+	if (start < end && strIndexOf(chars, getCharAt(v, start)) != -1) iniSkipAny(v, start + 1, end, chars)
+	else start;
 }
 
 // The value after "=": quoted when a quote comes before the line end, else the line trimmed
@@ -112,19 +207,31 @@ iniNextLine(pos : int, lineEnd : int, n : int) -> int {
 }
 
 iniFile2string(v : IniFile) -> string {
-	list2string(fold(v.sections, makeList(), \acc, s -> {
-		// The reader takes a section name as it stands between [ and ], so it is written the same way
-		header = Cons("[" + s.name + "]\n", acc);
-		keys = fold(s.keys, header, \acc2, kv -> Cons(kv.key + "=" + escapeIni(kv.value) + "\n", acc2));
+	quotedNames = exists(v.sections, \s -> strFindFirstOf(s.name, "]\n\u000d") != -1
+		|| exists(s.keys, \kv -> strFindFirstOf(kv.key, "=[;\n\u000d") != -1 || iniHasEdgeSpace(kv.key)));
+	initial = if (quotedNames) Cons(iniQuotedNamesMarker + "\n", makeList()) else makeList();
+	list2string(fold(v.sections, initial, \acc, s -> {
+		header = Cons("[" + (if (quotedNames) quoteIni(s.name) else s.name) + "]\n", acc);
+		keys = fold(s.keys, header, \acc2, kv -> Cons((if (quotedNames) quoteIni(kv.key) else kv.key) + "=" + escapeIni(kv.value) + "\n", acc2));
 		Cons("\n", keys)
 	}));
+}
+
+// Whether a char from iniKeySpace starts or ends s, which trimming would lose
+iniHasEdgeSpace(s : string) -> bool {
+	s != "" && (strIndexOf(iniKeySpace, getCharAt(s, 0)) != -1 || strIndexOf(iniKeySpace, getCharAt(s, strlen(s) - 1)) != -1);
+}
+
+// Names and values share one quoting convention; backslashes are not escape characters.
+quoteIni(s : string) -> string {
+	"\"" + strReplace(s, "\"", "\"\"") + "\"";
 }
 
 // A value is quoted when it holds a quote or a line break, or has spaces at either end: read back
 // unquoted, a line break would end it and could start a key or a section of its own
 escapeIni(s : string) -> string {
 	if (strFindFirstOf(s, "\"\n\u000d") != -1 || trim(s) != s)  {
-		"\"" + strReplace(s, "\"", "\"\"") + "\"";
+		quoteIni(s);
 	} else s;
 }
 
