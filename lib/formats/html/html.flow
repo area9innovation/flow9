@@ -24,7 +24,8 @@ export {
 
 	// Encodes a URL string. I.e. changes '<' to '%3C'
 	urlEncode(s : string) -> string;
-	// Decodes a URL encoded string. I.e. changes %XX to real chars
+	// Decodes a URL encoded string. I.e. changes %XX to real chars.
+	// A '%' that does not start an escape stays as it is; bytes that are not UTF-8 give U+FFFD
 	urlDecode(s : string) -> string;
 	// As urlEncode and urlDecode, but '+' is also affected
 	// '+' encodes to '%2B';
@@ -385,7 +386,7 @@ ensureHtmlEntitiesInitialized() -> void {
 unescapeHtml2(s : string) -> string {
 	ensureHtmlEntitiesInitialized();
 	errors = ref makeList();
-	result = doUnescapeHtml("", s, false, \e -> errors := Cons(e, ^errors));
+	result = doUnescapeHtml(s, false, \e -> errors := Cons(e, ^errors));
 	if (!isEmptyList(^errors)) println(list2string(^errors));
 	result;
 }
@@ -393,56 +394,81 @@ unescapeHtml2(s : string) -> string {
 unescapeHtml3(s : string) -> Pair<string, string> {
 	ensureHtmlEntitiesInitialized();
 	errors = ref makeList();
-	result = doUnescapeHtml("", s, false, \e -> errors := Cons(e, ^errors));
+	result = doUnescapeHtml(s, false, \e -> errors := Cons(e, ^errors));
 	Pair(result, list2string(^errors));
 }
 
 unescapeNumericHtml(s: string) -> string {
 	errors = ref makeList();
-	result = doUnescapeHtml("", s, true, \e -> errors := Cons(e, ^errors));
+	result = doUnescapeHtml(s, true, \e -> errors := Cons(e, ^errors));
 	if (!isEmptyList(^errors)) println(list2string(^errors));
 	result;
 }
 
-doUnescapeHtml(acc : string, s : string, numericOnly : bool, onError : (string) -> void) -> string {
-	i = strIndexOf(s, "&");
-	if (i == -1) acc + s else {
-		left = acc + strLeft(s, i);
-		right = strRight(s, i);
-		semi = strIndexOf(right, ";");
-		if (semi == -1) {
-			left + right
-		} else {
-			esca = strLeft(right, semi);
-			after = strRight(right, semi + 1);
-			if (startsWith(esca, "&#x")) {
-				// Hex
-				c = fromCharCode(parseHex(strRight(esca, 3)));
-				doUnescapeHtml(left + c, after, numericOnly, onError)
-			} else if (startsWith(esca, "&#")) {
-				// Decimal
-				c = fromCharCode(s2i(strRight(esca, 2)));
-				doUnescapeHtml(left + c, after, numericOnly, onError)
-			} else if (!numericOnly){
-				c = if (esca == "&nbsp") "\u00a0"
-				else if (esca == "&amp") "&"
-				else if (esca == "&lt") "<"
-				else if (esca == "&gt") ">"
-				else if (esca == "&quot") "\""
-				else if (esca == "&sol") "/"
-				else {
-					e = lookupTreeDef(^htmlEntity2string, esca, "");
-					if (e == "") {
-						onError("Unknown escape: " + esca + "\n");
-						esca + ";"
-					} else e;
-				}
-				doUnescapeHtml(left + c, after, numericOnly, onError)
-			} else {
-				doUnescapeHtml(left + esca + ";", after, numericOnly, onError)
+doUnescapeHtml(s : string, numericOnly : bool, onError : (string) -> void) -> string {
+	// The parts are collected in a list: appending them to a string is quadratic
+	list2string(doUnescapeHtmlFrom(s, 0, strlen(s), numericOnly, onError, makeList()));
+}
+
+doUnescapeHtmlFrom(s : string, i : int, n : int, numericOnly : bool, onError : (string) -> void, acc : List<string>) -> List<string> {
+	amp = strRangeIndexOf(s, "&", i, n);
+	semi = if (amp == -1) -1 else strRangeIndexOf(s, ";", amp, n);
+	if (semi == -1) {
+		Cons(substring(s, i, n - i), acc)
+	} else {
+		esca = substring(s, amp, semi - amp);
+		c = if (startsWith(esca, "&#")) {
+			numericHtmlEntity2string(esca)
+		} else if (!numericOnly) {
+			if (esca == "&nbsp") "\u00a0"
+			else if (esca == "&amp") "&"
+			else if (esca == "&lt") "<"
+			else if (esca == "&gt") ">"
+			else if (esca == "&quot") "\""
+			else if (esca == "&sol") "/"
+			else {
+				e = lookupTreeDef(^htmlEntity2string, esca, "");
+				if (e == "") {
+					onError("Unknown escape: " + esca + "\n");
+					esca + ";"
+				} else e;
 			}
+		} else {
+			esca + ";"
 		}
+		doUnescapeHtmlFrom(s, semi + 1, n, numericOnly, onError, Cons(c, Cons(substring(s, i, amp - i), acc)))
 	}
+}
+
+// &#DDD or &#xHHH, without the ';'. As in browsers: the reference is the run of digits,
+// and anything after it stays as it is; with no digits, it is not a reference;
+// 0, a surrogate or a value past U+10FFFF gives U+FFFD.
+numericHtmlEntity2string(esca : string) -> string {
+	hex = startsWith(esca, "&#x") || startsWith(esca, "&#X");
+	base = if (hex) 16 else 10;
+	digits = strRight(esca, if (hex) 3 else 2);
+	count = countUntil(0, strlen(digits), \i -> {
+		d = hexDigitValue(getCharCodeAt(digits, i));
+		d == -1 || d >= base
+	});
+	if (count == 0) {
+		esca + ";"
+	} else {
+		// The value stops growing past 0x10FFFF, so it does not overflow
+		code = foldRange(0, count - 1, 0, \acc, i ->
+			if (acc > 0x10FFFF) acc else acc * base + hexDigitValue(getCharCodeAt(digits, i))
+		);
+		c = if (code == 0 || (0xD800 <= code && code <= 0xDFFF) || code > 0x10FFFF) "\uFFFD"
+			else fromCharCode(code);
+		if (count == strlen(digits)) c else c + strRight(digits, count) + ";";
+	}
+}
+
+hexDigitValue(code : int) -> int {
+	if (0x30 <= code && code <= 0x39) code - 0x30
+	else if (0x41 <= code && code <= 0x46) code - 0x37
+	else if (0x61 <= code && code <= 0x66) code - 0x57
+	else -1;
 }
 
 urlEncode(s) {
@@ -459,75 +485,59 @@ urlEncode(s) {
 }
 
 urlDecode(s) {
-	urlDecode0("", s)
+	// The parts are collected in a list: appending them to a string is quadratic
+	list2string(urlDecodeFrom(s, 0, strlen(s), makeList()));
 }
 
-urlDecode0(acc : string, s : string) -> string {
-	percent = strIndexOf(s, "%");
+urlDecodeFrom(s : string, i : int, n : int, acc : List<string>) -> List<string> {
+	percent = strRangeIndexOf(s, "%", i, n);
 	if (percent == -1) {
-		acc + s;
+		Cons(substring(s, i, n - i), acc)
 	} else {
-		left = strLeft(s, percent);
-		right = strRight(s, percent);
-		percentPair = extractPercentHex(right);
-		hexcode = percentPair.first;
-		c = if (hexcode < 0xC0) {
-			percentPair
+		left = Cons(substring(s, i, percent - i), acc);
+		b = urlPercentByte(s, percent, n);
+		if (b == -1) {
+			urlDecodeFrom(s, percent + 1, n, Cons("%", left))
+		} else if (b < 0x80) {
+			urlDecodeFrom(s, percent + 3, n, Cons(fromCharCode(b), left))
 		} else {
-			// OK, it must be UTF-8 encoded
-			if (0xC0 <= hexcode && hexcode <= 0xDF) {
-				// 2 bytes
-				secondByte = extractPercentHex(percentPair.second);
-				if (secondByte.first == -1) {
-					// OK, it is some crap, because we expect a second percent here
-					percentPair
-				} else {
-					Pair((hexcode - 192) * 64 + (secondByte.first - 128), secondByte.second)
-				}
-			} else if (hexcode <= 0xEF) { // 3 bytes
-				secondByte = extractPercentHex(percentPair.second);
-				thirdByte = extractPercentHex(secondByte.second);
-				if (secondByte.first == -1 || thirdByte.first == -1) {
-					// OK, it is some crap, because we expect a second and third percent here
-					percentPair
-				} else {
-					Pair((hexcode - 224) * 4096
-						+ (secondByte.first - 128) * 64
-						+ (thirdByte.first - 128),
-						thirdByte.second
-					)
-				}
-			} else if (hexcode <= 0xF7) { // 4 bytes
-				secondByte = extractPercentHex(percentPair.second);
-				thirdByte = extractPercentHex(secondByte.second);
-				fourthByte = extractPercentHex(thirdByte.second);
-				if (secondByte.first == -1 || thirdByte.first == -1 || fourthByte.first == -1) {
-					// Crap. We need 4 bytes
-					percentPair
-				} else {
-					Pair((hexcode - 240) * 262144
-						+ (secondByte.first - 128) * 4096
-						+ (thirdByte.first - 128) * 64
-						+ (fourthByte.first - 128),
-						fourthByte.second
-					)
-				}
-			} else {
-				// TODO: We did not implement support for 6 bytes
-				percentPair
-			}
-		};
-
-		urlDecode0(acc + left + fromCharCode(c.first), c.second);
+			c = urlDecodeUtf8(s, percent + 3, n, b);
+			urlDecodeFrom(s, c.second, n, Cons(c.first, left))
+		}
 	}
 }
 
-// If a string starts with %, extract the hex-digit after it
-extractPercentHex(s : string) -> Pair<int, string> {
-	if (getCharAt(s, 0) == "%") {
-		Pair(parseHex(substring(s, 1, 2)), strRight(s, 3));
+// The byte of the escape %XX at 'at', or -1 if there is none
+urlPercentByte(s : string, at : int, n : int) -> int {
+	if (at + 2 < n && getCharCodeAt(s, at) == 0x25) {
+		hi = hexDigitValue(getCharCodeAt(s, at + 1));
+		lo = hexDigitValue(getCharCodeAt(s, at + 2));
+		if (hi == -1 || lo == -1) -1 else hi * 16 + lo
+	} else -1
+}
+
+// A character from the lead byte 'lead' and the escapes from 'at' on, and where to go on.
+// As in browsers, bytes that do not make a shortest form of a code point up to U+10FFFF,
+// other than a surrogate, give U+FFFD, and a byte that does not fit is read again.
+urlDecodeUtf8(s : string, at : int, n : int, lead : int) -> Pair<string, int> {
+	// The number of continuation bytes, and the range of the first one
+	if (0xC2 <= lead && lead <= 0xDF) urlDecodeUtf8Tail(s, at, n, lead - 0xC0, 1, 0x80, 0xBF)
+	else if (lead == 0xE0) urlDecodeUtf8Tail(s, at, n, 0, 2, 0xA0, 0xBF)
+	else if (lead == 0xED) urlDecodeUtf8Tail(s, at, n, lead - 0xE0, 2, 0x80, 0x9F)
+	else if (0xE1 <= lead && lead <= 0xEF) urlDecodeUtf8Tail(s, at, n, lead - 0xE0, 2, 0x80, 0xBF)
+	else if (lead == 0xF0) urlDecodeUtf8Tail(s, at, n, 0, 3, 0x90, 0xBF)
+	else if (0xF1 <= lead && lead <= 0xF3) urlDecodeUtf8Tail(s, at, n, lead - 0xF0, 3, 0x80, 0xBF)
+	else if (lead == 0xF4) urlDecodeUtf8Tail(s, at, n, lead - 0xF0, 3, 0x80, 0x8F)
+	else Pair("\uFFFD", at);
+}
+
+urlDecodeUtf8Tail(s : string, at : int, n : int, code : int, count : int, lower : int, upper : int) -> Pair<string, int> {
+	if (count == 0) {
+		Pair(fromCharCode(code), at)
 	} else {
-		Pair(-1, s);
+		b = urlPercentByte(s, at, n);
+		if (b < lower || b > upper) Pair("\uFFFD", at)
+		else urlDecodeUtf8Tail(s, at + 3, n, code * 64 + (b - 0x80), count - 1, 0x80, 0xBF);
 	}
 }
 

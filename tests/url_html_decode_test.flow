@@ -1,0 +1,171 @@
+import formats/html/html;
+import formats/html/html_node;
+import formats/html/html_parse;
+import sys/target;
+
+// Checks of urlDecode, urlDecode2 and the numeric character references in
+// lib/formats/html/html.flow and lib/formats/html/html_node.flow:
+//
+//  - A '%' that does not start an escape (%ZZ, a '%' at the end) stays as it is,
+//    instead of becoming U+0000 and taking the next two characters with it.
+//  - Bytes that are not UTF-8 (a bad continuation byte, an overlong form, a surrogate,
+//    a value past U+10FFFF) give U+FFFD, as in browsers, instead of a negative or too big
+//    code point that makes fromCharCode throw on Java and JS.
+//  - urlDecode2, which is a Java native, gives the same as the flow version on the other
+//    targets, instead of "" and a stack trace for a bad escape.
+//  - &#...; and &#x...; give U+FFFD for 0, a surrogate or a value past U+10FFFF, and stay
+//    as they are when there are no digits.
+//  - unescapeHtmlEntity does not add a ';' that the parser dropped: it&#8217s gives it’s.
+//  - A long input is decoded in linear time; the check here is only that it works.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(s2a(expected)));
+		println("  actual:   " + toString(s2a(actual)));
+	}
+}
+
+bad = fromCharCode(0xFFFD);
+
+// The text of parsed HTML, with entities decoded as html2md does
+parseAndUnescape(html : string) -> string {
+	parsedHtmlText(parseHtml(html).first);
+}
+
+parsedHtmlText(nodes : [HtmlNode]) -> string {
+	concatStrings(map(nodes, \node -> switch (node) {
+		HtmlTag(__, __, children): parsedHtmlText(children);
+		HtmlText(text): text;
+		HtmlEntity(__, __): unescapeHtmlEntity(node);
+		HtmlComment(__): "";
+	}));
+}
+
+testUrlDecode() -> void {
+	check("an ASCII escape", urlDecode("a%41b"), "aAb");
+	check("a two-byte character in lower case", urlDecode("%c3%a9"), fromCharCode(0xE9));
+	check("a three-byte character", urlDecode("%E2%82%AC"), fromCharCode(0x20AC));
+	check("a four-byte character", urlDecode("%F0%9F%98%80"), fromCharCode(0x1F600));
+	check("the last code point", urlDecode("%F4%8F%BF%BF"), fromCharCode(0x10FFFF));
+	check("an escaped U+FFFD", urlDecode("%EF%BF%BD"), bad);
+	check("a plus is kept", urlDecode("a+b%2Bc"), "a+b+c");
+	check("text with no escape", urlDecode("abc"), "abc");
+	check("the empty string", urlDecode(""), "");
+
+	check("an escape with no hex digits stays", urlDecode("a%ZZb"), "a%ZZb");
+	check("an escape with one hex digit stays", urlDecode("a%4G"), "a%4G");
+	check("a short escape at the end stays", urlDecode("a%2"), "a%2");
+	check("a percent at the end stays", urlDecode("100%"), "100%");
+	check("a lone percent stays", urlDecode("%"), "%");
+	check("a percent before an escape stays", urlDecode("%%41"), "%A");
+	check("a %u escape stays", urlDecode("%u0041"), "%u0041");
+
+	check("a bad continuation byte", urlDecode("%C0%41"), bad + "A");
+	check("a two-byte character cut by a letter", urlDecode("%C3x"), bad + "x");
+	check("a two-byte character cut by an escape", urlDecode("%C3%28"), bad + "(");
+	check("a two-byte character cut by the end", urlDecode("%C3"), bad);
+	check("a three-byte character cut by the end", urlDecode("%E2%82"), bad);
+	check("a three-byte character cut by an escape", urlDecode("%E2%82%41"), bad + "A");
+	check("a four-byte character cut by an escape", urlDecode("%F0%9F%98%41"), bad + "A");
+	check("a lone continuation byte", urlDecode("%80"), bad);
+	check("a byte that is never UTF-8", urlDecode("%FF"), bad);
+	check("an overlong NUL", urlDecode("%C0%80"), bad + bad);
+	check("an overlong two-byte form", urlDecode("%C1%BF"), bad + bad);
+	check("an overlong three-byte form", urlDecode("%E0%80%80"), bad + bad + bad);
+	check("an overlong four-byte form", urlDecode("%F0%80%80%80"), bad + bad + bad + bad);
+	check("a surrogate", urlDecode("%ED%A0%80"), bad + bad + bad);
+	check("a value past U+10FFFF", urlDecode("%F4%90%80%80"), bad + bad + bad + bad);
+	check("a five-byte form", urlDecode("%F8%80%80%80%80"), bad + bad + bad + bad + bad);
+	check("text goes on after a bad byte", urlDecode("a%FFb%41"), "a" + bad + "bA");
+	check("a percent after a character stays", urlDecode("%E2%82%AC%"), fromCharCode(0x20AC) + "%");
+
+	check("a long input", urlDecode(strRepeat("a%41", 100000)), strRepeat("aA", 100000));
+}
+
+testUrlDecode2() -> void {
+	check("urlDecode2 of plus and %2B", urlDecode2("a+b%2Bc"), "a b+c");
+	check("urlDecode2 of %2b", urlDecode2("%2b"), "+");
+	check("urlDecode2 of a character", urlDecode2("%E2%82%AC"), fromCharCode(0x20AC));
+	check("urlDecode2 of an escape with no hex digits", urlDecode2("a%ZZb"), "a%ZZb");
+	check("urlDecode2 of a percent at the end", urlDecode2("100%"), "100%");
+	check("urlDecode2 of a percent before a plus", urlDecode2("100%+sure"), "100% sure");
+	check("urlDecode2 of a bad continuation byte", urlDecode2("%C0%41"), bad + "A");
+	check("urlDecode2 of a surrogate", urlDecode2("%ED%A0%80"), bad + bad + bad);
+	check("urlDecode2 of a cut character before a plus", urlDecode2("%E2+%82"), bad + " " + bad);
+}
+
+testNumericReferences() -> void {
+	check("a decimal reference", unescapeHtml2("&#65;"), "A");
+	check("a hex reference", unescapeHtml2("&#x41;"), "A");
+	check("a hex reference with a capital X", unescapeHtml2("&#X41;"), "A");
+	check("a four-byte character", unescapeHtml2("&#x1F600;"), fromCharCode(0x1F600));
+	check("the last code point", unescapeHtml2("&#1114111;"), fromCharCode(0x10FFFF));
+	check("leading zeros", unescapeHtml2("&#00065;"), "A");
+	check("text around references", unescapeHtml2("a&#65;b&amp;c&#x42;"), "aAb&cB");
+
+	check("a decimal value past U+10FFFF", unescapeHtml2("&#1114112;"), bad);
+	check("a hex value past U+10FFFF", unescapeHtml2("&#x110000;"), bad);
+	check("a value past the int range", unescapeHtml2("&#9999999999;"), bad);
+	check("a long hex value", unescapeHtml2("&#xFFFFFFFFFFFF;"), bad);
+	check("zero", unescapeHtml2("&#0;"), bad);
+	check("a hex zero", unescapeHtml2("&#x0;"), bad);
+	check("a high surrogate", unescapeHtml2("&#xD800;"), bad);
+	check("a low surrogate", unescapeHtml2("&#57343;"), bad);
+
+	check("a minus sign is not a reference", unescapeHtml2("&#-1;"), "&#-1;");
+	check("no digits is not a reference", unescapeHtml2("&#;"), "&#;");
+	check("no hex digits is not a reference", unescapeHtml2("&#x;"), "&#x;");
+	check("letters are not a reference", unescapeHtml2("&#abc;"), "&#abc;");
+	check("what follows the digits stays", unescapeHtml2("&#65abc;"), "Aabc;");
+	check("a reference with no semicolon stays", unescapeHtml2("&#65"), "&#65");
+
+	check("unescapeNumericHtml of a reference", unescapeNumericHtml("&#65;&amp;"), "A&amp;");
+	check("unescapeNumericHtml of a value past U+10FFFF", unescapeNumericHtml("&#1114112;"), bad);
+	check("unescapeHtml3 of a value past U+10FFFF", unescapeHtml3("&#x110000;&#65;").first, bad + "A");
+	check("unescapeHtml3 still reports an unknown name", unescapeHtml3("&foo;").second, "Unknown escape: &foo\n");
+
+	check("an entity node", unescapeHtmlEntity(HtmlEntity("&#", "65")), "A");
+	check("a hex entity node", unescapeHtmlEntity(HtmlEntity("&#x", "41")), "A");
+	check("a named entity node", unescapeHtmlEntity(HtmlEntity("&", "amp")), "&");
+	check("an entity node past U+10FFFF", unescapeHtmlEntity(HtmlEntity("&#", "1114112")), bad);
+	check("a hex entity node past U+10FFFF", unescapeHtmlEntity(HtmlEntity("&#x", "110000")), bad);
+	check("an entity node of zero", unescapeHtmlEntity(HtmlEntity("&#", "0")), bad);
+	check("a hex entity node of a surrogate", unescapeHtmlEntity(HtmlEntity("&#x", "D800")), bad);
+	check("a four-byte entity node", unescapeHtmlEntity(HtmlEntity("&#x", "1F600")), fromCharCode(0x1F600));
+	check("an entity node with a capital X", unescapeHtmlEntity(HtmlEntity("&#", "X41")), "A");
+	check("an entity node with a minus sign", unescapeHtmlEntity(HtmlEntity("&#", "-1")), "&#-1");
+	// The parser drops the ';', so a node does not say if there was one, and none is added
+	check("an entity node with a letter after the digits", unescapeHtmlEntity(HtmlEntity("&#", "8217s")), fromCharCode(0x2019) + "s");
+	check("a hex entity node with a letter after the digits", unescapeHtmlEntity(HtmlEntity("&#x", "41g")), "Ag");
+	check("an entity node with no digits", unescapeHtmlEntity(HtmlEntity("&#", "abc")), "&#abc");
+	check("an entity node of a semicolon", unescapeHtmlEntity(HtmlEntity("&#", "59")), ";");
+	check("a hex entity node of a semicolon", unescapeHtmlEntity(HtmlEntity("&#x", "3B")), ";");
+	check("an entity node of a semicolon and letters", unescapeHtmlEntity(HtmlEntity("&#", "59abc")), ";abc");
+	check("parsed text with no semicolon after a reference", parseAndUnescape("<p>it&#8217s nice</p>"), "it" + fromCharCode(0x2019) + "s nice");
+	check("parsed text with a semicolon after a reference", parseAndUnescape("<p>it&#8217;s nice</p>"), "it" + fromCharCode(0x2019) + "s nice");
+	check("parsed hex reference with a letter after it", parseAndUnescape("<p>&#x41g</p>"), "Ag");
+	check("parsed reference with no digits", parseAndUnescape("<p>a &#abc b</p>"), "a &#abc b");
+	check("parsed semicolon reference", parseAndUnescape("<p>a &#59 b</p>"), "a ; b");
+	check("unescapeHtml2 keeps the semicolon after the letters", unescapeHtml2("&#8217s;"), fromCharCode(0x2019) + "s;");
+	check("unescapeHtml2 of a semicolon reference", unescapeHtml2("a&#59;b&#x3B;c"), "a;b;c");
+
+	check("a long input", unescapeHtml2(strRepeat("x&amp;", 100000)), strRepeat("x&", 100000));
+}
+
+main() {
+	testUrlDecode();
+	testUrlDecode2();
+	testNumericReferences();
+
+	if (^failures == 0) {
+		println("url and html decode tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " url and html decode test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
