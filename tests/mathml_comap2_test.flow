@@ -1,0 +1,118 @@
+import formats/mathml;
+import formats/comap2;
+import sys/target;
+
+// Checks of lib/formats/mathml.flow and of downloadComap in lib/formats/comap2.flow:
+//
+//  - The number, identifier, operator and text builders escape < > and & in their argument,
+//    and makeMmlFenced escapes its open and close attributes, " included. Character
+//    references such as &#x3B1; stay as written, and the container builders still take markup.
+//  - mmlHeader loads MathJax over https from cdnjs, as cdn.mathjax.org was retired in 2017.
+//  - downloadComap asks for https URLs and URL-encodes the values it puts in them.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+testTokens() -> void {
+	check("identifier escapes <", makeMmlIdentifier("a<b"), "<mi>a&lt;b</mi>");
+	check("number escapes &", makeMmlNumber("1 & 2"), "<mn>1 &amp; 2</mn>");
+	check("operator escapes <", makeMmlOperator("<"), "<mo>&lt;</mo>");
+	check("operator escapes >", makeMmlOperator(">"), "<mo>&gt;</mo>");
+	check("text cannot close its element",
+		makeMmlText("x </mtext><b>bold</b>"),
+		"<mtext>x &lt;/mtext&gt;&lt;b&gt;bold&lt;/b&gt;</mtext>"
+	);
+	check("getMmlRepresentation escapes too", getMmlRepresentation("x<y", MathMlText()), "<mtext>x&lt;y</mtext>");
+	check("a lone & is escaped", makeMmlIdentifier("AT&T"), "<mi>AT&amp;T</mi>");
+	check("an & before a space is escaped", makeMmlText("a & b;"), "<mtext>a &amp; b;</mtext>");
+	check("&#; is no reference", makeMmlText("&#;"), "<mtext>&amp;#;</mtext>");
+	check("&#xZZ; is no reference", makeMmlText("&#xZZ;"), "<mtext>&amp;#xZZ;</mtext>");
+	check("an unterminated reference is escaped", makeMmlText("&#945"), "<mtext>&amp;#945</mtext>");
+}
+
+testUnchanged() -> void {
+	check("plain operator", makeMmlOperator("+"), "<mo>+</mo>");
+	check("plain identifier", makeMmlIdentifier("x"), "<mi>x</mi>");
+	check("plain number", makeMmlNumber("3.14"), "<mn>3.14</mn>");
+	check("hex reference stays", makeMmlIdentifier("&#x3B1;"), "<mi>&#x3B1;</mi>");
+	check("decimal reference stays", makeMmlOperator("&#8721;"), "<mo>&#8721;</mo>");
+	check("combining reference stays", makeMmlIdentifier("u&#x0307;"), "<mi>u&#x0307;</mi>");
+	check("named reference stays", makeMmlOperator("&InvisibleTimes;"), "<mo>&InvisibleTimes;</mo>");
+	check("escaped text stays", makeMmlText("a &lt; b &amp; c"), "<mtext>a &lt; b &amp; c</mtext>");
+	check("fraction takes markup", makeMmlFrac("<mn>1</mn>", "<mn>2</mn>"), "<mfrac><mn>1</mn><mn>2</mn></mfrac>");
+	check("root takes markup", makeMmlRoot("<mn>3</mn>", "<mi>x</mi>"), "<mroot><mi>x</mi><mn>3</mn></mroot>");
+	check("expression takes markup",
+		makeMmlExpression(makeMmlRow(makeMmlSuperscript(makeMmlIdentifier("x"), makeMmlNumber("2")))),
+		"<math xmlns=\"http://www.w3.org/1998/Math/MathML\"><mrow><msup><mi>x</mi><mn>2</mn></msup></mrow></math>"
+	);
+	check("fenced with brackets", makeMmlFenced("[[", "]]", "<mi>x</mi>"), "<mfenced open=\"[[\" close=\"]]\"><mi>x</mi></mfenced>");
+	check("fenced with no brackets", makeMmlFenced("", "", "<mi>x</mi>"), "<mfenced open=\"\" close=\"\"><mi>x</mi></mfenced>");
+}
+
+testFenced() -> void {
+	check("fenced quote stays in its attribute",
+		makeMmlFenced("\"", "\" onclick=\"y", "<mi>z</mi>"),
+		"<mfenced open=\"&quot;\" close=\"&quot; onclick=&quot;y\"><mi>z</mi></mfenced>"
+	);
+	check("fenced angle brackets", makeMmlFenced("<", ">", "<mi>z</mi>"), "<mfenced open=\"&lt;\" close=\"&gt;\"><mi>z</mi></mfenced>");
+	check("fenced reference stays", makeMmlFenced("&#x2329;", "&#x232A;", ""), "<mfenced open=\"&#x2329;\" close=\"&#x232A;\"></mfenced>");
+}
+
+testHeader() -> void {
+	check("MathJax over https",
+		mmlHeader(),
+		"<script type=\"text/javascript\" src=\"https://cdnjs.cloudflare.com/ajax/libs/mathjax/2.7.9/MathJax.js?config=TeX-AMS-MML_HTMLorMML\"></script>"
+	);
+}
+
+// Answers each request with the next canned response instead of sending it.
+// Returning None() stops the real request; http.flow then reports "Request denied", which is ignored here.
+testDownloadComap() -> void {
+	requested : ref [string] = ref [];
+	responses = ["<login salt=\"NaCl\"/>", "<login clientID=\"c 1&amp;x\"/>", "<map/>"];
+	setHttpRequestArgsUpdater(\args -> {
+		n = length(^requested);
+		requested := arrayPush(^requested, args.url);
+		args.onData(200, elementAt(responses, n, ""), []);
+		None();
+	});
+	downloaded = ref "";
+	downloadComap("a&b+c@example.com", "secret", 42, \content -> downloaded := content, nop1);
+	setHttpRequestArgsUpdater(\args -> Some(args));
+
+	base = "https://go.comapping.com/cgi-bin/comapping.n?";
+	urls = ^requested;
+	check("three requests", i2s(length(urls)), "3");
+	check("first login", elementAt(urls, 0, ""), base + "action=login&login=a%26b%2Bc%40example.com&loginMethod=simple");
+	// md5("secret" + "NaCl")
+	check("salted login",
+		elementAt(urls, 1, ""),
+		base + "action=login&login=a%26b%2Bc%40example.com&loginMethod=withSalt&password=b7ac67b360c24baef6ed28a919ddb6d5"
+	);
+	check("download", elementAt(urls, 2, ""), base + "action=download&clientID=c%201%26x&format=comap&mapid=42");
+	check("map handed over", ^downloaded, "<map/>");
+}
+
+main() {
+	testTokens();
+	testUnchanged();
+	testFenced();
+	testHeader();
+	testDownloadComap();
+
+	if (^failures == 0) {
+		println("MathML and comap2 tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " MathML and comap2 test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
