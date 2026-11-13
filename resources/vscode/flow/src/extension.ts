@@ -2,6 +2,7 @@
 // The module 'vscode' contains the VS Code extensibility API
 // Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
+import './minimatchCompat';
 import * as path from 'path';
 import { spawn, ChildProcess } from 'child_process';
 import * as fs from "fs";
@@ -13,7 +14,7 @@ import {
 
 import * as tools from "./tools";
 import * as updater from "./updater";
-import simpleGit from 'simple-git';
+import { simpleGit } from 'simple-git';
 import * as notebook from './notebook';
 //import { performance } from 'perf_hooks';
 import editors from './editors';
@@ -32,7 +33,7 @@ interface ProblemMatcher {
 let childProcesses = [];
 let client: LanguageClient = null;
 let flowChannel : vscode.OutputChannel = null;
-let serverChannel : vscode.OutputChannel = null;
+let serverChannel : vscode.LogOutputChannel = null;
 let flowRepoUpdateChannel : vscode.OutputChannel = null;
 let counter = 0; // used to silence not finished jobs when new ones got started
 
@@ -76,7 +77,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     flowChannel = vscode.window.createOutputChannel("Flow output");
 	flowChannel.show(true);
-	serverChannel = vscode.window.createOutputChannel("Flow Language Server");
+	serverChannel = vscode.window.createOutputChannel("Flow Language Server", { log: true });
 
 	// Create an LSP client
 	startLspClient().then(() => {
