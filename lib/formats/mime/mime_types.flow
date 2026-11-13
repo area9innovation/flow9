@@ -117,14 +117,14 @@ mimeMessageRfc822Api = registerMimeTypeApi(MimeTypeApi("message/rfc822", MimeMes
 }));
 
 
-MimeHeader(contentType : string, documentType : string, contentEncoding : string, value : string);
+MimeHeader(mimeVersion : bool, contentType : string, documentType : string, contentEncoding : string, value : string);
 
 parseMime(file : string) -> [MimeValue] {
-	[if (strIndexOf(file, "MIME-Version:") != -1) {
-		head = parseMimeHeader(file, MimeHeader("", "", "", file));
-		encoding = toLowerCase(head.contentEncoding);
+	head = parseMimeHeader(file);
+	[if (head.mimeVersion) {
+		encoding = mimeLowerAscii(head.contentEncoding);
 		if (encoding == "quoted-printable") {
-			decoded = doDecodeQuotedPrintable(head.value, 0, strlen(head.value), "");
+			decoded = decodeQuotedPrintable(head.value);
 			mimeString2value(head.contentType, decoded);
 		} else if (encoding == "base64") {
 			decoded = decodeBase64(head.value);
@@ -140,51 +140,86 @@ parseMime(file : string) -> [MimeValue] {
 	}]
 }
 
-parseMimeHeader(file : string, acc : MimeHeader) -> MimeHeader {
-	linepos = strIndexOf(file, "\n");
-	if (linepos == -1) {
-		acc;
+// The header runs up to the first empty line; the content follows it. Field names are not
+// case sensitive, and when a field is repeated, the first one counts. A line that starts
+// with a space or a tab continues the field before it (RFC 5322, 2.2.3).
+parseMimeHeader(file : string) -> MimeHeader {
+	header = parseMimeHeaderFields(file, 0, strlen(file), makeList());
+	fields = list2array(header.first);
+	field = \name -> eitherMap(find(fields, \f -> f.first == name), secondOfPair, "");
+	contentType = field("content-type");
+	MimeHeader(
+		exists(fields, \f -> f.first == "mime-version"),
+		mimeLowerAscii(trim2(takeBefore(contentType, ";", contentType), " \t")),
+		field("x-document-type"),
+		field("content-transfer-encoding"),
+		strRight(file, header.second)
+	);
+}
+
+// Reads the fields from position i up to the empty line, as (lower-case name, value) pairs,
+// last first, and gives the position where the content starts.
+parseMimeHeaderFields(file : string, i : int, n : int, acc : List<Pair<string, string>>) -> Pair<List<Pair<string, string>>, int> {
+	if (i >= n) {
+		Pair(acc, n);
 	} else {
-		line = strReplace(strLeft(file, linepos), "\u000d", "");
-		rest = strRight(file, linepos + 1);
-		if (line == "") {
-			// Empty line separates the header from the content
-			MimeHeader(acc.contentType, acc.documentType, acc.contentEncoding, rest);
-		} else if (startsWith(line, "X-Document-Type:")) {
-			docType = trim(strRight(line, strlen("X-Document-Type:")));
-			parseMimeHeader(rest, MimeHeader(acc.contentType, docType, acc.contentEncoding, rest));
-		} else if (startsWith(line, "Content-Transfer-Encoding:")) {
-			encoding = trim(strRight(line, strlen("Content-Transfer-Encoding:")));
-			parseMimeHeader(rest, MimeHeader(acc.contentType, acc.documentType, encoding, rest));
-		} else if (startsWith(line, "Content-Type:")) {
-			type = trim(strRight(line, strlen("Content-Type:")));
-			fields = strSplit(type, ";");
-			mimeType = fields[0];
-			parseMimeHeader(rest, MimeHeader(mimeType, acc.documentType, acc.contentEncoding, rest));
+		lineEnd = mimeLineEnd(file, i, n);
+		if (strReplace(substring(file, i, lineEnd - i), "\u000d", "") == "") {
+			Pair(acc, min(lineEnd + 1, n));
 		} else {
-			// Any other field is just ignored
-			parseMimeHeader(rest, MimeHeader(acc.contentType, acc.documentType, acc.contentEncoding, rest));
-		};
+			fieldEnd = mimeFieldEnd(file, lineEnd, n);
+			line = strReplace(strReplace(substring(file, i, fieldEnd - i), "\u000d", ""), "\n", "");
+			colon = strIndexOf(line, ":");
+			nacc = if (colon < 0) acc else Cons(Pair(mimeLowerAscii(strLeft(line, colon)), trim2(strRight(line, colon + 1), " \t")), acc);
+			parseMimeHeaderFields(file, fieldEnd + 1, n, nacc);
+		}
 	}
 }
 
-doDecodeQuotedPrintable(s : string, i : int, n : int, acc : string) -> string {
-	if (i < n) {
-		c = getCharAt(s, i);
-		if (c == "=") {
-			c1 = getCharAt(s, i + 1);
-			c2 = getCharAt(s, i + 2);
-			if (c1 == "\u000d" && c2 == "\n") {
-				doDecodeQuotedPrintable(s, i + 3, n, acc);
-			} else {
-				ch = parseHex(c1 + c2);
-				doDecodeQuotedPrintable(s, i + 3, n, acc + fromCharCode(ch));
-			}
-		}	else {
-			doDecodeQuotedPrintable(s, i + 1, n, acc + c);
-		}
+// Field names and MIME types are not case sensitive, and only their ASCII letters are
+// lower-cased. toLowerCase follows the system locale on Java and C++: with a Turkish
+// locale, I does not become i there.
+mimeLowerAscii(s : string) -> string {
+	list2string(stringFoldi(s, makeList(), \i, acc, c -> Cons(if (65 <= c && c <= 90) fromCharCode(c + 32) else substring(s, i, 1), acc)));
+}
+
+mimeLineEnd(file : string, i : int, n : int) -> int {
+	pos = strRangeIndexOf(file, "\n", i, n);
+	if (pos < 0) n else pos;
+}
+
+// A field ends at the first line end that is not followed by a space or a tab.
+mimeFieldEnd(file : string, lineEnd : int, n : int) -> int {
+	next = if (lineEnd + 1 < n) getCharCodeAt(file, lineEnd + 1) else -1;
+	if (next == 32 || next == 9) mimeFieldEnd(file, mimeLineEnd(file, lineEnd + 1, n), n) else lineEnd;
+}
+
+// Quoted-printable (RFC 2045, 6.7): =XX is the byte with hex value XX, and an = at the end
+// of a line or of the text is a soft line break, which is removed with the line end. Any
+// other = is kept as it is.
+decodeQuotedPrintable(s : string) -> string {
+	list2string(doDecodeQuotedPrintable(s, 0, strlen(s), makeList()));
+}
+
+doDecodeQuotedPrintable(s : string, i : int, n : int, acc : List<string>) -> List<string> {
+	eqAt = strRangeIndexOf(s, "=", i, n);
+	if (eqAt < 0) {
+		Cons(substring(s, i, n - i), acc);
 	} else {
-		acc
+		nacc = Cons(substring(s, i, eqAt - i), acc);
+		c1 = getCharAt(s, eqAt + 1);
+		c2 = getCharAt(s, eqAt + 2);
+		if (eqAt + 1 >= n) {
+			nacc;
+		} else if (c1 == "\n") {
+			doDecodeQuotedPrintable(s, eqAt + 2, n, nacc);
+		} else if (c1 == "\u000d" && c2 == "\n") {
+			doDecodeQuotedPrintable(s, eqAt + 3, n, nacc);
+		} else if (isHexDigit(c1) && isHexDigit(c2)) {
+			doDecodeQuotedPrintable(s, eqAt + 3, n, Cons(fromCharCode(parseHex(c1 + c2)), nacc));
+		} else {
+			doDecodeQuotedPrintable(s, eqAt + 2, n, Cons("=" + c1, nacc));
+		}
 	}
 }
 
