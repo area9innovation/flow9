@@ -42,6 +42,10 @@ export {
 
 		// For example [KeyValue("", "home"), KeyValue("item", "123")];
 		hash: [KeyValue],
+
+		// The part before @ in the host, for example "user:password". It is "" if not specified.
+		// It is kept as written, and it is not part of the host or the origin.
+		userinfo: string,
 	);
 
 	// A default Uri
@@ -69,6 +73,7 @@ export {
 	uri3GetSearch(u: Uri3) -> string;
 
 	// Returns for example: home&item=123
+	// Only %, &, = and space are encoded, so the parameters survive parsing the href again.
 	uri3GetHash(u: Uri3) -> string;
 
 	// Convert search or hash parameters to a tree, so it is easy to use the lookupTreeDef function.
@@ -77,7 +82,7 @@ export {
 	uri3MakeTree(params: [KeyValue]) -> Tree<string, string>;
 }
 
-makeUri3() -> Uri3 { Uri3("", "", 0, [], false, false, [], []); }
+makeUri3() -> Uri3 { Uri3("", "", 0, [], false, false, [], [], ""); }
 
 
 uri3(href: string) -> Uri3 {
@@ -91,7 +96,7 @@ uri3(href: string) -> Uri3 {
 		Pair("", href);
 	} else {
 		p = substring(href, 0, protocolIndex);
-		if (strIndexOf(p, "?") >= 0 || strIndexOf(p, "#") >= 0 || strIndexOf(p, "/") >=0 || strIndexOf(p, ":") >= 0) {
+		if (strIndexOf(p, "?") >= 0 || strIndexOf(p, "#") >= 0 || strIndexOf(p, "/") >=0 || strIndexOf(p, ":") >= 0 || strIndexOf(p, "\\") >= 0) {
 			// This is not the protocol, assume it is something else.
 			Pair("", href);
 		} else {
@@ -131,18 +136,27 @@ uri3(href: string) -> Uri3 {
 		}
 	}
 
+	// Like the browsers, a backslash before the search is read as a slash for these protocols and for relative urls.
+	authorityPath = if (contains(["", "http", "https", "ftp", "ws", "wss", "file"], protocol)) strReplace(e[0], "\\", "/") else e[0];
+
 	// Split the string, and keep the slashes
-	slashes = strSplit2(e[0], ["/"]);
+	slashes = strSplit2(authorityPath, ["/"]);
 	slashesCount = length(slashes);
 
+	// The authority is userinfo@host:port, and the host comes after the last @.
 	hostPath = if (slashesCount >= 3 && slashes[0] == "/" && slashes[1] == "/") {
 		if (slashes[2] == "/") {
-			Pair("", subrange(slashes, 2, slashesCount - 2));
+			Triple("", subrange(slashes, 2, slashesCount - 2), "");
 		} else {
-			Pair(toLowerCase(slashes[2]), subrange(slashes, 3, slashesCount - 3));
+			atIndex = strLastIndexOf(slashes[2], "@");
+			Triple(
+				toLowerCase(takeTail(slashes[2], atIndex + 1)),
+				subrange(slashes, 3, slashesCount - 3),
+				if (atIndex < 0) "" else substring(slashes[2], 0, atIndex)
+			);
 		}
 	} else {
-		Pair("", slashes);
+		Triple("", slashes, "");
 	}
 
 	haveHost = hostPath.first != "";
@@ -177,6 +191,7 @@ uri3(href: string) -> Uri3 {
 	);
 
 	// Ignore . and go back with ..
+	// An absolute path cannot go above the root, so a leading .. is dropped there.
 	pathReduced = fold(
 		path.first,
 		[],
@@ -184,8 +199,14 @@ uri3(href: string) -> Uri3 {
 			if (str == ".") {
 				// ignore
 				acc;
-			} else if (str == ".." && length(acc) >= 1) {
-				take(acc, length(acc) - 1);
+			} else if (str == "..") {
+				if (acc != [] && lastElement(acc, "") != "..") {
+					take(acc, length(acc) - 1);
+				} else if (path.second) {
+					acc;
+				} else {
+					arrayPush(acc, str);
+				}
 			} else {
 				arrayPush(acc, str);
 			}
@@ -235,11 +256,16 @@ uri3(href: string) -> Uri3 {
 		});
 	};
 
-	Uri3(protocol, hostname, port, pathReduced, path.second, path.third, makeKv(e[1], urlDecode2), makeKv(e[2], urlDecode));
+	Uri3(protocol, hostname, port, pathReduced, path.second, path.third, makeKv(e[1], urlDecode2), makeKv(e[2], urlDecode), hostPath.third);
 }
 
 uri3GetHref(u: Uri3) -> string {
-	originStr = uri3GetOrigin(u);
+	// The userinfo is not part of the origin, but it is kept in the href
+	originStr = if (u.userinfo == "") {
+		uri3GetOrigin(u);
+	} else {
+		(if (u.protocol != "") u.protocol + ":" else "") + "//" + u.userinfo + "@" + uri3GetHost(u);
+	}
 	searchStr = uri3GetSearch(u);
 	hashStr = uri3GetHash(u);
 
@@ -335,7 +361,7 @@ uri3GlueSearchParameters(params: [KeyValue], encode : (string) -> string) -> str
 
 uri3GetSearch(u: Uri3) -> string { uri3GlueSearchParameters(u.search, urlEncode2); }
 
-uri3GetHash(u: Uri3) -> string { uri3GlueSearchParameters(u.hash, \str -> strReplace(str, " ", "%20")); }
+uri3GetHash(u: Uri3) -> string { uri3GlueSearchParameters(u.hash, \str -> strReplaces(str, ["%", "%25", "&", "%26", "=", "%3D", " ", "%20"])); }
 
 uri3MakeTree(params: [KeyValue]) -> Tree<string, string> {
 	fold(params, makeTree(), \acc: Tree<string, string>, kv: KeyValue -> {
