@@ -1,0 +1,126 @@
+import text/gringo/dcode_lib;
+import tools/gringo/gringo_parse;
+import sys/target;
+
+// Checks that a gringo star ends when an iteration matches without consuming
+// input, both in the compiled parser runtime (parseStar in
+// lib/text/gringo/dcode_lib.flow) and in the interpreter (GStar in
+// lib/tools/gringo/gringo_parse.flow).
+//
+// A star over something that can match the empty string, such as ("a"?)* or
+// (ws)* with ws = " "*, used to match the empty string again and again and
+// never return. Now it stops there, and the empty iteration leaves no output.
+//
+// The compiled checks give up after a fixed number of matcher calls, so they
+// fail rather than hang on the old code. The interpreter checks hang on it.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+maxCalls = 1000;
+
+textAction = GringoAction(\o : string, v -> o + "[" + v + "]", \o : string, m -> o + "<" + m + ">");
+
+makeAcc(input : string) -> DParseAcc<string> {
+	DParseAcc(input, textAction, 0, "", makeTree(), makeList(), 0, 0);
+}
+
+// Runs parseStar and reports the result, the number of matcher calls and where it stopped
+runStar(input : string, matcher : (DParseAcc<string>) -> bool) -> string {
+	acc = makeAcc(input);
+	calls = ref 0;
+	r = parseStar(acc, \ -> {
+		calls := ^calls + 1;
+		^calls <= maxCalls && matcher(acc)
+	});
+	"result " + b2s(r) + ", calls " + i2s(^calls) + ", i " + i2s(acc.i)
+	+ ", checkpoints left " + i2s(countList(acc.stack)) + ", output " + acc.output;
+}
+
+// What the compiler produces for "a"?
+optionalA(acc : DParseAcc<string>) -> bool {
+	pushDCheckpoint(acc);
+	if (matchString(acc, "a")) discardDCheckpoint(acc) else restoreDCheckpoint(acc);
+	true;
+}
+
+testCompiledStar() -> void {
+	check("an empty match ends the star at once",
+		runStar("abc", \__ -> true),
+		"result true, calls 1, i 0, checkpoints left 0, output "
+	);
+	check("(\"a\"?)* takes the a's and stops at the first non-a",
+		runStar("aab", optionalA),
+		"result true, calls 3, i 2, checkpoints left 0, output "
+	);
+	check("(\"a\"?)* stops at the end of the input",
+		runStar("aa", optionalA),
+		"result true, calls 3, i 2, checkpoints left 0, output "
+	);
+	check("the empty iteration leaves no output",
+		runStar("aab", \acc -> {
+			optionalA(acc);
+			addVerbatim(acc, "x")
+		}),
+		"result true, calls 3, i 2, checkpoints left 0, output [x][x]"
+	);
+	check("a star that only fails is unchanged",
+		runStar("aab", \acc -> matchString(acc, "a")),
+		"result true, calls 3, i 2, checkpoints left 0, output "
+	);
+	check("a star over nothing matches nothing",
+		runStar("", optionalA),
+		"result true, calls 1, i 0, checkpoints left 0, output "
+	);
+}
+
+interpret(input : string, term : GTerm) -> string {
+	env = GringoEnv(input, makeTree(), textAction, "", makeTree(), 0, false, 0);
+	r = gringoParse(env, term);
+	"fail " + b2s(r.fail) + ", i " + i2s(r.i) + ", output " + r.output;
+}
+
+testInterpretedStar() -> void {
+	a = GString("a");
+	check("interpreted (\"a\"?)* stops at the first non-a",
+		interpret("aab", GStar(GOpt(a))),
+		"fail false, i 2, output "
+	);
+	check("interpreted (\"a\"?)* stops at the end of the input",
+		interpret("aa", GStar(GOpt(a))),
+		"fail false, i 2, output "
+	);
+	check("interpreted empty iteration leaves no output",
+		interpret("aab", GStar(GSeq(GOpt(a), GUnquote(GString("x"))))),
+		"fail false, i 2, output [x][x]"
+	);
+	check("interpreted rule ws = \" \"* inside a star",
+		interpret("  b", GRule("ws", GStar(GString(" ")), GSeq(GStar(GVar("ws")), GString("b")))),
+		"fail false, i 3, output "
+	);
+	check("interpreted \"a\"* is unchanged",
+		interpret("aab", GStar(a)),
+		"fail false, i 2, output "
+	);
+}
+
+main() {
+	testCompiledStar();
+	testInterpretedStar();
+
+	if (^failures == 0) {
+		println("gringo star tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " gringo star test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}
