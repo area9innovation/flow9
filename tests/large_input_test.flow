@@ -1,0 +1,210 @@
+import formats/html/html2md;
+import formats/webvtt/webvtt;
+import formats/svg/svg;
+import sys/target;
+
+// Checks of the hardening in lib/formats/html/html2md.flow, lib/formats/webvtt/webvtt.flow,
+// lib/formats/svg/svg.flow and lib/formats/svg/svgpath.flow:
+//
+//  - ruHtml2md and parseWebVTT collect their results in linear time. Their output must be
+//    exactly what it was.
+//  - svgPath2Form finds holes without peeling one layer at a time. The layers must be the
+//    same as before. Above 5000 subpaths with points, holes are not looked for and all subpaths
+//    are one layer.
+//  - An arc with a zero radius is a straight line, as the SVG spec says, and an arc that
+//    cannot be computed adds no curve with NaN coordinates.
+//  - svgString2Form leaves out elements nested deeper than 256 levels.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : string, expected : string) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+md(text : string) -> string {
+	ruHtml2md([HtmlText(text)]);
+}
+
+testHtml2md() -> void {
+	check("two empty lines become one", md("a\n\n\nb"), "a\n\nb");
+	check("one empty line is kept", md("a\n\nb"), "a\n\nb");
+	check("blank lines are trimmed and joined", md("a\n \n\t\nb"), "a\n\nb");
+	check("leading empty lines become one", md("\n\n\na"), "\na");
+	check("trailing empty lines become one", md("a\n\n"), "a\n");
+	check("lines are trimmed", md("  a  \n\tb"), "a\nb");
+	check("the empty string", md(""), "");
+	// A smoke test that a long input gives the right result. It does not time the call.
+	check("many lines", md(strRepeat("a\n\n\n", 20000)), strRepeat("a\n\n", 19999) + "a\n");
+}
+
+vttCue(i : int) -> string {
+	i2s(i) + "\n00:00:0" + i2s(i % 10) + ".000 --> 00:00:0" + i2s(i % 10) + ".500\nLine " + i2s(i) + "\n\n";
+}
+
+testWebVTT() -> void {
+	vtt = parseWebVTT(
+		"WEBVTT caption\n\n"
+		+ "STYLE\n::cue { color: red }\n\n"
+		+ "NOTE a note\n\n"
+		+ "1\n00:00:01.000 --> 00:00:02.000\nOne\n\n"
+		+ "STYLE\n::cue(b) { color: blue }\n\n"
+		+ "2\n00:00:03.000 --> 00:00:04.000\nTwo\n"
+	);
+	check("the caption", vtt.caption, "caption");
+	check("the styles in order", strGlue(map(vtt.styles, \s -> s.css), "|"), "::cue { color: red }|::cue(b) { color: blue }");
+	check("the cues in order", strGlue(map(vtt.cues, \c -> c.id), ","), "1,2");
+	check("no regions", i2s(length(vtt.regions)), "0");
+	many = parseWebVTT("WEBVTT\n\n" + concatStrings(generate(1, 3001, vttCue)));
+	check("many cues", i2s(length(many.cues)), "3000");
+	check("the last of many cues", lastElement(many.cues, dummyCueBlock).id, "3000");
+}
+
+// The layers of a path form, outermost first, split by " / ". Each subpath is named by its
+// start point, and a subpath drawn as a hole is marked with "*".
+describeLayers(f : Form) -> string {
+	switch (f) {
+		Group(ls): strGlue(map(ls, \l -> switch (l) {
+			Group(gs): strGlue(map(gs, \g -> switch (g) {
+				Graphics(ops, style): {
+					start = if (ops == []) "-" else switch (ops[0]) {
+						MoveTo(x, y): i2s(round(x)) + " " + i2s(round(y));
+						default: "?";
+					}
+					start + (if (style == [Fill(2)]) "*" else "");
+				}
+				default: "?";
+			}), ", ");
+			default: "?";
+		}), " / ");
+		default: "?";
+	}
+}
+
+pathLayers(path : string) -> string {
+	describeLayers(svgPath2Form(path, [Fill(1)], 2));
+}
+
+layerCount(f : Form) -> int {
+	switch (f) {
+		Group(ls): length(ls);
+		default: -1;
+	}
+}
+
+square(x : int, y : int, size : int) -> string {
+	"M" + i2s(x) + " " + i2s(y) + " L" + i2s(x + size) + " " + i2s(y) + " L" + i2s(x + size) + " " + i2s(y + size) + " L" + i2s(x) + " " + i2s(y + size) + " Z";
+}
+
+testLayers() -> void {
+	check("a square with a hole", pathLayers(square(0, 0, 10) + square(2, 2, 6)), "0 0 / 2 2*");
+	check("the hole first", pathLayers(square(2, 2, 6) + square(0, 0, 10)), "0 0 / 2 2*");
+	check("an island in a hole, and a second shape with a hole",
+		pathLayers(square(10, 10, 10) + square(0, 0, 30) + square(40, 0, 10) + square(5, 5, 20) + square(42, 2, 6)),
+		"0 0, 40 0 / 5 5*, 42 2* / 10 10"
+	);
+	check("overlapping squares are one layer", pathLayers(square(0, 0, 10) + square(5, 5, 10)), "0 0, 5 5");
+	check("a square on the edge is not inside", pathLayers(square(0, 0, 10) + square(0, 2, 6)), "0 0, 0 2");
+	check("equal squares are in the same layer", pathLayers(square(0, 0, 10) + square(2, 2, 6) + square(2, 2, 6)), "0 0 / 2 2*, 2 2*");
+	// A space after "Z" starts an empty subpath. It has no points, so every other subpath contains it.
+	check("empty subpaths are the innermost layer", pathLayers(square(0, 0, 10) + " " + square(2, 2, 6) + " "), "0 0 / 2 2* / -, -");
+	check("separate squares are one layer", pathLayers(square(20, 0, 5) + square(0, 0, 5) + square(10, 0, 5)), "20 0, 0 0, 10 0");
+	check("300 nested squares, innermost first, are 300 layers",
+		i2s(layerCount(svgPath2Form(concatStrings(generate(0, 300, \i -> square(299 - i, 299 - i, 2 * (i + 1)))), [Fill(1)], 2))),
+		"300"
+	);
+	check("5001 nested squares are one layer",
+		i2s(layerCount(svgPath2Form(concatStrings(generate(0, 5001, \i -> square(i, i, 2 * (5001 - i)))), [Fill(1)], 2))),
+		"1"
+	);
+	check("a space after each square adds only the layer of empty subpaths",
+		pathLayers(square(10, 10, 10) + " " + square(0, 0, 30) + " " + square(40, 0, 10) + " " + square(5, 5, 20) + " " + square(42, 2, 6) + " "),
+		"0 0, 40 0 / 5 5*, 42 2* / 10 10 / -*, -*, -*, -*, -*"
+	);
+	// The cap on subpaths counts only subpaths with points, not the empty ones after each space
+	check("1001 nested squares with a space after each are 1002 layers",
+		i2s(layerCount(svgPath2Form(concatStrings(generate(0, 1001, \i -> square(i, i, 2 * (1001 - i)) + " ")), [Fill(1)], 2))),
+		"1002"
+	);
+	withHole = \count -> concatStrings(concat(
+		[square(0, 0, 10) + " ", square(2, 2, 6) + " "],
+		generate(0, count - 2, \i -> square(20 + 10 * i, 0, 5) + " ")
+	));
+	check("5000 squares with a space after each, one with a hole, are 3 layers",
+		i2s(layerCount(svgPath2Form(withHole(5000), [Fill(1)], 2))),
+		"3"
+	);
+	check("5001 squares with a space after each are one layer",
+		i2s(layerCount(svgPath2Form(withHole(5001), [Fill(1)], 2))),
+		"1"
+	);
+}
+
+testArcs() -> void {
+	ops = \p -> toString(svgSimplePath2GraphicsOps(p));
+	check("an arc with both radii zero is a line", ops("M10 10 A 0 0 0 0 1 20 20"), "[MoveTo(10.0, 10.0), LineTo(20.0, 20.0)]");
+	check("an arc with one radius zero is a line", ops("M10 10 A 0 5 0 0 1 20 20"), "[MoveTo(10.0, 10.0), LineTo(20.0, 20.0)]");
+	check("an arc with the other radius zero is a line", ops("M10 10 A 5 0 0 0 1 20 20"), "[MoveTo(10.0, 10.0), LineTo(20.0, 20.0)]");
+	check("a relative arc with a zero radius is a line", ops("M10 10 a 0 0 0 0 1 10 10"), "[MoveTo(10.0, 10.0), LineTo(20.0, 20.0)]");
+	check("an arc with zero radii that ends where it starts", ops("M10 10 A 0 0 0 1 0 10 10"), "[MoveTo(10.0, 10.0), LineTo(10.0, 10.0)]");
+	check("an arc that ends where it starts", ops("M10 10 A 5 5 0 0 1 10 10"), "[MoveTo(10.0, 10.0), LineTo(10.0, 10.0)]");
+	check("an arc with an infinite radius", ops("M10 10 A 1e400 5 0 0 1 20 10"), "[MoveTo(10.0, 10.0), LineTo(20.0, 10.0)]");
+	halfCircle = svgSimplePath2GraphicsOps("M10 10 A 5 5 0 0 1 20 10");
+	check("a half circle is still eight curves and a line", i2s(length(halfCircle)), "10");
+	check("a half circle ends at its end point", toString(lastElement(halfCircle, ClosePath())), "LineTo(20.0, 10.0)");
+}
+
+countGraphics(f : Form) -> int {
+	switch (f) {
+		Group(fs): fold(fs, 0, \acc, g -> acc + countGraphics(g));
+		Graphics(__, __): 1;
+		default: 0;
+	}
+}
+
+firstGraphicsStyle(f : Form) -> string {
+	switch (f) {
+		Group(fs): fold(fs, "", \acc, g -> if (acc != "") acc else firstGraphicsStyle(g));
+		Graphics(__, style): toString(style);
+		default: "";
+	}
+}
+
+nestedSvg(depth : int, inner : string) -> string {
+	"<svg>" + strRepeat("<g>", depth) + inner + strRepeat("</g>", depth) + "</svg>";
+}
+
+testSvg() -> void {
+	path = "<path d=\"M0 0 L10 0 L10 10 Z\"/>";
+	check("a path in a group", i2s(countGraphics(svgString2Form("<svg><g>" + path + "</g></svg>", []))), "1");
+	check("a path nested 200 deep is kept", i2s(countGraphics(svgString2Form(nestedSvg(200, path), []))), "1");
+	check("a path nested 300 deep is left out", i2s(countGraphics(svgString2Form(nestedSvg(300, path), []))), "0");
+	check("a class from a style element is applied",
+		firstGraphicsStyle(svgString2Form("<svg><style>.a { fill: #ff0000; }</style><g><path class=\"a\" d=\"M0 0 L10 0 L10 10 Z\"/></g></svg>", [])),
+		toString([Fill(0xff0000)])
+	);
+	first = "<svg>" + path + "</svg>";
+	before = toString(svgString2Form(first, []));
+	iter(enumFromTo(1, 150), \i -> { svgString2Form("<svg><path d=\"M0 0 L" + i2s(i) + " 0 L10 10 Z\"/></svg>", []); {} });
+	check("a file converts the same after many others", toString(svgString2Form(first, [])), before);
+}
+
+main() {
+	testHtml2md();
+	testWebVTT();
+	testLayers();
+	testArcs();
+	testSvg();
+
+	if (^failures == 0) {
+		println("large input tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " large input test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}

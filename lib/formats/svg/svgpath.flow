@@ -1,4 +1,5 @@
 import form/gui;
+import algorithms;
 
 export {
 	svgPath2Form(path : string, style : [GraphicsStyle], bgcolor : int) -> Form;
@@ -63,10 +64,13 @@ endpointToCenterArcParams(p1 : V2, p2 : V2, r : V2, xAngle : double, flagA : boo
 }
 
 ellipseArcToBezierCurves(arc : EllipseArc, endP : V2) -> [StaticGraphicOp] {
-	ang_delta = arc.ang1 - arc.ang0;
-	seg = (PI / 8.0) * sign(ang_delta);
-	num_curves = trunc(abs(ang_delta / seg));
-	arr = map( enumFromTo(0, num_curves), \e ->{
+	angDelta = arc.ang1 - arc.ang0;
+	seg = (PI / 8.0) * sign(angDelta);
+	// A NaN or infinite value leaves no arc to draw, only the line to the end point.
+	// It must not reach trunc: an infinite number of curves is not a valid int.
+	broken = isNanOrInf(angDelta) || isNanOrInf(arc.rx) || isNanOrInf(arc.ry) || isNanOrInf(arc.c.x) || isNanOrInf(arc.c.y);
+	numCurves = if (broken) -1 else if (seg == 0.0) 0 else trunc(abs(angDelta / seg));
+	arr = map(enumFromTo(0, numCurves), \e -> {
 		x = arc.c.x + arc.rx * cos(arc.ang0 + seg * i2d(e));
 		y = arc.c.y + arc.ry * sin(arc.ang1 + seg * i2d(e));
 		// TO DO : better control points
@@ -130,13 +134,43 @@ regionContains(r : Quadruple<double, double, double, double>, r1 : Quadruple<dou
 	r.first < r1.first && r.second < r1.second && r.third > r1.third && r.fourth > r1.fourth
 }
 
-// Topological sort with layers:
+// Above this many subpaths with points, holes are not looked for and all subpaths are drawn as one layer.
+// Empty subpaths, which a space between "z" and the next "m" gives, are not counted.
+svgMaxLayeredSubpaths = 5000;
+
+// Topological sort with layers, the deepest layer first.
+// A subpath is in layer 0 if no other subpath contains it, else one layer below the deepest subpath that contains it.
 getLayers2(group : [Pair<[StaticGraphicOp], Quadruple<double, double, double, double>>]) ->  [[Pair<[StaticGraphicOp], Quadruple<double, double, double, double>>]] {
-	if (group == []) {
-		[]
+	// An empty subpath has the region getGraphicsRegion starts from
+	empty = Quadruple(doubleMax, doubleMax, doubleMin, doubleMin);
+	if (countA(group, \g -> g.second != empty) > svgMaxLayeredSubpaths) {
+		[group]
 	} else {
-		layer : [Pair<[StaticGraphicOp], Quadruple<double, double, double, double>>] = filter(group, \graphics -> forall(group, \g -> !regionContains(g.second, graphics.second) ) );
-		arrayPush( getLayers2(subtractA(group, layer)), layer);
+		regions = map(group, \g -> g.second);
+		depths = map(group, \__ -> ref 0);
+		deeper = \i, acc, j -> if (^(depths[j]) > acc && regionContains(regions[j], regions[i])) ^(depths[j]) else acc;
+		isRegular = \r : Quadruple<double, double, double, double> -> r.first <= r.third && r.second <= r.fourth;
+		indexes = enumFromTo(0, length(group) - 1);
+		// A subpath can only be inside one that starts further left, so those get their layer first
+		regular = sortCustom(filter(indexes, \i -> isRegular(regions[i])), \i -> regions[i].first, true);
+		// Go from left to right. A subpath that ends left of the current one cannot contain it or any later one.
+		fold(regular, makeList(), \open : List<int>, i -> {
+			left = regions[i].first;
+			depth = ref -1;
+			stillOpen = foldList(open, makeList(), \acc, j -> if (regions[j].third > left) { depth := deeper(i, ^depth, j); Cons(j, acc) } else acc);
+			depths[i] := ^depth + 1;
+			Cons(i, stillOpen)
+		});
+		// The rest are empty subpaths and regions with NaN, which cannot be compared. None of them contains a regular subpath.
+		// All empty subpaths are in the same layer.
+		containerDepth = \i -> fold(regular, -1, \acc, j -> deeper(i, acc, j)) + 1;
+		rest = filter(indexes, \i -> !isRegular(regions[i]));
+		emptyDepth = eitherMap(find(rest, \i -> regions[i] == empty), containerDepth, 0);
+		iter(rest, \i -> depths[i] := if (regions[i] == empty) emptyDepth else containerDepth(i));
+		deepest = fold(depths, -1, \acc, d -> max(acc, ^d));
+		layers = generate(0, deepest + 1, \__ -> ref makeList());
+		iteri(group, \i, g -> rlistPush(layers[deepest - ^(depths[i])], g));
+		map(layers, \l -> list2array(^l));
 	}
 }
 
@@ -196,7 +230,12 @@ subPathString2GrOps(subpath : string, state : Pair<ref V2, ref V2>) -> [StaticGr
 		flagA = args[offs + 3] == 1.0;
 		flagS = args[offs + 4] == 1.0;
 		eP = if (rel) v2Add(^pen, V2(args[offs + 5], args[offs + 6])) else V2(args[offs + 5], args[offs + 6]);
-		res = ellipseArcToBezierCurves( endpointToCenterArcParams(^pen, eP, r, xrot, flagA, flagS), eP );
+		res = if (r.x == 0.0 || r.y == 0.0) {
+			// The SVG spec draws an arc with a zero radius as a straight line
+			[LineTo(eP.x, eP.y)]
+		} else {
+			ellipseArcToBezierCurves(endpointToCenterArcParams(^pen, eP, r, xrot, flagA, flagS), eP);
+		}
 		pen := eP;
 		res
 	}
