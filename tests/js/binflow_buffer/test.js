@@ -1,5 +1,7 @@
 // Tests of platforms/js/JSBinflowBuffer.hx: values built by Native.toBinary round-trip unchanged,
-// nesting of any depth decodes, and input that is cut short, declares too many elements, has a footer
+// nesting up to 2048 containers decodes and can be printed/written again, a caller can pass another
+// limit, and input that is too deep,
+// cut short, declares too many elements, has a footer
 // of the wrong shape or a footer offset outside the input yields the default value quickly.
 // Needs the haxe CLI on PATH. Run: npm test
 
@@ -40,17 +42,20 @@ after(function() {
 });
 
 // Structs as the flow runtime registers them; None is the answer of a fixups function without a fixup
-const NONE_ID = 1, SOME_ID = 2, LEAF_ID = 3, NODE_ID = 4;
+const NONE_ID = 1, SOME_ID = 2, LEAF_ID = 3, NODE_ID = 4, BOX_ID = 5, EMPTY_ID = 6;
 HaxeRuntime.initStruct(NONE_ID, 'None', [], []);
 HaxeRuntime.initStruct(SOME_ID, 'Some', ['value'], [RuntimeType.RTUnknown]);
 HaxeRuntime.initStruct(LEAF_ID, 'Leaf', ['id', 'name', 'weight', 'flag'],
 	[RuntimeType.RTInt, RuntimeType.RTString, RuntimeType.RTDouble, RuntimeType.RTBool]);
 HaxeRuntime.initStruct(NODE_ID, 'Node', ['label', 'items', 'link'],
 	[RuntimeType.RTString, RuntimeType.RTArray(RuntimeType.RTUnknown), RuntimeType.RTRefTo(RuntimeType.RTUnknown)]);
+HaxeRuntime.initStruct(BOX_ID, 'Box', ['value'], [RuntimeType.RTUnknown]);
+HaxeRuntime.initStruct(EMPTY_ID, 'Empty', [], []);
 
 const leaf = function(id, name, weight, flag) { return { _id: LEAF_ID, id: id, name: name, weight: weight, flag: flag }; };
 const node = function(label, items, link) { return { _id: NODE_ID, label: label, items: items, link: link }; };
 const ref = function(value) { return new FlowRefObject(value); };
+const box = function(value) { return { _id: BOX_ID, value: value }; };
 
 const DEFAULT = { defaultValue: true };
 const noFixups = function() { return { _id: NONE_ID }; };
@@ -85,10 +90,21 @@ const withWord = function(words, index, word) {
 const withInt = function(words, index, value) { return withWord(withWord(words, index, value & 0xFFFF), index + 1, value >>> 16); };
 // The words of a string value shorter than 65536 characters
 const stringWords = function(s) { return [0xFFFA, s.length].concat(wordsOf(s)); };
+const structDef = function(arity, name) { return [0xFFF8, 2, arity].concat(stringWords(name)); };
 
 const nestedArrays = function(depth, inner) {
 	let value = inner;
 	for (let i = 0; i < depth; i++) value = [value];
+	return value;
+};
+const nestedRefs = function(depth, inner) {
+	let value = inner;
+	for (let i = 0; i < depth; i++) value = ref(value);
+	return value;
+};
+const nestedStructs = function(depth, inner) {
+	let value = inner;
+	for (let i = 0; i < depth; i++) value = box(value);
 	return value;
 };
 // Each node adds two levels: the struct and its items array
@@ -101,9 +117,18 @@ const nestedNodes = function(count, inner) {
 const sampleLeaf = leaf(2, 'alpha', 1.5, false);
 const sampleNode = node('root', [sampleLeaf, [1.5, 'beta']], ref(7.5));
 
+// Compares the decoded value through the runtime's own recursive printer and writer. Node's
+// deepStrictEqual would overflow first: it takes about three frames per level of nesting.
+const checkDecoded = function(words, expected, littleEndian) {
+	const actual = deserialise(words, littleEndian);
+	const printed = HaxeRuntime.toString(actual);
+	assert.ok(!printed.includes('<native>'), 'the runtime printer handles the entire value');
+	assert.strictEqual(printed, HaxeRuntime.toString(expected));
+	assert.strictEqual(Native.toBinary(actual), Native.toBinary(expected));
+};
 const checkRoundTrip = function(name, value) {
 	test('round trip of ' + name, function() {
-		assert.deepStrictEqual(deserialise(encode(value)), value);
+		checkDecoded(encode(value), value);
 	});
 };
 
@@ -141,8 +166,13 @@ checkRoundTrip('ref', ref(5.5));
 checkRoundTrip('struct with small int', sampleLeaf);
 checkRoundTrip('struct with big int', leaf(123456789, 'big', 0.5, true));
 checkRoundTrip('nested value', sampleNode);
-checkRoundTrip('arrays nested 1024 deep', nestedArrays(1024, 1.5));
-checkRoundTrip('nodes nested 500 deep', nestedNodes(500, 1.5));
+// The default nesting limit
+const LIMIT = 2048;
+checkRoundTrip('arrays nested ' + LIMIT + ' deep', nestedArrays(LIMIT, 1.5));
+checkRoundTrip('refs nested ' + LIMIT + ' deep', nestedRefs(LIMIT, 1.5));
+checkRoundTrip('structs nested ' + LIMIT + ' deep', nestedStructs(LIMIT, 1.5));
+checkRoundTrip('nodes nested ' + LIMIT / 2 + ' deep (' + LIMIT + ' containers)', nestedNodes(LIMIT / 2, 1.5));
+checkRoundTrip('siblings each use their own depth', [nestedArrays(LIMIT - 1, 1.5), nestedRefs(LIMIT - 1, 1.5), nestedStructs(LIMIT - 1, 1.5)]);
 
 test('a negative int', function() {
 	// 0xFFF5 holds a 32-bit int as two words, low first; 0xFFF7 is an empty footer
@@ -225,31 +255,85 @@ test('a second call with other fixups does not reuse the first', function() {
 	assert.deepStrictEqual(buffer.deserialise(DEFAULT, noFixups), sampleLeaf);
 });
 
-// The deep inputs are built by hand and walked with a loop: 0xFFF8 1 opens an array of one element,
-// 0xFFF6 a ref, 0xFFF7 is an empty footer
-const deep = 100000;
-test('arrays nested ' + deep + ' deep', function() {
+// Build nested input independently of the recursive writer
+const nestedBody = function(prefix, depth, leaf) {
 	const body = [];
-	for (let i = 0; i < deep; i++) body.push(0xFFF8, 1);
-	let value = deserialise(assemble(body.concat([5]), [0xFFF7]));
-	let levels = 0;
-	while (Array.isArray(value) && value.length == 1) {
-		value = value[0];
-		levels++;
+	for (let i = 0; i < depth; i++) body.push(...prefix);
+	return body.concat(leaf);
+};
+const boxFooter = [0xFFF8, 1].concat(structDef(1, 'Box'));
+const emptyStructFooter = [0xFFF8, 1].concat(structDef(0, 'Empty'));
+const nestingCases = [
+	{ name: 'short array', prefix: [0xFFF8, 1], footer: [0xFFF7], nest: nestedArrays },
+	{ name: 'long array', prefix: [0xFFF9, 1, 0], footer: [0xFFF7], nest: nestedArrays },
+	{ name: 'ref', prefix: [0xFFF6], footer: [0xFFF7], nest: nestedRefs },
+	{ name: 'struct', prefix: [0xFFF4, 0], footer: boxFooter, nest: nestedStructs },
+];
+for (const kind of nestingCases) {
+	for (const depth of [LIMIT - 1, LIMIT, LIMIT + 1]) {
+		const words = assemble(nestedBody(kind.prefix, depth, [5]), kind.footer);
+		const name = kind.name + ' nesting ' + depth;
+		if (depth > LIMIT) checkDamaged(name, words);
+		else test(name, function() {
+			checkDecoded(words, kind.nest(depth, 5));
+			checkDecoded(words, kind.nest(depth, 5), false);
+		});
 	}
-	assert.strictEqual(levels, deep);
-	assert.strictEqual(value, 5);
+}
+
+// Empty arrays and zero-field structs add a level even though they leave no open frame
+for (const leaf of [[0xFFF7], [0xFFF8, 0], [0xFFF9, 0, 0]]) {
+	test('empty array at depth ' + LIMIT + ' tag ' + leaf[0], function() {
+		checkDecoded(assemble(nestedBody([0xFFF6], LIMIT - 1, leaf), [0xFFF7]), nestedRefs(LIMIT - 1, []));
+	});
+	checkDamaged('empty array at depth ' + (LIMIT + 1) + ' tag ' + leaf[0], assemble(nestedBody([0xFFF6], LIMIT, leaf), [0xFFF7]));
+}
+test('zero-field struct at depth ' + LIMIT, function() {
+	checkDecoded(assemble(nestedBody([0xFFF8, 1], LIMIT - 1, [0xFFF4, 0]), emptyStructFooter), nestedArrays(LIMIT - 1, { _id: EMPTY_ID }));
+});
+checkDamaged('zero-field struct at depth ' + (LIMIT + 1), assemble(nestedBody([0xFFF8, 1], LIMIT, [0xFFF4, 0]), emptyStructFooter));
+
+for (const leaf of [1.5, true, false, 's', '', null]) {
+	checkRoundTrip('scalar ' + String(leaf) + ' below ' + LIMIT + ' containers', nestedArrays(LIMIT, leaf));
+}
+const THIRD = Math.floor(LIMIT / 3);
+checkRoundTrip('mixed nesting ' + LIMIT, nestedArrays(LIMIT - 2 * (THIRD + 1), nestedRefs(THIRD + 1, nestedStructs(THIRD + 1, 5))));
+checkDamaged('mixed nesting ' + (LIMIT + 1), encode(nestedArrays(LIMIT + 1 - 2 * (THIRD + 1), nestedRefs(THIRD + 1, nestedStructs(THIRD + 1, 5)))));
+
+test('the nesting limit is checked before constructing a struct', function() {
+	let calls = 0;
+	const fixups = function() { return { _id: SOME_ID, value: function(args) { calls++; return box(args[0]); } }; };
+	const accepted = assemble(nestedBody([0xFFF4, 0], LIMIT, [5]), boxFooter);
+	assert.strictEqual(Native.toBinary(bufferOf(accepted, true).deserialise(DEFAULT, fixups)), Native.toBinary(nestedStructs(LIMIT, 5)));
+	assert.strictEqual(calls, LIMIT);
+	calls = 0;
+	const rejected = assemble(nestedBody([0xFFF4, 0], LIMIT + 1, [5]), boxFooter);
+	assert.strictEqual(bufferOf(rejected, true).deserialise(DEFAULT, fixups), DEFAULT);
+	assert.strictEqual(calls, 0);
 });
 
-test('refs nested ' + deep + ' deep', function() {
-	let value = deserialise(assemble(new Array(deep).fill(0xFFF6).concat([5]), [0xFFF7]));
-	let levels = 0;
-	while (value instanceof FlowRefObject) {
-		value = value.__v;
-		levels++;
-	}
-	assert.strictEqual(levels, deep);
-	assert.strictEqual(value, 5);
+// Former unbounded-depth cases now exercise prompt default handling instead
+checkDamaged('arrays nested 100000 deep', assemble(nestedBody([0xFFF8, 1], 100000, [5]), [0xFFF7]));
+checkDamaged('refs nested 100000 deep', assemble(nestedBody([0xFFF6], 100000, [5]), [0xFFF7]));
+
+// How many arrays of one element are nested around v, in a loop: a value this deep cannot be compared
+const arrayDepth = function(v) {
+	let depth = 0;
+	while (Array.isArray(v) && v.length == 1) { v = v[0]; depth++; }
+	return depth;
+};
+
+test('a caller can pass another limit', function() {
+	const nested = function(depth) { return assemble(nestedBody([0xFFF8, 1], depth, [5]), [0xFFF7]); };
+	assert.deepStrictEqual(Native.fromBinaryWithDepth(bufferOf(nested(10), true), DEFAULT, noFixups, 10), nestedArrays(10, 5));
+	assert.strictEqual(Native.fromBinaryWithDepth(bufferOf(nested(11), true), DEFAULT, noFixups, 10), DEFAULT);
+	assert.strictEqual(Native.fromBinaryWithDepth(bufferOf(encode(5.5), true), DEFAULT, noFixups, 0), 5.5);
+	assert.strictEqual(arrayDepth(Native.fromBinaryWithDepth(bufferOf(nested(100000), true), DEFAULT, noFixups, 1000000)), 100000);
+	// fromBinary keeps the default limit
+	assert.strictEqual(Native.fromBinary(bufferOf(nested(LIMIT + 1), true), DEFAULT, noFixups), DEFAULT);
+	// A string is left for the flow decoder
+	const s = Native.toBinary(sampleLeaf);
+	assert.strictEqual(Native.fromBinaryWithDepth(s, DEFAULT, noFixups, 10), s);
 });
 
 (function() {

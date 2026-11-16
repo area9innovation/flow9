@@ -3756,6 +3756,7 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, toBinary, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, fromBinary, 3);
     TRY_USE_NATIVE_STATIC_NAME(ByteCodeRunner, fromBinary2, "fromBinary", 2);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, fromBinaryWithDepth, 4);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, stringbytes2double, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, stringbytes2int, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getCurrentDate, 0);
