@@ -9,10 +9,12 @@ import sys/target;
 //
 // A star over something that can match the empty string, such as ("a"?)* or
 // (ws)* with ws = " "*, used to match the empty string again and again and
-// never return. Now it stops there, and the empty iteration leaves no output.
+// never return. Now it stops there, and the empty iteration leaves no output
+// and no error.
 //
 // The compiled checks give up after a fixed number of matcher calls, so they
-// fail rather than hang on the old code. The interpreter checks hang on it.
+// fail rather than hang on the old code. The interpreter checks count the
+// iterations of their stars and stop the run with an error on the old code.
 
 failures : ref int = ref 0;
 
@@ -42,7 +44,12 @@ runStar(input : string, matcher : (DParseAcc<string>) -> bool) -> string {
 		^calls <= maxCalls && matcher(acc)
 	});
 	"result " + b2s(r) + ", calls " + i2s(^calls) + ", i " + i2s(acc.i)
-	+ ", checkpoints left " + i2s(countList(acc.stack)) + ", output " + acc.output;
+	+ ", checkpoints left " + i2s(countList(acc.stack)) + showErrors(acc.errors) + ", output " + acc.output;
+}
+
+showErrors(errors : Tree<int, string>) -> string {
+	if (isEmptyTree(errors)) ""
+	else ", errors " + strGlue(map(tree2pairs(errors), \p -> i2s(p.first) + ": " + p.second), ", ");
 }
 
 // What the compiler produces for "a"?
@@ -72,6 +79,13 @@ testCompiledStar() -> void {
 		}),
 		"result true, calls 3, i 2, checkpoints left 0, output [x][x]"
 	);
+	// (#"b" "a"?)*: the second iteration reports the missing b and takes an a, the third takes nothing
+	check("an error from the empty iteration is dropped",
+		runStar("baa", \acc -> {
+			(matchString(acc, "b") || addParseError(acc, "Expected \"b\"")) && optionalA(acc)
+		}),
+		"result true, calls 3, i 3, checkpoints left 0, errors 2: Expected \"b\", output "
+	);
 	check("a star that only fails is unchanged",
 		runStar("aab", \acc -> matchString(acc, "a")),
 		"result true, calls 3, i 2, checkpoints left 0, output "
@@ -82,28 +96,47 @@ testCompiledStar() -> void {
 	);
 }
 
+// A test cannot stop the interpreter inside a parse. So the stars below start each
+// iteration with a tick, an action that leaves no output, and the run fails when
+// one parse ticks more than maxCalls times.
+tickedStar(term : GTerm) -> GTerm {
+	GStar(GSeq(GUnquote(GString("tick")), term));
+}
+
 interpret(input : string, term : GTerm) -> string {
-	env = GringoEnv(input, makeTree(), textAction, "", makeTree(), 0, false, 0);
+	ticks = ref 0;
+	action = GringoAction(\o : string, v -> {
+		if (v == "tick") {
+			ticks := ^ticks + 1;
+			if (^ticks > maxCalls) fail("an interpreted star did not end after " + i2s(maxCalls) + " iterations");
+			o;
+		} else textAction.addVerbatim(o, v)
+	}, textAction.addMatched);
+	env = GringoEnv(input, makeTree(), action, "", makeTree(), 0, false, 0);
 	r = gringoParse(env, term);
-	"fail " + b2s(r.fail) + ", i " + i2s(r.i) + ", output " + r.output;
+	"fail " + b2s(r.fail) + ", i " + i2s(r.i) + showErrors(r.errors) + ", output " + r.output;
 }
 
 testInterpretedStar() -> void {
 	a = GString("a");
 	check("interpreted (\"a\"?)* stops at the first non-a",
-		interpret("aab", GStar(GOpt(a))),
+		interpret("aab", tickedStar(GOpt(a))),
 		"fail false, i 2, output "
 	);
 	check("interpreted (\"a\"?)* stops at the end of the input",
-		interpret("aa", GStar(GOpt(a))),
+		interpret("aa", tickedStar(GOpt(a))),
 		"fail false, i 2, output "
 	);
 	check("interpreted empty iteration leaves no output",
-		interpret("aab", GStar(GSeq(GOpt(a), GUnquote(GString("x"))))),
+		interpret("aab", tickedStar(GSeq(GOpt(a), GUnquote(GString("x"))))),
 		"fail false, i 2, output [x][x]"
 	);
+	check("interpreted error from the empty iteration is dropped",
+		interpret("baa", tickedStar(GSeq(GError(GString("b")), GOpt(a)))),
+		"fail false, i 3, errors 2: Expected \"b\", output "
+	);
 	check("interpreted rule ws = \" \"* inside a star",
-		interpret("  b", GRule("ws", GStar(GString(" ")), GSeq(GStar(GVar("ws")), GString("b")))),
+		interpret("  b", GRule("ws", GStar(GString(" ")), GSeq(tickedStar(GVar("ws")), GString("b")))),
 		"fail false, i 3, output "
 	);
 	check("interpreted \"a\"* is unchanged",
