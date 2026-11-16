@@ -4,6 +4,8 @@ import sys/target;
 // Tests of html2s (lib/formats/html/html_node.flow), the inverse of parseHtml: what parseHtml gives
 // is written back so that it parses to the same nodes, and texts, attribute values and comments
 // built in code are written so that no part of them is read as markup.
+// One case does not parse to the same nodes: a "<" before white space where a text starts, as in
+// "<div>< Back</div>", is always written as &lt;, so it parses to an entity and a text.
 
 failures : ref int = ref 0;
 
@@ -42,10 +44,14 @@ testDocuments() -> void {
 	roundTrip("< and & that are text", "a < b > c & d", "a < b > c & d");
 	roundTrip("< before a tag", "x <<b>y</b>", "x <<b>y</b>");
 	roundTrip("< with a space inside a text", "a < b> c </ d> e", "a < b> c </ d> e");
-	roundTrip("< with a space where a text starts", "<i>y</i>< Back", "<i>y</i>< Back");
 	roundTrip("tag with a space after <", "< b>x", "<b>x</b>");
-	roundTrip("< with a space where a text in a tag starts", "<div>< Back</div>", "<div>< Back</div>");
-	roundTrip("< with a space and a quote that closes in a later tag", "< b x='y>z<i>'</i>", "< b x='y>z<i>'</i>");
+	// Where a text starts, a "<" before white space is written as &lt;, and parses to an entity and a text
+	written("< with a space where a text starts", parseHtml("<i>y</i>< Back").first, "<i>y</i>&lt; Back",
+		[HtmlTag("i", [], [HtmlText("y")]), HtmlEntity("&", "lt"), HtmlText(" Back")]);
+	written("< with a space where a text in a tag starts", parseHtml("<div>< Back</div>").first, "<div>&lt; Back</div>",
+		[HtmlTag("div", [], [HtmlEntity("&", "lt"), HtmlText(" Back")])]);
+	written("< with a space and a quote that closes in a later tag", parseHtml("< b x='y>z<i>'</i>").first, "&lt; b x='y>z<i>'</i>",
+		[HtmlEntity("&", "lt"), HtmlText(" b x='y>z"), HtmlTag("i", [], [HtmlText("'")])]);
 	roundTrip("script", "<script>if (a<b && c) { x = '</div>'; }</script><p>t</p>",
 		"<script>if (a<b && c) { x = '</div>'; }</script><p/>t");
 	roundTrip("comment", "<!-- see a/b -- c -->x", "<!-- see a/b -- c -->x");
@@ -111,7 +117,8 @@ testTexts() -> void {
 		[HtmlTag("i", [], [HtmlText("y")]), HtmlEntity("&", "lt"), HtmlText(" b>x")]);
 	written("tag with a space after < after an &", [HtmlText("a&< b>")], "a&amp;&lt; b>",
 		[HtmlText("a"), HtmlEntity("&", "amp"), HtmlEntity("&", "lt"), HtmlText(" b>")]);
-	written("< with a space at the start of a text", [HtmlText("< Back")], "< Back", [HtmlText("< Back")]);
+	written("< with a space at the start of a text", [HtmlText("< Back")], "&lt; Back", [HtmlEntity("&", "lt"), HtmlText(" Back")]);
+	written("</ with a space at the start of a text", [HtmlText("</ b>x")], "&lt;/ b>x", [HtmlEntity("&", "lt"), HtmlText("/ b>x")]);
 	// The ">" that ends such a tag can be in the nodes after the text
 	written("< with a space before a tag", [HtmlText("< Back to "), HtmlTag("a", [HtmlAttrib("href", "/list")], [HtmlText("list")])],
 		"&lt; Back to <a href='/list'>list</a>",
