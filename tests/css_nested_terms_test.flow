@@ -8,9 +8,11 @@ import sys/target;
 //
 // Without caching of aterm in css.lingo, every level of nesting was parsed
 // several times over, so the time doubled or more with each level: a depth of 12
-// took tens of seconds. The other checks are parses that must stay the same; they
-// run first, because against the old parser each depth 14 check takes minutes.
-// Every check prints a line when it passes, so a slow run shows which check it is in.
+// took tens of seconds or longer. Each nested check therefore has a time limit,
+// far above what the cached parser needs and well below what the old one needed.
+// Against the old parser a nested check fails with the measured time when its
+// parse returns, and the whole run takes a minute or several. The other checks
+// are parses that must stay the same. Every check prints a line when it passes.
 
 failures : ref int = ref 0;
 
@@ -27,6 +29,21 @@ check(name : string, actual : string, expected : string) -> void {
 
 parseTerms(css : string) -> string {
 	toString(parsic2(pegOps4Css, css, defaultPegActions));
+}
+
+nestedParseLimitMs = 5000.0;
+
+// A parse that gives the right result but takes longer than the limit fails too
+checkNested(name : string, css : string, expected : string) -> void {
+	start = timestamp();
+	actual = parseTerms(css);
+	ms = timestamp() - start;
+	if (ms > nestedParseLimitMs) {
+		failures := ^failures + 1;
+		println("FAIL: " + name + ": the parse took " + i2s(round(ms)) + " ms, the limit is " + i2s(round(nestedParseLimitMs)) + " ms");
+	} else {
+		check(name + " (" + i2s(round(ms)) + " ms)", actual, expected);
+	}
 }
 
 declaration(property : string, value : string) -> string {
@@ -46,17 +63,17 @@ nestedArray(n : int) -> string {
 }
 
 testNested() -> void {
-	depth = 14;
-	check("nested function calls",
-		parseTerms("a{b:" + repeat("f(", depth) + "1" + repeat(")", depth) + "}"),
+	depth = 12;
+	checkNested("nested function calls",
+		"a{b:" + repeat("f(", depth) + "1" + repeat(")", depth) + "}",
 		declaration("b", nestedStruct(depth))
 	);
-	check("nested arrays",
-		parseTerms("a{b:" + repeat("[", depth) + "1" + repeat("]", depth) + "}"),
+	checkNested("nested arrays",
+		"a{b:" + repeat("[", depth) + "1" + repeat("]", depth) + "}",
 		declaration("b", nestedArray(depth))
 	);
-	check("nested function calls without the last closing bracket",
-		parseTerms("a{b:" + repeat("f(", depth) + "1" + repeat(")", depth - 1) + "}"),
+	checkNested("nested function calls without the last closing bracket",
+		"a{b:" + repeat("f(", depth) + "1" + repeat(")", depth - 1) + "}",
 		"CssStylesheet([])"
 	);
 }
