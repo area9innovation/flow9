@@ -9,8 +9,9 @@ import sys/target;
 //  - For http, https, ftp, ws, wss, file and relative urls a backslash before the search is
 //    read as a slash, as the browsers do. "https://b.com\a.com/" has the host b.com.
 //  - An absolute path cannot go above the root, so "/a/../../b" is "/b", not "/../b".
-//  - The hash encodes %, &, = and space in its keys and values, so a value holding & or =
-//    comes back as one parameter when the href is parsed again.
+//  - The hash encodes %, & and space in its keys and values, and = in a key and in a value
+//    without a key, so a parameter holding & or = comes back as one parameter when the
+//    href is parsed again. A = in the value of a key=value pair is kept as written.
 
 failures : ref int = ref 0;
 
@@ -43,6 +44,7 @@ testUserinfo() -> void {
 	check("a protocol relative url with userinfo", uri3GetOrigin(uri3("//u@h.com/x")), "//h.com");
 	withUser = uri3("https://u@a.com/x");
 	check("a new hostname keeps the userinfo", uri3GetHref(Uri3(withUser with hostname = "b.com")), "https://u@b.com/x");
+	check("no host gives no userinfo in the href", uri3GetHref(Uri3(withUser with protocol = "", hostname = "", port = 0)), "/x");
 	check("an @ in the path is not userinfo", uri3("https://h.com/a@b").hostname, "h.com");
 	check("an @ in the search is not userinfo", uri3("https://h.com/?u=a@b.com").hostname, "h.com");
 	check("an @ in the search is kept", hrefOf("https://h.com/?u=a@b.com"), "https://h.com/?u=a%40b.com");
@@ -73,10 +75,15 @@ testDotDot() -> void {
 }
 
 testHash() -> void {
-	check("an & and an = in a hash value are encoded", hashOf([KeyValue("next", "a&admin=1")]), "next=a%26admin%3D1");
+	check("an & in a hash value is encoded, an = is kept", hashOf([KeyValue("next", "a&admin=1")]), "next=a%26admin=1");
 	check("an & and an = in a hash value survive parsing", reparsedHash([KeyValue("next", "a&admin=1")]), toString([KeyValue("next", "a&admin=1")]));
+	check("an = in a hash key is encoded", hashOf([KeyValue("k=x", "v")]), "k%3Dx=v");
 	check("an = in a hash key survives parsing", reparsedHash([KeyValue("k=x", "v w")]), toString([KeyValue("k=x", "v w")]));
+	check("an = in a hash value without a key is encoded", hashOf([KeyValue("", "a=b")]), "a%3Db");
+	check("an = in a hash value without a key survives parsing", reparsedHash([KeyValue("", "a=b")]), toString([KeyValue("", "a=b")]));
 	check("an & in a hash value without a key survives parsing", reparsedHash([KeyValue("", "a&b")]), toString([KeyValue("", "a&b")]));
+	check("an = at the end of a hash value is kept", hrefOf("https://h.com/#token=abc=="), "https://h.com/#token=abc==");
+	check("an = inside a hash value is kept", hrefOf("https://h.com/#a=b=c"), "https://h.com/#a=b=c");
 	check("a % in a hash value is encoded", hashOf([KeyValue("p", "100%")]), "p=100%25");
 	check("a % in a hash value survives parsing", reparsedHash([KeyValue("p", "100%20")]), toString([KeyValue("p", "100%20")]));
 	check("a space in a hash value is encoded", hashOf([KeyValue("tag", "value 2")]), "tag=value%202");
@@ -84,7 +91,7 @@ testHash() -> void {
 	check("an @ and a : in a hash value are kept", hashOf([KeyValue("login", "a@b.com"), KeyValue("url", "https://x")]), "login=a@b.com&url=https://x");
 	empty = makeUri3();
 	check("the search encodes the same value", uri3GetSearch(Uri3(empty with search = [KeyValue("next", "a&admin=1")])), "next=a%26admin%3D1");
-	check("the href of a hash with an &", hrefOf("https://h.com/#next=a%26admin%3D1"), "https://h.com/#next=a%26admin%3D1");
+	check("the href of a hash with an &", hrefOf("https://h.com/#next=a%26admin%3D1"), "https://h.com/#next=a%26admin=1");
 }
 
 main() {
