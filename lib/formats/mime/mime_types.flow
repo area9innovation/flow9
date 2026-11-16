@@ -140,9 +140,11 @@ parseMime(file : string) -> [MimeValue] {
 	}]
 }
 
-// The header runs up to the first empty line; the content follows it. Field names are not
-// case sensitive, and when a field is repeated, the first one counts. A line that starts
-// with a space or a tab continues the field before it (RFC 5322, 2.2.3).
+// The header runs up to the first line that is empty or holds only spaces and tabs; the
+// content follows it. A line without a colon also ends the header, and the content starts
+// with that line. Field names are not case sensitive, and when a field is repeated, the
+// first one counts. A line that starts with a space or a tab and has other text continues
+// the field before it (RFC 5322, 2.2.3).
 parseMimeHeader(file : string) -> MimeHeader {
 	header = parseMimeHeaderFields(file, 0, strlen(file), makeList());
 	fields = list2array(header.first);
@@ -157,21 +159,22 @@ parseMimeHeader(file : string) -> MimeHeader {
 	);
 }
 
-// Reads the fields from position i up to the empty line, as (lower-case name, value) pairs,
+// Reads the fields from position i up to the end of the header, as (lower-case name, value) pairs,
 // last first, and gives the position where the content starts.
 parseMimeHeaderFields(file : string, i : int, n : int, acc : List<Pair<string, string>>) -> Pair<List<Pair<string, string>>, int> {
 	if (i >= n) {
 		Pair(acc, n);
 	} else {
 		lineEnd = mimeLineEnd(file, i, n);
-		if (strReplace(substring(file, i, lineEnd - i), "\u000d", "") == "") {
+		if (mimeBlankLine(file, i, lineEnd)) {
 			Pair(acc, min(lineEnd + 1, n));
+		} else if (strRangeIndexOf(file, ":", i, lineEnd) < 0) {
+			Pair(acc, i);
 		} else {
 			fieldEnd = mimeFieldEnd(file, lineEnd, n);
 			line = strReplace(strReplace(substring(file, i, fieldEnd - i), "\u000d", ""), "\n", "");
 			colon = strIndexOf(line, ":");
-			nacc = if (colon < 0) acc else Cons(Pair(mimeLowerAscii(strLeft(line, colon)), trim2(strRight(line, colon + 1), " \t")), acc);
-			parseMimeHeaderFields(file, fieldEnd + 1, n, nacc);
+			parseMimeHeaderFields(file, fieldEnd + 1, n, Cons(Pair(mimeLowerAscii(strLeft(line, colon)), trim2(strRight(line, colon + 1), " \t")), acc));
 		}
 	}
 }
@@ -188,10 +191,20 @@ mimeLineEnd(file : string, i : int, n : int) -> int {
 	if (pos < 0) n else pos;
 }
 
-// A field ends at the first line end that is not followed by a space or a tab.
+mimeBlankLine(file : string, i : int, lineEnd : int) -> bool {
+	trim2(substring(file, i, lineEnd - i), " \t\u000d") == "";
+}
+
+// A field ends at the first line end that is not followed by a continuation line: one that
+// starts with a space or a tab and has other text.
 mimeFieldEnd(file : string, lineEnd : int, n : int) -> int {
 	next = if (lineEnd + 1 < n) getCharCodeAt(file, lineEnd + 1) else -1;
-	if (next == 32 || next == 9) mimeFieldEnd(file, mimeLineEnd(file, lineEnd + 1, n), n) else lineEnd;
+	if (next == 32 || next == 9) {
+		nextEnd = mimeLineEnd(file, lineEnd + 1, n);
+		if (mimeBlankLine(file, lineEnd + 1, nextEnd)) lineEnd else mimeFieldEnd(file, nextEnd, n);
+	} else {
+		lineEnd;
+	}
 }
 
 // Quoted-printable (RFC 2045, 6.7): =XX is the byte with hex value XX, and an = at the end
