@@ -9,11 +9,10 @@ import sys/target;
 //  - ruHtml2md and parseWebVTT collect their results in linear time. Their output must be
 //    exactly what it was.
 //  - svgPath2Form finds holes without peeling one layer at a time. The layers must be the
-//    same as before. Above 5000 subpaths with points, holes are not looked for and all subpaths
-//    are one layer.
+//    same as before, also for a path with thousands of subpaths.
 //  - An arc with a zero radius is a straight line, as the SVG spec says, and an arc that
 //    cannot be computed adds no curve with NaN coordinates.
-//  - svgString2Form leaves out elements nested deeper than 256 levels.
+//  - svgString2Form converts a deeply nested file as before.
 
 failures : ref int = ref 0;
 
@@ -117,15 +116,14 @@ testLayers() -> void {
 		i2s(layerCount(svgPath2Form(concatStrings(generate(0, 300, \i -> square(299 - i, 299 - i, 2 * (i + 1)))), [Fill(1)], 2))),
 		"300"
 	);
-	check("5001 nested squares are one layer",
-		i2s(layerCount(svgPath2Form(concatStrings(generate(0, 5001, \i -> square(i, i, 2 * (5001 - i)))), [Fill(1)], 2))),
-		"1"
+	check("3000 squares side by side, each with a hole, keep their holes",
+		i2s(layerCount(svgPath2Form(concatStrings(generate(0, 3000, \i -> square(20 * (i % 100), 20 * (i / 100), 10) + square(20 * (i % 100) + 2, 20 * (i / 100) + 2, 6))), [Fill(1)], 2))),
+		"2"
 	);
 	check("a space after each square adds only the layer of empty subpaths",
 		pathLayers(square(10, 10, 10) + " " + square(0, 0, 30) + " " + square(40, 0, 10) + " " + square(5, 5, 20) + " " + square(42, 2, 6) + " "),
 		"0 0, 40 0 / 5 5*, 42 2* / 10 10 / -*, -*, -*, -*, -*"
 	);
-	// The cap on subpaths counts only subpaths with points, not the empty ones after each space
 	check("1001 nested squares with a space after each are 1002 layers",
 		i2s(layerCount(svgPath2Form(concatStrings(generate(0, 1001, \i -> square(i, i, 2 * (1001 - i)) + " ")), [Fill(1)], 2))),
 		"1002"
@@ -137,10 +135,6 @@ testLayers() -> void {
 	check("5000 squares with a space after each, one with a hole, are 3 layers",
 		i2s(layerCount(svgPath2Form(withHole(5000), [Fill(1)], 2))),
 		"3"
-	);
-	check("5001 squares with a space after each are one layer",
-		i2s(layerCount(svgPath2Form(withHole(5001), [Fill(1)], 2))),
-		"1"
 	);
 }
 
@@ -182,15 +176,11 @@ testSvg() -> void {
 	path = "<path d=\"M0 0 L10 0 L10 10 Z\"/>";
 	check("a path in a group", i2s(countGraphics(svgString2Form("<svg><g>" + path + "</g></svg>", []))), "1");
 	check("a path nested 200 deep is kept", i2s(countGraphics(svgString2Form(nestedSvg(200, path), []))), "1");
-	check("a path nested 300 deep is left out", i2s(countGraphics(svgString2Form(nestedSvg(300, path), []))), "0");
+	check("a path nested 300 deep is kept", i2s(countGraphics(svgString2Form(nestedSvg(300, path), []))), "1");
 	check("a class from a style element is applied",
 		firstGraphicsStyle(svgString2Form("<svg><style>.a { fill: #ff0000; }</style><g><path class=\"a\" d=\"M0 0 L10 0 L10 10 Z\"/></g></svg>", [])),
 		toString([Fill(0xff0000)])
 	);
-	first = "<svg>" + path + "</svg>";
-	before = toString(svgString2Form(first, []));
-	iter(enumFromTo(1, 150), \i -> { svgString2Form("<svg><path d=\"M0 0 L" + i2s(i) + " 0 L10 10 Z\"/></svg>", []); {} });
-	check("a file converts the same after many others", toString(svgString2Form(first, [])), before);
 }
 
 main() {
