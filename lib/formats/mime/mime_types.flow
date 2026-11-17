@@ -150,10 +150,10 @@ parseMime(file : string) -> [MimeValue] {
 parseMimeHeader(file : string) -> MimeHeader {
 	header = parseMimeHeaderFields(file, 0, strlen(file), makeList());
 	fields = list2array(header.first);
-	field = \name -> eitherMap(find(fields, \f -> f.first == name), secondOfPair, "");
+	field = \name -> eitherMap(find(fields, \f -> mimeFieldNameIs(f.first, name)), secondOfPair, "");
 	contentType = field("content-type");
 	MimeHeader(
-		exists(fields, \f -> f.first == "mime-version"),
+		exists(fields, \f -> mimeFieldNameIs(f.first, "mime-version")),
 		mimeLowerAscii(trim2(takeBefore(contentType, ";", contentType), " \t")),
 		field("x-document-type"),
 		field("content-transfer-encoding"),
@@ -161,8 +161,8 @@ parseMimeHeader(file : string) -> MimeHeader {
 	);
 }
 
-// Reads the fields from position i up to the end of the header, as (lower-case name, value) pairs,
-// last first, and gives the position where the content starts.
+// Reads the fields from position i up to the end of the header, as (name, value) pairs, last
+// first, and gives the position where the content starts.
 parseMimeHeaderFields(file : string, i : int, n : int, acc : List<Pair<string, string>>) -> Pair<List<Pair<string, string>>, int> {
 	if (i >= n) {
 		Pair(acc, n);
@@ -176,7 +176,7 @@ parseMimeHeaderFields(file : string, i : int, n : int, acc : List<Pair<string, s
 			fieldEnd = mimeFieldEnd(file, lineEnd, n);
 			line = strReplace(strReplace(substring(file, i, fieldEnd - i), "\u000d", ""), "\n", "");
 			colon = strIndexOf(line, ":");
-			parseMimeHeaderFields(file, fieldEnd + 1, n, Cons(Pair(mimeLowerAscii(strLeft(line, colon)), trim2(strRight(line, colon + 1), " \t")), acc));
+			parseMimeHeaderFields(file, fieldEnd + 1, n, Cons(Pair(strLeft(line, colon), trim2(strRight(line, colon + 1), " \t")), acc));
 		}
 	}
 }
@@ -186,6 +186,16 @@ parseMimeHeaderFields(file : string, i : int, n : int, acc : List<Pair<string, s
 // locale, I does not become i there.
 mimeLowerAscii(s : string) -> string {
 	list2string(stringFoldi(s, makeList(), \i, acc, c -> Cons(if (65 <= c && c <= 90) fromCharCode(c + 32) else substring(s, i, 1), acc)));
+}
+
+// Whether mimeLowerAscii(field) == name, for a lower-case name, without building the
+// lower-case field name: most names have another length, or differ in the first letter.
+mimeFieldNameIs(field : string, name : string) -> bool {
+	n = strlen(name);
+	strlen(field) == n && countUntil(0, n, \i -> {
+		c = getCharCodeAt(field, i);
+		(if (65 <= c && c <= 90) c + 32 else c) != getCharCodeAt(name, i);
+	}) == n;
 }
 
 mimeLineEnd(file : string, i : int, n : int) -> int {
