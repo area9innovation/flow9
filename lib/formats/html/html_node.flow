@@ -17,7 +17,16 @@ export {
 			body : string    // codes:    8828,         22A4       forall
 		);
 
-	// Converts the HTML nodes back to a string (inverse function to `parseHtml`);
+	// Converts the HTML nodes back to a string (inverse function to `parseHtml`).
+	// An attribute value holds source text, as `parseHtml` gives it, so "&amp;" in a value stays "&amp;".
+	// A text is taken as characters, and what would be read as markup is escaped, so `parseHtml` reads the same characters back:
+	// - in a text, a "<" that would start a tag or a comment is written as &lt;, a "&" that would start an entity as &amp;.
+	//   Neighbouring texts are escaped as one text. Texts that `parseHtml` gives are written as they are, but for a "<" or "</"
+	//   before white space at their start ("< Back" is written as "&lt; Back"), and for a "<" at the end of one text that
+	//   would start a tag or a comment with the next one ("a <" and "b>c" are written as "a &lt;b>c");
+	// - in a comment, the ">" of a "-->" that would end it early is written as &gt;;
+	// - an attribute value is put in quotes that it does not hold.
+	// The text of a script is written as it is.
 	html2s(html : [HtmlNode]) -> string;
 	htmlNode2s(elem : HtmlNode) -> string;
 
@@ -27,29 +36,107 @@ export {
 
 
 html2s(html : [HtmlNode]) -> string {
-	concatStrings(map(html, htmlNode2s));
+	list2string(writeHtmlTexts(fold(html, Html2sOutput(makeList(), makeList()), writeHtmlNode)).parts);
 }
 
 htmlNode2s(elem : HtmlNode) -> string {
-	switch (elem) {
+	html2s([elem]);
+}
+
+// The output so far, last part first, and the texts not written yet, last first
+Html2sOutput(parts : List<string>, texts : List<string>);
+
+writeHtmlNode(out : Html2sOutput, node : HtmlNode) -> Html2sOutput {
+	switch (node) {
 		HtmlTag(tag, attribs, body): {
 			attribs_s = concatStrings(
 				mapi(attribs, \i, attr -> 
-					attr.key + "='" + attr.val + "'" + if (i + 1 != length(attribs)) " " else ""
+					attr.key + "=" + htmlAttribValue2s(attr.val) + if (i + 1 != length(attribs)) " " else ""
 				)
 			);
 			if (length(body) > 0) {
 				open_tag = "<" + tag + (if (length(attribs) == 0) "" else " ") + attribs_s + ">";
 				close_tag = "</" + tag + ">";
-				open_tag + html2s(body) + close_tag;
+				addHtml2s(writeHtmlTagBody(addHtml2s(out, open_tag), tag, body), close_tag);
 			} else {
-				"<" + tag + (if (length(attribs) == 0) "" else " ") + attribs_s + "/>"
+				addHtml2s(out, "<" + tag + (if (length(attribs) == 0) "" else " ") + attribs_s + "/>");
 			}
 		}
-		HtmlText(text):       text;
-		HtmlComment(text):    "<!--" + text + "-->";
-		HtmlEntity(prefix, body): prefix + body + ";";
+		// Neighbouring texts are escaped as one text: a "<" at the end of one can start a tag with the next
+		HtmlText(text):       Html2sOutput(out.parts, Cons(text, out.texts));
+		HtmlComment(text):    addHtml2s(out, "<!--" + htmlComment2s(text) + "-->");
+		HtmlEntity(prefix, body): addHtml2s(out, prefix + body + ";");
 	}
+}
+
+// parseHtml keeps the text of a script as it is, so it is written as it is
+writeHtmlTagBody(out : Html2sOutput, tag : string, body : [HtmlNode]) -> Html2sOutput {
+	if (tag == "script") {
+		fold(body, out, \acc, node -> switch (node) {
+			HtmlText(text): addHtml2s(acc, text);
+			HtmlTag(__, __, __): writeHtmlNode(acc, node);
+			HtmlEntity(__, __): writeHtmlNode(acc, node);
+			HtmlComment(__): writeHtmlNode(acc, node);
+		});
+	} else {
+		fold(body, out, writeHtmlNode);
+	}
+}
+
+// Writes the texts not written yet, then s
+addHtml2s(out : Html2sOutput, s : string) -> Html2sOutput {
+	written = writeHtmlTexts(out);
+	Html2sOutput(Cons(s, written.parts), written.texts);
+}
+
+writeHtmlTexts(out : Html2sOutput) -> Html2sOutput {
+	if (isEmptyList(out.texts)) out
+	else Html2sOutput(Cons(htmlText2s(list2string(out.texts)), out.parts), makeList());
+}
+
+// A value is written in single quotes, or in double quotes when it holds a single quote.
+// A value with both is written without quotes, as parseHtml reads it, when it can be:
+// with no white space, ">", "/" or "=", and no quote at its start. Else its single quotes are written as &#39;
+htmlAttribValue2s(val : string) -> string {
+	if (!strContains(val, "'")) "'" + val + "'"
+	else if (!strContains(val, "\"")) "\"" + val + "\""
+	else if (!startsWith(val, "'") && !startsWith(val, "\"") && strFindFirstOf(val, " \t\n\r>/=") == -1) val
+	else "'" + strReplace(val, "'", "&#39;") + "'";
+}
+
+// In a text, parseHtml reads a "<" before a letter or "!", or before "/" and a letter or "!", as markup,
+// so it is written as &lt;. A "&" that is not before white space, which it reads as the start of an entity,
+// is written as &amp;. parseHtml never gives these in a text.
+// Where a node starts (at the start of the text, and after a "&" written as &amp;), parseHtml also reads
+// a tag with white space after "<" or "</", as in "< b>", and the ">" that ends it can be in a later node.
+// So a "<" or "</" before white space is always written as &lt; there: "< Back" is written as "&lt; Back".
+htmlText2s(text : string) -> string {
+	if (!strContains(text, "<") && !strContains(text, "&")) text
+	else concatStrings(generate(0, strlen(text), \i -> {
+		c = getCharAt(text, i);
+		next = getCharAt(text, i + 1);
+		afterSlash = if (next == "/") getCharAt(text, i + 2) else next;
+		if (c == "<" && (isHtmlTagLetter(afterSlash) || (isHtmlSpace(afterSlash) && (i == 0 || getCharAt(text, i - 1) == "&")))) "&lt;"
+		else if (c == "&" && !isHtmlSpace(next)) "&amp;"
+		else c;
+	}));
+}
+
+isHtmlTagLetter(c : string) -> bool {
+	c == "!" || ("a" <= c && c <= "z") || ("A" <= c && c <= "Z");
+}
+
+isHtmlSpace(c : string) -> bool {
+	c == " " || c == "\t" || c == "\n" || c == "\r";
+}
+
+// A comment ends at "-->", and in a browser also at a ">" or "->" right after "<!--".
+// The ">" there is written as &gt;, so that the comment keeps all of its text.
+htmlComment2s(text : string) -> string {
+	escaped = strReplace(text, "-->", "--&gt;");
+	if (startsWith(escaped, ">")) "&gt;" + strRight(escaped, 1)
+	else if (startsWith(escaped, "->")) "-&gt;" + strRight(escaped, 2)
+	else escaped;
 }
 
 unescapeHtmlEntity(entity : HtmlEntity) -> string {
