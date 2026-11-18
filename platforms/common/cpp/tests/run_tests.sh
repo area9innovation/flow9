@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Builds and runs the C++ unit tests with the address and undefined-behaviour sanitizers.
-# Needs only g++ (or CXX=clang++); the test files are written in a temporary folder.
+# Needs only g++ (or CXX=clang++); pass --qt to build with Qt 6 Core via pkg-config.
 
 set -e
 
@@ -10,11 +10,23 @@ CPP_DIR=$( dirname "$SCRIPT_DIR" )
 WORK_DIR=$( mktemp -d )
 trap 'rm -rf "$WORK_DIR"' EXIT
 
+cxxflags=(-std=c++11)
+libs=()
+case "${1:-}" in
+    --qt) cxxflags=(-std=c++17 -fPIC $(pkg-config --cflags Qt6Core))
+          libs=($(pkg-config --libs Qt6Core)) ;;
+    '') ;;
+    *) echo "Usage: $0 [--qt]" >&2; exit 2 ;;
+esac
+
 # char_traits_fix.h uses memcpy without including <cstring>
-"${CXX:-g++}" -std=c++11 -g -O1 -Wall -fsanitize=address,undefined -include cstring \
+"${CXX:-g++}" "${cxxflags[@]}" -g -O1 -Wall -fsanitize=address,undefined -include cstring \
     -I"$CPP_DIR" -I"$CPP_DIR/core" \
     "$CPP_DIR/core/Utf8.cpp" "$CPP_DIR/font/TextFont.cpp" "$SCRIPT_DIR/utf8_test.cpp" \
-    -o "$WORK_DIR/utf8_test"
+    -o "$WORK_DIR/utf8_test" "${libs[@]}"
 
 cd "$WORK_DIR"
+export TMPDIR="$PWD/temp-雪"
+mkdir "$TMPDIR"
 ./utf8_test
+rmdir "$TMPDIR" # Neither named nor unnamed streams should leave files behind.

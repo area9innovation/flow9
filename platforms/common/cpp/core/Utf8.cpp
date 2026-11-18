@@ -1,10 +1,9 @@
 #include "STLHelpers.h"
 
 #include <stdio.h>
-#ifdef _WIN32
-#include <io.h>
-#else
+#ifndef _WIN32
 #include <fcntl.h>
+#include <stdlib.h>
 #include <unistd.h>
 #endif
 
@@ -13,7 +12,9 @@
 #include <QFile>
 #include <QString>
 #include <QDir>
+#ifdef _WIN32
 #include <QTemporaryFile>
+#endif
 #endif
 
 #include <sstream>
@@ -356,6 +357,7 @@ std::string temp_file_path = std::string([NSTemporaryDirectory() UTF8String]);
 std::string temp_file_path = P_tmpdir;
 #endif
 
+#ifdef _WIN32
 FILE *MakeTemporaryFile(std::string *pname)
 {
     std::string path = temp_file_path;
@@ -370,42 +372,60 @@ FILE *MakeTemporaryFile(std::string *pname)
     if (!file.open())
         return NULL;
 
-    // Qt owns its descriptor; give stdio a separate descriptor for the same file.
-    const int qt_fd = file.handle();
-    if (qt_fd < 0)
-        return NULL;
-#ifdef _WIN32
-    const int fd = _dup(qt_fd);
-    if (fd < 0)
-        return NULL;
-    FILE *fobj = _fdopen(fd, "w+b");
-    if (!fobj) {
-        _close(fd);
-        return NULL;
-    }
-#else
-    const int fd = fcntl(qt_fd, F_DUPFD_CLOEXEC, 0);
-    if (fd < 0)
-        return NULL;
-    FILE *fobj = fdopen(fd, "w+b");
-    if (!fobj) {
-        close(fd);
-        return NULL;
-    }
-#endif
-    const QString name = file.fileName();
-    if (name.isEmpty()) {
-        fclose(fobj);
-        return NULL;
-    }
+    std::string name = encodeUtf8(qt2unicode(file.fileName()));
     if (pname)
-        *pname = encodeUtf8(qt2unicode(name));
-    file.setAutoRemove(false);
-    return fobj;
+        *pname = name;
+
+    if (FILE *fobj = fopen(name.c_str(), "w+b"))
+    {
+        file.setAutoRemove(false);
+        return fobj;
+    }
+
+    file.remove();
+    return NULL;
 #else
     path.push_back(0);
 
     int fd = mkstemp(&path[0]);
+    if (fd == -1)
+        return NULL;
+
+    if (pname)
+        *pname = path.substr(0, path.size()-1);
+
+    return fdopen(fd, "w+b");
+#endif
+}
+#else
+static int openTemporaryFile(char *path)
+{
+    // mkostemp is an extension. In particular it needs Android API 23,
+    // macOS 10.12 or iOS 10; older deployment targets must not link it.
+#if defined(O_CLOEXEC) && ((defined(__linux__) && !defined(__ANDROID__) && defined(_GNU_SOURCE)) || \
+    (defined(__ANDROID__) && __ANDROID_API__ >= 23) || \
+    (defined(__APPLE__) && __DARWIN_C_LEVEL == __DARWIN_C_FULL && \
+     (__ENVIRONMENT_MAC_OS_X_VERSION_MIN_REQUIRED__ >= 101200 || __ENVIRONMENT_IPHONE_OS_VERSION_MIN_REQUIRED__ >= 100000)))
+    return mkostemp(path, O_CLOEXEC);
+#else
+    int fd = mkstemp(path);
+    if (fd != -1 && fcntl(fd, F_SETFD, FD_CLOEXEC) == -1) {
+        close(fd);
+        unlink(path);
+        return -1;
+    }
+    return fd;
+#endif
+}
+
+FILE *MakeTemporaryFile(std::string *pname)
+{
+    std::string path = temp_file_path;
+    if (!path.empty() && path.back() != '/')
+        path += '/';
+    path += "flowtmpXXXXXX";
+
+    int fd = openTemporaryFile(&path[0]);
     if (fd == -1)
         return NULL;
 
@@ -415,11 +435,15 @@ FILE *MakeTemporaryFile(std::string *pname)
         unlink(path.c_str());
         return NULL;
     }
-    if (pname)
-        *pname = path.substr(0, path.size()-1);
+    if (pname) {
+        pname->swap(path);
+    } else if (unlink(path.c_str()) == -1) {
+        fclose(fobj);
+        return NULL;
+    }
     return fobj;
-#endif
 }
+#endif
 
 std::string stl_sprintf(const char *fmt, ...) {
     va_list lst;
