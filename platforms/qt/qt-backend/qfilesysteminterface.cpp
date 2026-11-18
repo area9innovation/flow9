@@ -34,7 +34,29 @@ NativeFunction *QFileSystemInterface::MakeNativeFunction(const char *name, int n
 #undef NATIVE_NAME_PREFIX
 #define NATIVE_NAME_PREFIX "FlowFileSystem."
     TRY_USE_NATIVE_METHOD(QFileSystemInterface, canCopyLocal, 3);
+    TRY_USE_NATIVE_METHOD(QFileSystemInterface, listLocalCopyDirectory, 1);
     return FileSystemInterface::MakeNativeFunction(name, num_args);
+}
+
+StackSlot QFileSystemInterface::listLocalCopyDirectory(RUNNER_ARGS) {
+    RUNNER_PopArgs1(src);
+    RUNNER_CheckTag(TString, src);
+    namespace fs = std::filesystem;
+    auto dir = fs::u8path(encodeUtf8(RUNNER->GetString(src)));
+    // A trailing separator would make symlink_status inspect the referent.
+    while (!dir.has_filename() && dir.has_relative_path()) dir = dir.parent_path();
+    std::error_code ec;
+    if (!fs::is_directory(fs::symlink_status(dir, ec)) || ec ||
+        QFileInfo(QString::fromStdString(dir.u8string())).isJunction())
+        return RUNNER->MakeStruct("None", 0, nullptr);
+    std::vector<std::string> names;
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec))
+        names.push_back(it->path().filename().u8string());
+    if (ec) return RUNNER->MakeStruct("None", 0, nullptr);
+    RUNNER_DefSlots1(children);
+    children = RUNNER->AllocateStringArray(names);
+    if (RUNNER->IsErrorReported()) return StackSlot::MakeVoid();
+    return RUNNER->MakeStruct("Some", 1, &children);
 }
 
 StackSlot QFileSystemInterface::canCopyLocal(RUNNER_ARGS) {

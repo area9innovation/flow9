@@ -9,10 +9,17 @@ trap 'rm -rf "$work"' EXIT
 cd "$root"
 "$root/bin/flowc1" "$here/file_contracts.flow" bytecode="$work/test.bytecode"
 "$root/bin/flowc1" "$here/local_file_contracts.flow" bytecode="$work/local.bytecode"
+"$root/bin/flowc1" "$here/fixtures/legacy_copy.flow" bytecode="$work/copy.bytecode"
 cp "$here/fixtures/legacy_copy.flowbc" "$work/legacy.bytecode"
 
 check_local() {
-    mkdir -p out/blocked.dat tree/sub
+    mkdir -p out/blocked.dat tree/sub copy-out referent linked-tree/sub/deep
+    printf 'untouched referent' >referent/sentinel
+    ln -s referent dir-link
+    ln -s ../../../referent linked-tree/sub/deep/link
+    printf 'keep sibling' >linked-tree/sub/.keep
+    printf 'keep root file' >linked-tree/ordinary
+    ln -s ../../referent/sentinel tree/sub/file-link
     mkdir -p alias-src/sub hardlink-dir
     printf 'same entry' >alias-src/item
     ln -s alias-src alias-parent
@@ -33,6 +40,15 @@ check_local() {
     "$@"
     cmp odd.dat out/odd.dat && cmp empty.dat out/empty.dat && cmp expected out/large.dat || return 1
     cmp odd.dat out/tree/sub/odd.dat
+    cmp odd.dat copy-out/tree/sub/odd.dat
+    [[ $(cat referent/sentinel) == 'untouched referent' && $(ls -A referent) == sentinel ]]
+    for d in out copy-out; do
+        cmp referent/sentinel "$d/tree/sub/file-link"
+        [[ ! -L $d/tree/sub/file-link ]]
+    done
+    [[ $(readlink dir-link) == referent && $(readlink linked-tree/sub/deep/link) == ../../../referent ]]
+    [[ $(cat linked-tree/sub/.keep) == 'keep sibling' && $(cat linked-tree/ordinary) == 'keep root file' ]]
+    [[ ! -e out/dir-link && ! -L out/dir-link && ! -e out/linked-tree && ! -L out/linked-tree ]]
     [[ alias-src/item -ef hardlink-dir/item && $(cat alias-src/item) == 'same entry' ]]
     cmp alias-src/item out/item
     [[ -z $(ls -A alias-src/sub) && -z $(find . -name '.flowcopy*' -print -quit) ]]
@@ -65,11 +81,16 @@ for mode in jit interpreter; do
     if "${runner[@]}" "$work/legacy.bytecode"; then exit 1; fi
     [[ $(cat legacy.dst) == previous ]]
     check_local "${runner[@]}" "$work/local.bytecode"
+    for image in copy legacy; do
+        python3 "$here/run_staged_copy_tests.py" run "${runner[@]}" "$work/$image.bytecode"
+    done
 done
 
 if [[ ${CHECK_JAVA:-0} == 1 ]]; then
     cd "$root"
     "$root/bin/flowc1" "$here/local_file_contracts.flow" jar="$work/local.jar"
+    "$root/bin/flowc1" "$here/fixtures/legacy_copy.flow" jar="$work/copy.jar"
     mkdir "$work/java" && cd "$work/java"
     check_local java -jar "$work/local.jar"
+    python3 "$here/run_staged_copy_tests.py" run java -XX:-UsePerfData -jar "$work/copy.jar"
 fi

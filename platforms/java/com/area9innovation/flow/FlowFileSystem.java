@@ -10,6 +10,7 @@ import java.io.FileNotFoundException;
 import java.net.*;
 import java.nio.charset.Charset;
 import java.nio.file.*;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.channels.ReadableByteChannel;
@@ -73,6 +74,22 @@ public class FlowFileSystem extends NativeHost {
 	public static boolean isDirectory(String path) {
 		File file = new File(path);
 		return file.isDirectory();
+	}
+	public static Struct listLocalCopyDirectory(String path) {
+		try {
+			Path dir = Paths.get(path);
+			BasicFileAttributes attrs = Files.readAttributes(dir, BasicFileAttributes.class, LinkOption.NOFOLLOW_LINKS);
+			if (attrs.isDirectory() && !attrs.isOther()) {
+				List<String> names = new ArrayList<>();
+				try (DirectoryStream<Path> children = Files.newDirectoryStream(dir)) {
+					for (Path child : children) names.add(child.getFileName().toString());
+				}
+				return FlowRuntime.makeStructValueUnchecked("Some", new Object[]{names.toArray()}, null);
+			}
+		} catch (IOException | DirectoryIteratorException | InvalidPathException | SecurityException ex) {
+			// A failed listing must not look like an empty directory.
+		}
+		return FlowRuntime.makeStructValueUnchecked("None", new Object[0], null);
 	}
 	public static Object[] readDirectory(String path) {
 		File file = new File(path);

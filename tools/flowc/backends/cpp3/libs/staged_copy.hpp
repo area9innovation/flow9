@@ -2,35 +2,31 @@
 
 #include <cerrno>
 #include <cstdio>
-#include <fcntl.h>
 #include <filesystem>
 #include <fstream>
 #include <random>
 #include <stdexcept>
 #ifdef _WIN32
 #include <io.h>
+#include <fcntl.h>
 #include <sys/stat.h>
 #else
+#include <cstdlib>
+#include <sys/stat.h>
 #include <unistd.h>
 #endif
 
 namespace flow {
 
-inline std::FILE* openCopyStage(const std::filesystem::path& path, bool existing) {
 #ifdef _WIN32
+inline std::FILE* openCopyStage(const std::filesystem::path& path) {
     int fd = _wopen(path.c_str(), _O_CREAT | _O_EXCL | _O_WRONLY | _O_BINARY, _S_IREAD | _S_IWRITE);
     if (fd < 0) return nullptr;
     auto out = _fdopen(fd, "wb");
     if (!out) { _close(fd); _wunlink(path.c_str()); }
-#else
-    // Start a replacement privately. For a new file let open apply the umask.
-    int fd = open(path.c_str(), O_CREAT | O_EXCL | O_WRONLY, existing ? 0600 : 0666);
-    if (fd < 0) return nullptr;
-    auto out = fdopen(fd, "wb");
-    if (!out) { close(fd); unlink(path.c_str()); }
-#endif
     return out;
 }
+#endif
 
 inline bool stagedCopy(const std::filesystem::path& src, const std::filesystem::path& dst) {
     namespace fs = std::filesystem;
@@ -45,18 +41,35 @@ inline bool stagedCopy(const std::filesystem::path& src, const std::filesystem::
 
     fs::path tmp;
     std::FILE* out = nullptr;
+    // Even an absent destination must never be chosen as its own stage.
+    const char* prefix = dst.filename().native().front() == '.' ? "_flowcopy-" : ".flowcopy-";
+#ifdef _WIN32
     try {
-        // Even an absent destination must never be chosen as its own stage.
-        const char* prefix = dst.filename().native().front() == '.' ? "_flowcopy-" : ".flowcopy-";
         std::random_device random;
         for (int i = 0; i < 16 && !out; ++i) {
             tmp = dst.parent_path() / (prefix + std::to_string(random()));
-            out = openCopyStage(tmp, existing);
+            out = openCopyStage(tmp);
             if (!out && errno != EEXIST) return false;
         }
     } catch (const std::runtime_error&) { return false; }
+#else
+    auto dir = (dst.parent_path() / (std::string(prefix) + "XXXXXX")).string();
+    if (!::mkdtemp(dir.data())) return false;
+    struct RemoveStage {
+        const std::string& name;
+        const fs::path& file;
+        ~RemoveStage() {
+            if (!file.empty()) ::unlink(file.c_str());
+            ::rmdir(name.c_str());
+        }
+    } cleanup{dir, tmp};
+    struct stat st;
+    if (::chmod(dir.c_str(), 0700) != 0 || ::stat(dir.c_str(), &st) != 0 ||
+        (st.st_mode & 07777) != 0700) return false;
+    tmp = fs::path(dir) / "data";
+    out = std::fopen(tmp.c_str(), "wb"); // creation mode is filtered by the caller's umask
+#endif
     if (!out) return false;
-
     char buf[16384];
     bool ok = true;
     while (ok && in) {
@@ -65,7 +78,9 @@ inline bool stagedCopy(const std::filesystem::path& src, const std::filesystem::
         ok = std::fwrite(buf, 1, n, out) == n;
     }
     ok = ok && in.eof() && !in.bad() && !std::ferror(out) && std::fflush(out) == 0;
-    if (std::fclose(out) != 0) ok = false;
+    in.clear();
+    in.close();
+    if (std::fclose(out) != 0 || in.fail()) ok = false;
 #ifndef _WIN32
     if (ok && existing) {
         fs::permissions(tmp, status.permissions() & fs::perms::all, ec);
@@ -76,7 +91,9 @@ inline bool stagedCopy(const std::filesystem::path& src, const std::filesystem::
         fs::rename(tmp, dst, ec);
         if (!ec) return true;
     }
+#ifdef _WIN32
     fs::remove(tmp, ec);
+#endif
     return false;
 }
 

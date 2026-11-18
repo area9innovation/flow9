@@ -10,6 +10,8 @@ import java.lang.reflect.*;
 import java.math.BigInteger;
 import java.nio.charset.*;
 import java.nio.file.*;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.*;
 import java.time.*;
 import java.time.format.*;
@@ -1399,24 +1401,34 @@ public class Native extends NativeHost {
 		try {
 			Path src = Paths.get(from), dst = Paths.get(to).toAbsolutePath();
 			if (!Files.isRegularFile(src) || dst.getParent() == null || Files.isDirectory(dst)) return false;
+			boolean posix = dst.getFileSystem().supportedFileAttributeViews().contains("posix");
 			try (InputStream in = Files.newInputStream(src)) {
-				dir = Files.createTempDirectory(dst.getParent(), ".flowcopy");
+				if (posix) {
+					Set<PosixFilePermission> ownerOnly = PosixFilePermissions.fromString("rwx------");
+					dir = Files.createTempDirectory(dst.getParent(), ".flowcopy", PosixFilePermissions.asFileAttribute(ownerOnly));
+					Files.setPosixFilePermissions(dir, ownerOnly);
+					if (!Files.getPosixFilePermissions(dir).equals(ownerOnly)) return false;
+				} else {
+					dir = Files.createTempDirectory(dst.getParent(), ".flowcopy");
+				}
 				tmp = dir.resolve("data");
 				try (OutputStream out = Files.newOutputStream(tmp, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
 					in.transferTo(out);
 				}
-				if (dst.getFileSystem().supportedFileAttributeViews().contains("posix")) {
-					try { Files.setPosixFilePermissions(tmp, Files.getPosixFilePermissions(dst)); }
+				if (posix) {
+					Set<PosixFilePermission> mode = null;
+					try { mode = Files.getPosixFilePermissions(dst); }
 					catch (NoSuchFileException absent) { /* new file: retain the creation mode */ }
+					if (mode != null) Files.setPosixFilePermissions(tmp, mode);
 				}
 			}
 			Files.move(tmp, dst, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
 			return true;
-		} catch (IOException | InvalidPathException | SecurityException ex) {
+		} catch (IOException | InvalidPathException | SecurityException | UnsupportedOperationException ex) {
 			return false;
 		} finally {
-			if (tmp != null) try { Files.deleteIfExists(tmp); } catch (IOException ignored) { }
-			if (dir != null) try { Files.deleteIfExists(dir); } catch (IOException ignored) { }
+			if (tmp != null) try { Files.deleteIfExists(tmp); } catch (IOException | SecurityException ignored) { }
+			if (dir != null) try { Files.deleteIfExists(dir); } catch (IOException | SecurityException ignored) { }
 		}
 	}
 

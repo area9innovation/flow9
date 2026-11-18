@@ -3,6 +3,9 @@ import formats/base64;
 import material/extra/filesystem/filesystem_extended_api;
 
 export {
+	// Local copy/move reject a source directory link, including one nested in the
+	// source tree, before changing either tree. Links to regular files copy the
+	// file's bytes; moving such a link removes only its own directory entry.
 	localFilesystemExtAPI() -> FilesystemExtAPI;
 	setLocalFilesystemExtAPI() -> void;
 }
@@ -40,13 +43,13 @@ localFilesystemExtAPI() -> FilesystemExtAPI {
 		},
 		// copyElement : (string, string, onDone : () -> void, onError : (string) -> void) -> void
 		\pathFrom, pathTo, onDone, onError -> {
-			err = copyElementsLocal(pathFrom, pathTo);
+			err = copyElementsLocal(pathFrom, pathTo, false);
 			if (err == "") onDone() else onError(err);
 		},
 		// moveElement : (string/*element full path*/, string /*move to directory*/, onDone : () -> void, onError : (string) -> void) -> void
 		\pathFrom, pathTo, onDone, onError -> {
-			err = copyElementsLocal(pathFrom, pathTo);
-			if (err == "") deleteElementsLocal(pathFrom, onDone, onError) else onError(err);
+			err = copyElementsLocal(pathFrom, pathTo, true);
+			if (err == "") onDone() else onError(err);
 		},
 		// renameElement : (string, string, onDone : () -> void, onError : (string) -> void) -> void
 		\filenameFrom, onlyNameNew, onDone, onError -> {
@@ -131,18 +134,43 @@ canCopyLocal(src : string, folder : string, dest : string) -> bool {
 		!startsWith(rtrim2(resolveRelativePath(folder), "/\\") + "/", rtrim2(resolveRelativePath(src), "/\\") + "/"));
 }
 
-copyElementsLocal(src : string, folder : string) -> string {
-	dest = pathCombine(folder, fileNameOnly(rtrim2(src, "/\\")));
+// A directory link is not a copyable directory. Distinguish a successful empty
+// listing from an unsupported link, an unreadable directory or a missing host.
+native listLocalCopyDirectory : io (path : string) -> Maybe<[string]> = FlowFileSystem.listLocalCopyDirectory;
+listLocalCopyDirectory(__ : string) -> Maybe<[string]> { None() }
+
+LocalCopyEntry(src : string, dest : string, directory : bool);
+
+planLocalCopy(src : string, dest : string, plan : ref List<LocalCopyEntry>) -> string {
+	directory = isDirectory(src);
+	rlistPush(plan, LocalCopyEntry(src, dest, directory));
+	if (!directory) "" else switch (listLocalCopyDirectory(src)) {
+		None(): "Cannot traverse source directory '" + src + "'";
+		Some(names): fold(names, "", \err, name -> if (err != "") err
+			else planLocalCopy(src + "/" + name, dest + "/" + name, plan));
+	}
+}
+
+copyElementsLocal(src : string, folder : string, move : bool) -> string {
+	name = fileNameOnly(rtrim2(src, "/\\"));
+	dest = pathCombine(folder, name);
 	if (!fileExists(src)) "File or folder '" + src + "' doesn't exist"
 	else if (!isDirectory(folder)) "Not a destination directory: " + folder
-	else if (!canCopyLocal(src, folder, dest)) "Cannot copy '" + src + "' into '" + folder + "'"
-	else if (isDirectory(src)) {
-		err = createDirectory(dest);
-		if (err != "") err else fold(readDirectory(src), "", \error, name ->
-			if (error != "" || name == "." || name == "..") error
-			else copyElementsLocal(pathCombine(src, name), dest));
-	} else if (copyFile(src, dest)) ""
-	else "Cannot copy '" + src + "' to '" + dest + "'";
+	else if (name == "" || name == "." || name == ".." || !canCopyLocal(src, folder, dest))
+		"Cannot copy '" + src + "' into '" + folder + "'"
+	else {
+		// Validate the complete tree before creating the first destination. Copy
+		// parents first; remove only copied entries, children first, on a move.
+		plan = ref makeList();
+		err = planLocalCopy(src, dest, plan);
+		if (err != "") err else {
+			copied = fold(list2array(^plan), "", \e, p -> if (e != "") e
+				else if (p.directory) createDirectory(p.dest)
+				else if (copyFile(p.src, p.dest)) "" else "Cannot copy '" + p.src + "' to '" + p.dest + "'");
+			if (!move || copied != "") copied else foldList(^plan, "", \e, p -> if (e != "") e
+				else if (p.directory) deleteDirectory(p.src) else deleteFile(p.src));
+		}
+	}
 }
 
 createAllFolders(path : string, onDone : () -> void, onError : (string) -> void) -> void {

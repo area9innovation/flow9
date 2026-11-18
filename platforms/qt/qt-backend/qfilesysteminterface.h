@@ -31,6 +31,7 @@ public:
 protected:
     NativeFunction *MakeNativeFunction(const char *name, int num_args) override;
     DECLARE_NATIVE_METHOD(canCopyLocal)
+    DECLARE_NATIVE_METHOD(listLocalCopyDirectory)
     void doOpenFileDialog(int maxFilesCount, std::vector<std::string> fileTypes, StackSlot callback);
     std::string doFileType(const StackSlot &file);
     char* doResolveRelativePath(std::string &filename, char* buffer);
