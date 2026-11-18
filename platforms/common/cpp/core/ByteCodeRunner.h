@@ -1100,6 +1100,7 @@ private:
 #ifdef FLOW_COMPACT_STRUCTS
     // Native functions at the start of the list that use struct-like layouts
     unsigned NumCompactNativeFNs;
+    bool UsesCompactClosureLayout(unsigned func_id) const { return func_id < NumCompactNativeFNs; }
 #endif
     // Number of data stack entries that are made read-only to protect globals
     unsigned NumFrozenDataStack;

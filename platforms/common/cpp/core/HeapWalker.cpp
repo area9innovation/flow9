@@ -130,6 +130,13 @@ void HeapWalker::ProcessRefs(FlowNativeObject *obj)
     obj->flowGCObject(fn);
 }
 
+StructDef *HeapWalker::LookupStructDef(unsigned id)
+{
+    if (unlikely(id >= NumStructDefs || StructDefs[id].FieldsCount < 0))
+        abort();
+    return &StructDefs[id];
+}
+
 void HeapWalker::Process(StackSlot &value)
 {
     switch (value.GetType()) {
@@ -160,10 +167,7 @@ void HeapWalker::Process(StackSlot &value)
 
     case TStruct:
         {
-            StructDef *def = StructDefs + value.GetStructId();
-            if (unlikely(unsigned(value.GetStructId()) >= NumStructDefs ||
-                         def->FieldsCount < 0))
-                abort();
+            StructDef *def = LookupStructDef(value.GetStructId());
 #ifdef FLOW_COMPACT_STRUCTS
             VisitStruct(value, (FlowStructHeader*)MEMORY_PTR(value.GetRawStructPtr(),4,true), def->FieldsCount, def);
 #else
@@ -204,10 +208,19 @@ void HeapWalker::Process(StackSlot &value)
 
     case TNativeFn:
         {
-            NativeFunction *fun = Runner->lookupNativeFn(Runner->GetNativeFnId(value));
+            int id = Runner->GetNativeFnId(value);
+            NativeFunction *fun = Runner->lookupNativeFn(id);
 
             if (fun)
             {
+#ifdef FLOW_COMPACT_STRUCTS
+                if (value.IsNativeClosure() && Runner->UsesCompactClosureLayout(id)) {
+                    FlowStructHeader *data = Runner->GetClosureStructPtr(value);
+                    VisitNative(value, fun);
+                    VisitCompactFields(data, LookupStructDef(data->StructId));
+                    break;
+                }
+#endif
                 int size = value.IsNativeClosure() ? Runner->GetClosureSize(value) : 0;
                 FlowPtr ptr = size ? value.GetClosureDataPtr() : MakeFlowPtr(0);
                 VisitNativeFun(value, fun, size ? SLOT_PTR(ptr, size) : 0, size);

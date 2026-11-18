@@ -1,11 +1,13 @@
 #include "core/ByteCodeRunner.h"
-#include "core/NativeProgram.h"
+#include "core/HeapWalker.h"
+#include "gen_common.h" // compact_closure.flow, built with the C++ backend
 
 #include <array>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
 #include <memory>
+#include <set>
 
 static void check(bool ok, const char *message)
 {
@@ -32,10 +34,19 @@ static void rejects(CodeMemory &code, F operation)
 class BreakAtEntry : public FlowDebuggerBase {
 public:
     int hits = 0;
+    enum { Resume, StopCoverage, StopCoverageAndRemove } action = Resume;
     explicit BreakAtEntry(ByteCodeRunner *runner) : FlowDebuggerBase(runner) { arm(); }
     void arm() { SetBreakpoint(MakeFlowPtr(0), true); }
     void onRunnerInit() override { FlowDebuggerBase::onRunnerInit(); arm(); }
-    void onBreakpointTrap(FlowPtr addr) override { check(addr == 0, "Entry breakpoint"); ++hits; }
+    void onBreakpointTrap(FlowPtr addr) override {
+        check(addr == 0, "Entry breakpoint");
+        ++hits;
+        if (action != Resume) {
+            check(breakpoints().at(addr) == CCodeCoverageTrap, "Expected pending entry coverage");
+            getFlowRunner()->StopProfiling();
+            if (action == StopCoverageAndRemove) SetBreakpoint(addr, false);
+        }
+    }
     void onInsnTrap(FlowPtr) override {}
     void onCallTrap(FlowPtr, bool) override {}
     void onReturnTrap(FlowPtr) override {}
@@ -54,6 +65,32 @@ public:
     }
     void onRunMain() override { ran = true; }
 };
+
+static void testCompactClosure()
+{
+    flowgen_native_program::NativeProgramImpl program;
+    ByteCodeRunner runner;
+    runner.Init(&program);
+    runner.RunMain();
+    check(!runner.IsErrorReported(), "Compact closure did not run");
+
+    struct Captures : StatisticsHeapWalker {
+        using StatisticsHeapWalker::StatisticsHeapWalker;
+        std::multiset<int> ints;
+        void VisitScalar(StackSlot &slot) override {
+            if (slot.IsInt()) ints.insert(slot.GetInt());
+        }
+    };
+    for (bool collect : {false, true}) {
+        if (collect) runner.ForceGC(0, true);
+        Captures walker(&runner);
+        walker.ProcessGlobalRoots();
+        check(walker.ints == std::multiset<int>{40, 2}, "Expected both the packed int and the nested Offset value");
+        // The closure layout and Offset each have one live instance.
+        for (const auto &def : runner.GetStructDefs())
+            check(walker.GetStructBytes().at(def.StructId) == def.ByteSize, "Expected exact compact storage sizes");
+    }
+}
 
 int main(int argc, char **argv)
 {
@@ -175,10 +212,17 @@ int main(int argc, char **argv)
         check(!runner.IsErrorReported(), "Reloaded compiler output did not run successfully");
 #ifdef FLOW_DEBUGGER
         check(debugger->hits == 2, "Entry trap must fire in both images");
+
+        runner.ReloadBytecode();
+        runner.BeginCoverageProfile(argv[2]);
+        debugger->action = raw ? BreakAtEntry::StopCoverageAndRemove : BreakAtEntry::StopCoverage;
+        runner.RunMain();
+        check(debugger->hits == 3 && !runner.IsErrorReported(), "Failed to resume after stopping coverage");
 #endif
         ConstantProgram compiled;
         runner.Init(&compiled);
         runner.RunMain();
         check(compiled.ran && !runner.IsErrorReported(), "Native constant buffer is not interpreter code");
     }
+    testCompactClosure();
 }

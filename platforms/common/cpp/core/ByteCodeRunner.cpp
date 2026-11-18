@@ -3128,14 +3128,13 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
         case CBreakpoint:
             {
 #ifdef FLOW_DEBUGGER
-                std::map<FlowPtr,OpCode>::iterator it = BreakpointOpcodeBackup.find(cur_insn);
-                if (it != BreakpointOpcodeBackup.end())
+                if (BreakpointOpcodeBackup.count(cur_insn))
                 {
-                    opcode = it->second;
-
                     if (DebuggerPtr)
                         DebuggerPtr->onBreakpointTrap(cur_insn);
 
+                    // The debugger can change coverage or remove this breakpoint while paused.
+                    opcode = safeMapAt(BreakpointOpcodeBackup, cur_insn, OpCode(Memory.GetByte(cur_insn)));
                     goto reparse_breakpoint;
                 }
 #endif

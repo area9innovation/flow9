@@ -946,7 +946,7 @@ void GarbageCollector::Enumerate(const StackSlot &value)
                 {
 #ifdef FLOW_COMPACT_STRUCTS
                     // Closures based on struct layouts are used by the generated C++ code target
-                    if (func_id < Runner->NumCompactNativeFNs)
+                    if (Runner->UsesCompactClosureLayout(func_id))
                         EnumerateStruct(ptr, true);
                     else
 #endif
@@ -1242,7 +1242,7 @@ void GarbageCollector::Collect(StackSlot &value)
                 {
 #ifdef FLOW_COMPACT_STRUCTS
                     // Closures based on struct layouts are used by the generated C++ code target
-                    if (func_id < Runner->NumCompactNativeFNs)
+                    if (Runner->UsesCompactClosureLayout(func_id))
                         value.slot_private.PtrValue = CollectStruct(ptr, true);
                     else
 #endif
