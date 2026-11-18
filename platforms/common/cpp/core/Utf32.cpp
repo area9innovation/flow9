@@ -90,21 +90,28 @@ unicode_string encodeUtf32toUtf16(const utf32_string &str) {
     return encodeUtf32toUtf16(str.data(), str.size());
 }
 
+static bool startsSurrogatePair(const unicode_char *str, size_t size) {
+    return size >= 2 && str[0] >= 0xD800 && str[0] < 0xDC00 &&
+                        str[1] >= 0xDC00 && str[1] < 0xE000;
+}
+
+// len is one code unit or one confirmed pair.
+static ucs4_char decodeUtf16Char(const unicode_char *str, size_t len) {
+    ucs4_char value;
+    size_t outlen;
+    if (decodeCharsUtf16toUtf32(str, len, &value, &outlen) != len || outlen != 1)
+        return 0xFFFE;
+    return value;
+}
+
 // Inserts 0xFFFE (invalid character) when something's failed, and goes on.
 utf32_string decodeUtf16toUtf32(const unicode_char *str, size_t size) {
     utf32_string out;
     out.reserve(size*4/5);  // Just a guess. Better 1 or less for usual cases and ½ or more for Chinese, Japan, Arabic, Hebrew, Yiddish, maybe some else.
-    size_t len = size;
-    uint32_t outbuf;
-    size_t outlen;
-    for (size_t pos = 0; pos < size; pos += len) {
-        len = (size - pos >= 2 && str[pos] >= 0xD800 && str[pos] < 0xDC00) ? 2 : 1;
-        if (decodeCharsUtf16toUtf32(str + pos, len, &outbuf, &outlen) != len || outlen != 1) {
-            // instead of throwing DecodeError
-            outbuf = 0xFFFE;
-            len = outlen = 1;
-        }
-        out.append(&outbuf, outlen);
+    for (size_t pos = 0; pos < size;) {
+        const size_t len = startsSurrogatePair(str + pos, size - pos) ? 2 : 1;
+        out.push_back(decodeUtf16Char(str + pos, len));
+        pos += len;
     }
     return out;
 }
@@ -134,66 +141,35 @@ DecodeUtf16toUtf32::DecodeUtf16toUtf32(unicode_string &org) {
     this->size = org.size();
 }
 
-DecodeUtf16toUtf32::Iterator::Iterator(DecodeUtf16toUtf32 *parent, size_t pos) {
-    this->parent = parent;
-    this->pos = pos;
-    refreshState();
-}
+DecodeUtf16toUtf32::Iterator::Iterator(DecodeUtf16toUtf32 *parent, size_t pos)
+    : parent(parent), pos(pos) {}
 
-void DecodeUtf16toUtf32::Iterator::refreshState() {
-    currentCharLen = 1;
-    if (pos >= parent->size) return;
-
-    const unicode_char c = parent->org[pos];
-    if (c >= 0xD800 && c < 0xDC00) {
-        if (parent->size - pos >= 2) currentCharLen = 2;
-    } else if (c >= 0xDC00 && c < 0xE000 && pos > 0 &&
-               parent->org[pos-1] >= 0xD800 && parent->org[pos-1] < 0xDC00) {
-        --pos;
-        currentCharLen = 2;
-    }
-}
-
-void DecodeUtf16toUtf32::Iterator::decodeChar() {
-    const size_t len = currentCharLen;
-    size_t outlen;
-    if (pos >= parent->size || len > parent->size - pos ||
-        decodeCharsUtf16toUtf32(parent->org + pos, len, &outbuf, &outlen) != len || outlen != 1) {
-        // instead of throwing DecodeError
-        outbuf = 0xFFFE;
-        currentCharLen = 1;
-    }
-}
-
-char DecodeUtf16toUtf32::Iterator::charNativeLen() {
-    return currentCharLen;
+size_t DecodeUtf16toUtf32::Iterator::charNativeLen() const {
+    return pos < parent->size && startsSurrogatePair(parent->org + pos, parent->size - pos) ? 2 : 1;
 }
 
 Utf32InputIterator &DecodeUtf16toUtf32::Iterator::forward() {
     if (pos < parent->size) pos += charNativeLen(); else pos = 0;
-    refreshState();
     return *this;
 }
 
 Utf32InputIterator &DecodeUtf16toUtf32::Iterator::backward() {
-    if (pos > 0) --pos; else (pos = parent->size);
-    refreshState();
+    if (pos >= 2 && startsSurrogatePair(parent->org + (pos - 2), 2)) pos -= 2;
+    else if (pos > 0) --pos;
+    else pos = parent->size;
     return *this;
 }
 
 ucs4_char DecodeUtf16toUtf32::Iterator::operator *(){
-    decodeChar();
-    return outbuf;
+    if (pos >= parent->size) return 0; // The iterator's end sentinel.
+    return decodeUtf16Char(parent->org + pos, charNativeLen());
 }
 ucs4_char_tracer DecodeUtf16toUtf32::Iterator::traceCurrent() {
-    **this;
-    return ucs4_char_tracer(pos, pos+currentCharLen, outbuf);
+    return ucs4_char_tracer(pos, pos + charNativeLen(), **this);
 }
 
 bool DecodeUtf16toUtf32::Iterator::operator ==(DecodeUtf16toUtf32::Iterator &other){
-    decodeChar();
-    other.decodeChar();
-    return parent->org == other.parent->org && pos==other.pos;
+    return Utf32InputIterator::operator ==(other);
 }
 
 shared_ptr<Utf32InputIterator> DecodeUtf16toUtf32::DirectIterator::clone() {
@@ -225,7 +201,8 @@ DecodeUtf16toUtf32::DirectIterator DecodeUtf16toUtf32::end() {
     return r;
 }
 DecodeUtf16toUtf32::ReversedIterator DecodeUtf16toUtf32::rbegin() {
-    DecodeUtf16toUtf32::ReversedIterator r(this, (size-1)%(size+1));
+    auto r = rend();
+    ++r;
     return r;
 }
 DecodeUtf16toUtf32::ReversedIterator DecodeUtf16toUtf32::rend() {
