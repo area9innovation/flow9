@@ -323,6 +323,10 @@ private:
         return LocalEnd <= DataStack.size() && FramePointer <= LocalEnd && index < LocalEnd - FramePointer;
     }
 
+    unsigned short ClosureSlotCount(FlowPtr data) {
+        return Memory.GetObjectPointer(data - 4, false)->DataValue;
+    }
+
     // The overall memory layout
     FlowPtr HeapStart;
 
@@ -847,8 +851,7 @@ public:
 
     // These are type-specific:
     inline int GetClosureSize(const StackSlot &arr) {
-        FlowPtr ptr = arr.GetClosureDataPtr();
-        return ptr != MakeFlowPtr(0) ? Memory.GetInt32(ptr - 4) : 0;
+        return ClosureSlotCount(arr.GetClosureDataPtr());
     }
     inline unsigned GetArraySize(const StackSlot &arr) {
         assert(arr.IsArray());

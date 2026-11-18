@@ -174,7 +174,7 @@ void HeapWalker::Process(StackSlot &value)
     case TClosurePointer:
         {
             FlowPtr ptr = value.GetClosureDataPtr();
-            int size = FlowPtrToInt(ptr) ? *(int*)MEMORY_PTR(ptr-4,4,false) : 0;
+            int size = Runner->GetClosureSize(value);
             VisitClosure(value, size ? SLOT_PTR(ptr, size) : 0, size);
         }
         break;
@@ -207,8 +207,8 @@ void HeapWalker::Process(StackSlot &value)
 
             if (fun)
             {
-                FlowPtr ptr = value.GetNativeFnDataPtr();
-                int size = FlowPtrToInt(ptr) ? *(int*)MEMORY_PTR(ptr-4,4,false) : 0;
+                int size = value.IsNativeClosure() ? Runner->GetClosureSize(value) : 0;
+                FlowPtr ptr = size ? value.GetClosureDataPtr() : MakeFlowPtr(0);
                 VisitNativeFun(value, fun, size ? SLOT_PTR(ptr, size) : 0, size);
             }
             else

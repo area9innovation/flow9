@@ -3085,7 +3085,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             {
                 int n = Code.ReadInt31();
                 if (unlikely(closurepointer == MakeFlowPtr(0) || n < 0
-                             || n >= Memory.GetInt32(closurepointer - 4))) {
+                             || n >= ClosureSlotCount(closurepointer))) {
                     ReportError(InvalidArgument, "Invalid closure variable index: %d", n);
                     break;
                 }

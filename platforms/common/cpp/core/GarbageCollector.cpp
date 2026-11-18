@@ -640,7 +640,7 @@ void GarbageCollector::ProcessRoots()
     if (Runner->closurepointer != 0)
     {
         FlowPtr ptr = Runner->closurepointer - 4;
-        StackSlot closure = StackSlot::InternalMakeClosurePointer(ptr, *HEADER_PTR(unsigned short, ptr));
+        StackSlot closure = StackSlot::InternalMakeClosurePointer(ptr, Runner->ClosureSlotCount(Runner->closurepointer));
 
         if (inEnumPhase)
             Enumerate(closure);
@@ -658,7 +658,7 @@ void GarbageCollector::ProcessRoots()
         if (a == 0)
             continue;
 
-        StackSlot closure = StackSlot::InternalMakeClosurePointer(a-4, *HEADER_PTR(unsigned short, a-4));
+        StackSlot closure = StackSlot::InternalMakeClosurePointer(a-4, Runner->ClosureSlotCount(a));
 
         if (inEnumPhase)
             Enumerate(closure);

@@ -91,5 +91,12 @@ int main(int argc, char **argv)
         check(!runner.IsErrorReported(), "Compiler output did not pass bytecode validation");
         runner.RunMain();
         check(!runner.IsErrorReported(), "Compiler output did not run successfully");
+
+        int root = runner.RegisterRoot(runner.AllocateConstClosure(0, StackSlot::MakeInt(42)));
+        runner.ForceGC(0, true);
+        StackSlot live = runner.LookupRoot(root);
+        check(runner.GetClosureSize(live) == 1, "Collection must preserve the exact capture count");
+        check(runner.EvalFunction(live, 0).GetInt() == 42, "Retained capture after collection");
+        runner.ReleaseRoot(root);
     }
 }
