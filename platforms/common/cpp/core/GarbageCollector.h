@@ -111,7 +111,7 @@ class GarbageCollector : private GarbageCollectorFnCallback
 
     void ReportTagError(int tag);
     void CheckStructId(unsigned id);
-    unsigned CheckArrayBytes(FlowPtr ptr, unsigned count, bool closure);
+    void CheckArrayBytes(FlowPtr ptr, unsigned count, bool closure);
 
 public:
     GarbageCollector(ByteCodeRunner *rnr);

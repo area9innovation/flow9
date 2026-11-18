@@ -32,12 +32,16 @@ class ByteMemory : protected MemoryArea
     
     char *Buffer;
     size_t BufferSize;
-    // Includes committed ranges above BufferSize, such as mapped strings.
-    enum PageAccess { Unavailable, Readable, Writable };
-    std::vector<uint8_t> PageAccessFlags;
+    const size_t RangeLimit;
 
     [[noreturn]] void ReportFailure(FlowPtr ptr, size_t size, bool write);
-    char *VerifyBulkAccess(FlowPtr ptr, size_t size, bool write);
+    char *VerifyBulkAccess(FlowPtr ptr, size_t size, bool write) {
+        // Mapped files can live above BufferSize, within the same reservation.
+        const size_t pos = FlowPtrToInt(ptr);
+        if (unlikely(pos > RangeLimit || size > RangeLimit - pos))
+            ReportFailure(ptr, size, write);
+        return Buffer + pos;
+    }
 
 #if defined(DEBUG_FLOW) && !defined(__x86_64__)
     char *VerifyAccess(FlowPtr ptr, size_t size, bool write) {
