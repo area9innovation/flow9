@@ -767,17 +767,18 @@ class FlowStack
         while (new_sz > limit) {
             limit *= 2;
         }
-        T* new_buf = new T[sizeof(T) * limit];
+        T* new_buf = new T[limit];
         for (unsigned i = 0; i < pos; ++ i) {
         	new_buf[i] = buf[i];
         }
         delete[] buf;
         buf = new_buf;
-        //buf = (T*)realloc(buf, sizeof(T)*limit);
     }
 
 public:
     FlowStack() : buf(nullptr) { clear(); }
+    FlowStack(const FlowStack &) = delete;
+    FlowStack &operator=(const FlowStack &) = delete;
     ~FlowStack() { delete[] buf; }
 
     void swap(FlowStack<T,MinSize> &other) {
@@ -787,8 +788,9 @@ public:
     }
 
     void clear() {
+        T *new_buf = new T[MinSize];
         delete[] buf;
-        buf = new T[sizeof(T) * MinSize];
+        buf = new_buf;
         pos = 0; limit = MinSize;
     }
 

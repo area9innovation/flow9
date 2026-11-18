@@ -13,6 +13,13 @@ static void require(bool ok, const char *message) {
 }
 
 static void testMemory() {
+    FlowStack<std::string, 1> stack;
+    stack.push_back("first");
+    stack.push_back("second");
+    require(stack.size() == 2 && stack[0] == "first", "stack growth preserves owned values");
+    stack.clear();
+    require(stack.empty() && stack.capacity() == 1, "stack clear restores initial capacity");
+
     const size_t page = MemoryArea::page_size();
     MemoryArea area;
     require(!area.reserve(SIZE_MAX), "unrepresentable reservation rejected");
