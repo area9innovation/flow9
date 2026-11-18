@@ -1,6 +1,8 @@
 #include "ByteCodeRunner.h"
 #ifndef _WIN32
     #include <sys/time.h>
+    #include <sys/stat.h>
+    #include <fcntl.h>
     #include <unistd.h>
 #else
     #include <Windows.h>
@@ -1631,9 +1633,45 @@ StackSlot ByteCodeRunner::getFileContentBinary(RUNNER_ARGS)
 
     std::string name = encodeUtf8(RUNNER->GetString(rawpath));
 
-    return RUNNER->LoadFileAsString(name, false);
+    return RUNNER->LoadFileAsString(name, false, true);
 }
 
+StackSlot ByteCodeRunner::readPackedFile(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(path);
+    RUNNER_CheckTag(TString, path);
+    return RUNNER->LoadFileAsString(encodeUtf8(RUNNER->GetString(path)));
+}
+
+#ifndef _WIN32
+template<class Write>
+static bool replaceCopy(const std::string &dest, Write write)
+{
+    struct stat st;
+    bool existing = stat(dest.c_str(), &st) == 0;
+    if (existing ? !S_ISREG(st.st_mode) : errno != ENOENT) return false;
+
+    // A private staging directory lets open apply the ordinary creation mode and
+    // the caller's umask without exposing intermediate data or changing the umask.
+    std::string dir = dest.substr(0, dest.find_last_of('/') + 1) + ".flowcopyXXXXXX";
+    if (!mkdtemp(&dir[0])) return false;
+    std::string tmp = dir + "/data";
+    int fd = open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL, existing ? 0600 : 0666);
+    bool ok = false;
+    if (fd >= 0) {
+        if (FILE *out = fdopen(fd, "wb")) {
+            ok = write(out) && (!existing || fchmod(fd, st.st_mode & 0777) == 0);
+            if (fclose(out) != 0) ok = false;
+        } else {
+            close(fd);
+        }
+        if (ok) ok = rename(tmp.c_str(), dest.c_str()) == 0;
+        if (!ok) unlink(tmp.c_str());
+    }
+    rmdir(dir.c_str());
+    return ok;
+}
+#endif
 
 StackSlot ByteCodeRunner::copyFile(RUNNER_ARGS)
 {
@@ -1649,25 +1687,13 @@ StackSlot ByteCodeRunner::copyFile(RUNNER_ARGS)
     FILE *in = fopen(src.c_str(), "rb");
     if (!in) return StackSlot::MakeBool(false);
 
-    // Stage beside the destination so existing readers (including mappings) keep their file.
-    std::string tmp = dest.substr(0, dest.find_last_of('/') + 1) + ".flowcopyXXXXXX";
-    int fd = mkstemp(&tmp[0]);
-    bool ok = false;
-    if (fd >= 0) {
-        if (FILE *out = fdopen(fd, "wb")) {
-            char buf[16384];
-            size_t n;
-            while ((n = fread(buf, 1, sizeof(buf), in)) != 0) {
-                if (fwrite(buf, 1, n, out) != n) break;
-            }
-            ok = n == 0 && !ferror(in);
-            if (fclose(out) != 0) ok = false;
-        } else {
-            close(fd);
-        }
-        if (ok) ok = rename(tmp.c_str(), dest.c_str()) == 0;
-        if (!ok) unlink(tmp.c_str());
-    }
+    bool ok = replaceCopy(dest, [in](FILE *out) {
+        char buf[16384];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), in)) != 0)
+            if (fwrite(buf, 1, n, out) != n) return false;
+        return !ferror(in);
+    });
     fclose(in);
 #endif
     if (ok) RUNNER->InvalidateFileCache(dest);
@@ -1744,11 +1770,32 @@ void bytesProcessor(int nbytes, const unicode_char * pdata, uint8_t * bytes) {
 StackSlot ByteCodeRunner::setFileContentHelper(RUNNER_ARGS, void (*processor)(int nbytes, const unicode_char * pdata, uint8_t * bytes))
 {
     RUNNER_PopArgs2(key_str, value_str);
+    // A missing file in the old read-then-write copy has no string value.
+    if (value_str.IsVoid()) return StackSlot::MakeBool(false);
     RUNNER_CheckTag2(TString, key_str, value_str);
 
     std::string filename = encodeUtf8(RUNNER->GetString(key_str));
     unsigned nbytes;
     const unicode_char *pdata = RUNNER->GetStringPtrSize(value_str, &nbytes);
+
+    // Pre-copyFile libraries passed the whole packed read to a byte writer
+    // (local filesystem copies used the code-unit writer). Use the original
+    // byte count, never infer a trailing zero from the string contents.
+    auto file = RUNNER->LegacyFileBytes.find(RUNNER->GetStringAddr(value_str));
+    bool whole_file = file != RUNNER->LegacyFileBytes.end() && (file->second + 1) / 2 == nbytes;
+#ifndef _WIN32
+    if (whole_file || !nbytes) {
+        size_t size = whole_file ? file->second : 0;
+        bool ok = replaceCopy(filename, [&](FILE *out) { return !size || fwrite(pdata, 1, size, out) == size; });
+        if (ok) RUNNER->InvalidateFileCache(filename);
+        return StackSlot::MakeBool(ok);
+    }
+#else
+    if (whole_file) {
+        RUNNER->ReportError(InvalidArgument, "Legacy packed file copy: rebuild with Native.copyFile.");
+        return StackSlot::MakeBool(false);
+    }
+#endif
 
     uint8_t * bytes;
     if (processor != NULL) {

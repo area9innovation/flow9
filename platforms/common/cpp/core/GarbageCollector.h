@@ -144,6 +144,7 @@ private:
 
     int64_t ComputeLiveBytes();
     void GrowHeap(unsigned size);
+    void RelocateLegacyFileBytes();
 
     void UpdateRunnerHeap();
 

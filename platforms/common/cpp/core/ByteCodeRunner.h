@@ -619,6 +619,10 @@ public:
 private:
     friend class BinaryDeserializer;
 
+    // Old file readers returned a packed string to both kinds of file writer.
+    // Weak entries: the key is the start of a complete, nonempty file value.
+    std::map<FlowPtr, size_t> LegacyFileBytes;
+
 #ifdef FLOW_MMAP_HEAP
     // Memory mapped areas
     typedef std::pair<FlowPtr,int> RootExtentInfo;
@@ -627,6 +631,7 @@ private:
 
         FlowPtr start;
         size_t length;
+        uint64_t file_device = 0, file_inode = 0;
         std::string filename;
 
         // Binary decoding of a mapped file into a mapped area can produce refs.
@@ -733,7 +738,7 @@ public:
     StackSlot AllocateString(const QString& str);
 #endif
 
-    StackSlot LoadFileAsString(std::string filename, bool temporary = false);
+    StackSlot LoadFileAsString(std::string filename, bool temporary = false, bool legacy_file = false);
     void InvalidateFileCache(std::string filename);
 
     StackSlot AllocateRef(const StackSlot &value);
@@ -1345,6 +1350,7 @@ private:
     static StackSlot setFileContent(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentUTF16(ByteCodeRunner*,StackSlot*);
     static StackSlot getFileContentBinary(ByteCodeRunner*,StackSlot*);
+    static StackSlot readPackedFile(ByteCodeRunner*,StackSlot*);
     static StackSlot copyFile(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentBinary(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentBytes(ByteCodeRunner*,StackSlot*);

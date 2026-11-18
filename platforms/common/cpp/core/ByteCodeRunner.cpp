@@ -28,6 +28,7 @@
 #include "win_mman.h"
 #else
 #include <sys/mman.h>
+#include <sys/stat.h>
 #endif
 #endif
 
@@ -571,6 +572,7 @@ void ByteCodeRunner::Reset(bool inDestructor)
 
     // Empty other tables
     NativeRoots.clear();
+    LegacyFileBytes.clear();
     nNativeRoots = 0;
 
     Toplevel.clear();
@@ -1278,13 +1280,18 @@ StackSlot ByteCodeRunner::AllocateString(const unicode_char *str, size_t len) {
     return out;
 }
 
-StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
+StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary, bool legacy_file)
 {
     StackSlot rv = StackSlot::MakeVoid();
 
 #ifdef FLOW_MMAP_HEAP
-    if (!temporary && MappedFiles.count(filename))
-        return MappedFiles[filename];
+    auto cached = MappedFiles.find(filename);
+    if (!temporary && !legacy_file && cached != MappedFiles.end()) {
+        // Do not attach legacy write semantics to an existing ordinary string
+        // (or expose a legacy value through the current packed reader).
+        if (!LegacyFileBytes.count(GetStringAddr(cached->second)))
+            return cached->second;
+    }
 #endif
 
     FILE *file = fopen(filename.c_str(), "rb");
@@ -1303,6 +1310,20 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
         size_t bytes = length * FLOW_CHAR_SIZE;
 
 #ifdef FLOW_MMAP_HEAP
+        // A legacy copy must read the current source, even when a file at the
+        // same path was mapped earlier. Old string values retain the old mapping.
+        struct stat st;
+        bool have_id = legacy_file && bytes >= MIN_MMAP_SIZE && fstat(fileno(file), &st) == 0;
+        if (have_id && !temporary && cached != MappedFiles.end()) {
+            FlowPtr addr = GetStringAddr(cached->second);
+            auto old = LegacyFileBytes.find(addr);
+            const auto &area = MappedAreas.at(addr);
+            if (old != LegacyFileBytes.end() && old->second == size_t(size) &&
+                area->file_device == uint64_t(st.st_dev) && area->file_inode == uint64_t(st.st_ino)) {
+                fclose(file);
+                return cached->second;
+            }
+        }
         if (bytes >= MIN_MMAP_SIZE && MapStringPtr >= MapAreaBase &&
             bytes <= FlowPtrToInt(MapStringPtr) - FlowPtrToInt(MapAreaBase))
         {
@@ -1313,6 +1334,10 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
                 if (FlowPtr *ref = AllocateStringRef(&rv, length)) {
                     *ref = map_ptr;
                     MappedAreaInfo::Ptr area(new MappedAreaInfo(map_ptr, bytes));
+                    if (have_id) {
+                        area->file_device = st.st_dev;
+                        area->file_inode = st.st_ino;
+                    }
                     MappedAreas[map_ptr] = area;
                     MapStringPtr = map_ptr;
 
@@ -1341,6 +1366,8 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
         }
     }
 
+    if (legacy_file && size > 0 && rv.IsString())
+        LegacyFileBytes[GetStringAddr(rv)] = size_t(size);
     fclose(file);
     if (temporary)
         remove(filename.c_str());
@@ -3808,6 +3835,7 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getDataTagForValue, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getFileContent, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getFileContentBinary, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, readPackedFile, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, copyFile, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContent, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContentUTF16, 2);

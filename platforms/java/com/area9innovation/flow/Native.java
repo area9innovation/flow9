@@ -1394,6 +1394,32 @@ public class Native extends NativeHost {
 		}
 	}
 
+	public static final boolean copyFile(String from, String to) {
+		Path dir = null, tmp = null;
+		try {
+			Path src = Paths.get(from), dst = Paths.get(to).toAbsolutePath();
+			if (!Files.isRegularFile(src) || dst.getParent() == null || Files.isDirectory(dst)) return false;
+			try (InputStream in = Files.newInputStream(src)) {
+				dir = Files.createTempDirectory(dst.getParent(), ".flowcopy");
+				tmp = dir.resolve("data");
+				try (OutputStream out = Files.newOutputStream(tmp, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+					in.transferTo(out);
+				}
+				if (dst.getFileSystem().supportedFileAttributeViews().contains("posix")) {
+					try { Files.setPosixFilePermissions(tmp, Files.getPosixFilePermissions(dst)); }
+					catch (NoSuchFileException absent) { /* new file: retain the creation mode */ }
+				}
+			}
+			Files.move(tmp, dst, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+			return true;
+		} catch (IOException | InvalidPathException | SecurityException ex) {
+			return false;
+		} finally {
+			if (tmp != null) try { Files.deleteIfExists(tmp); } catch (IOException ignored) { }
+			if (dir != null) try { Files.deleteIfExists(dir); } catch (IOException ignored) { }
+		}
+	}
+
 	public static final boolean setFileContentBytes(String name, String data) {
 		Writer writer = null;
 

@@ -298,6 +298,7 @@ bool GarbageCollector::CollectFast()
     FlushArrays();
 
     Runner->DataStack.readonly(Runner->NumFrozenDataStack, true);
+    RelocateLegacyFileBytes();
 
 #ifdef DEBUG_FLOW
     cerr << "Max GC stack depth: " << MaxStackDepth << endl;
@@ -409,12 +410,31 @@ bool GarbageCollector::Collect(unsigned ensure_old_space)
 #endif
 	
     Memory->DecommitRange(OldLimits.Bound, OldLimits.Start);
+    RelocateLegacyFileBytes();
     Runner->DataStack.readonly(Runner->NumFrozenDataStack, true);
 
     // Flip the runner state
     Runner->UpdateHeapLimits(dest_high);
     Runner->ResetRefMask(hp_ref_end, hp_big_pos);
     return true;
+}
+
+// Follow complete file buffers through the same interval relocation as substrings,
+// without retaining the file (or turning a surviving slice into a whole file).
+void GarbageCollector::RelocateLegacyFileBytes()
+{
+    auto &files = Runner->LegacyFileBytes;
+    auto it = files.lower_bound(HeapStart);
+    while (it != files.end() && it->first < HeapEnd) {
+        FlowPtr addr = it->first;
+        size_t bytes = it->second;
+        it = files.erase(it);
+        AddrIntervalSet::range_type range;
+        if (StringRanges.getInterval(addr, &range) && size_t(range.second - addr) >= bytes) {
+            FlowPtr dest = AddressMap.at(range.first) + (addr - range.first);
+            files[dest] = bytes;
+        }
+    }
 }
 
 #ifdef FLOW_GARBAGE_PROFILING

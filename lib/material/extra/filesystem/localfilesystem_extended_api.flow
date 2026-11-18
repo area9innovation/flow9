@@ -40,11 +40,13 @@ localFilesystemExtAPI() -> FilesystemExtAPI {
 		},
 		// copyElement : (string, string, onDone : () -> void, onError : (string) -> void) -> void
 		\pathFrom, pathTo, onDone, onError -> {
-			copyElementsLocal(pathFrom, pathTo, onDone, onError);
+			err = copyElementsLocal(pathFrom, pathTo);
+			if (err == "") onDone() else onError(err);
 		},
 		// moveElement : (string/*element full path*/, string /*move to directory*/, onDone : () -> void, onError : (string) -> void) -> void
 		\pathFrom, pathTo, onDone, onError -> {
-			copyElementsLocal(pathFrom, pathTo, \-> deleteElementsLocal(pathFrom, onDone, onError), onError);
+			err = copyElementsLocal(pathFrom, pathTo);
+			if (err == "") deleteElementsLocal(pathFrom, onDone, onError) else onError(err);
 		},
 		// renameElement : (string, string, onDone : () -> void, onError : (string) -> void) -> void
 		\filenameFrom, onlyNameNew, onDone, onError -> {
@@ -113,72 +115,31 @@ readDirectoryLocal(path : string, onDone : ([string], [string]) -> void, onError
 }
 
 deleteElementsLocal(path : string, onDone : () -> void, onError : (string) -> void) -> void {
-	if (isDirectory(path)) {
-		readDirectoryLocal(path, \dirs, files -> {
-			dirs2 = filtermap(dirs, \d -> if (d == "..") None() else Some(path + d + "/"));
-			files2 = filtermap(files, \f -> if (f == "") None() else Some(path + f));
-			countSub = ref (length(dirs2) + length(files2) + 1);
-
-			onComplete = \-> {
-				countSub := ^countSub - 1;
-				if (^countSub == 0) 
-					deleteDirectory(path)
-					|> (\res -> if (res == "") onDone() else onError(res));
-			};
-
-			iter(files2, \f -> deleteFile(f) |> (\res -> if (res == "") onComplete() else onError(res)));
-			iter(dirs2, \d -> deleteElementsLocal(d, onComplete, onError));
-
-			onComplete();
-		}, onError);
-	} else if (fileExists(path)) {
-		deleteFile(path)
-		|> (\res -> if (res == "") onDone() else onError(res));
+	if (fileExists(path)) {
+		err = deleteRecursively(path);
+		if (err == "") onDone() else onError(err);
 	} else {
 		onError("File or folder '" + path + "' doesn't exist");
 	}
 }
 
-copyElementsLocal(pathFrom : string, pathTo : string, onDone : () -> void, onError : (string) -> void) -> void {
-	if (isDirectory(pathFrom)) {
-		readDirectoryLocal(pathFrom, \dirs, files -> {
-			dirs2 = filtermap(dirs, \d -> if (d == "..") None() else Some(pathFrom + d + "/"));
-			files2 = filtermap(files, \f -> if (f == "") None() else Some(pathFrom + f));
-			countSub = ref (length(dirs2) + length(files2) + 1);
-
-			pathTo2 = pathTo + ((if (endsWith(pathFrom, "/")) rtrim2(pathFrom, "/") else pathFrom) |> fileNameOnly) + "/";
-
-			onComplete = \-> {
-				countSub := ^countSub - 1;
-				if (^countSub == 0) onDone();
-			};
-
-			doCopying = \-> {
-				iter(files2, \f -> copyFileLocal(f, pathTo2, onComplete, onError));
-				iter(dirs2, \d -> copyElementsLocal(d, pathTo2, onComplete, onError));
-			};
-
-			createDirectory(pathTo2) |> (\res -> if (res == "") doCopying() else onError(res));
-			onComplete();
-		}, onError);
-	} else if (fileExists(pathFrom)) {
-		copyFileLocal(pathFrom, pathTo, onDone, onError);
-	} else {
-		onError("File or folder '" + pathFrom + "' doesn't exist");
-	}
-}
-
-copyFileLocal(fullFilenameFrom : string, pathTo : string, onDone : () -> void, onError : (string) -> void) -> void {
-	if (fileExists(fullFilenameFrom)) {
-		content = getFileContentBinary(fullFilenameFrom);
-		fullFilenameTo = pathTo + fileNameOnly(fullFilenameFrom);
-		
-		if (content == "") onError("Can't to copy the file '" + fullFilenameFrom + "'")
-		else if (setFileContentBinary(fullFilenameTo, content)) onDone()
-		else onError("Can't to create the file '" + fullFilenameTo + "'")
-	} else {
-		onError("File '" + fullFilenameFrom + "' doesn't exist");
-	}
+copyElementsLocal(src : string, folder : string) -> string {
+	dest = pathCombine(folder, fileNameOnly(rtrim2(src, "/\\")));
+	if (!fileExists(src)) "File or folder '" + src + "' doesn't exist"
+	else if (!isDirectory(folder)) "Not a destination directory: " + folder
+	else if (isSamePath(src, dest)) "Source and destination are the same: " + src
+	else if (isDirectory(src)) {
+		from = rtrim2(resolveRelativePath(src), "/\\") + "/";
+		to = rtrim2(resolveRelativePath(folder), "/\\") + "/";
+		if (startsWith(to, from)) "Cannot copy a folder into itself: " + src
+		else {
+			err = createDirectory(dest);
+			if (err != "") err else fold(readDirectory(src), "", \error, name ->
+				if (error != "" || name == "." || name == "..") error
+				else copyElementsLocal(pathCombine(src, name), dest));
+		}
+	} else if (copyFile(src, dest)) ""
+	else "Cannot copy '" + src + "' to '" + dest + "'";
 }
 
 createAllFolders(path : string, onDone : () -> void, onError : (string) -> void) -> void {

@@ -130,6 +130,66 @@ static void testCopyFile(ByteCodeRunner &runner) {
     }
 }
 
+static void testLegacyFileValues() {
+    ByteCodeRunner runner("valid.flowbc");
+    StackSlot roots[5];
+    std::fill(roots, roots + 5, StackSlot::MakeVoid());
+    LocalRootDefinition frame(&runner, 5, roots);
+    auto read = [&](const char *name, const std::string &bytes, int slot) {
+        FILE *f = fopen(name, "wb");
+        require(f && fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size() && !fclose(f), "prepare packed file");
+        roots[0] = runner.AllocateString(name);
+        roots[slot] = ByteCodeRunner::getFileContentBinary(&runner, roots);
+        require(roots[slot].IsString(), "legacy packed read");
+    };
+    auto write = [&](int slot, const std::string &expected, bool packed) {
+        roots[0] = runner.AllocateString("legacy-out.dat");
+        roots[1] = roots[slot];
+        require((packed ? ByteCodeRunner::setFileContentBinary : ByteCodeRunner::setFileContentBytes)(&runner, roots).GetBool(),
+                "legacy write after GC");
+        StaticBuffer out;
+        require(out.load_file("legacy-out.dat") && out.size() == expected.size() &&
+                !memcmp(out.data(), expected.data(), expected.size()), "write original bytes of this file value");
+    };
+    std::string odd("ABC"), even("ABC\0", 4), large(MIN_MMAP_SIZE + 3, '\xff');
+    read("legacy-odd.dat", odd, 2);
+    read("legacy-even.dat", even, 3);
+    read("legacy-large.dat", large, 4);
+#ifdef _WIN32
+    roots[0] = runner.AllocateString("legacy-out.dat");
+    roots[1] = roots[2];
+    require(!ByteCodeRunner::setFileContentBytes(&runner, roots).GetBool() && runner.IsErrorReported(),
+            "legacy packed copy is explicitly rejected on Windows");
+#else
+    runner.ForceGC(0, false);
+    runner.ForceGC(0, true);
+    require(runner.GetString(roots[2]) == runner.GetString(roots[3]), "old strings have equal packed values");
+    write(2, odd, false);
+    write(3, even, false);
+    write(4, large, true);
+
+    // A fresh read of identical data still has both normal string writer contracts.
+    roots[0] = runner.AllocateString("legacy-odd.dat");
+    roots[2] = ByteCodeRunner::readPackedFile(&runner, roots);
+    write(2, even, true);
+    const unicode_string units = runner.GetString(roots[2]);
+    write(2, std::string({char(units[0]), char(units[1])}), false);
+    roots[0] = runner.AllocateString("legacy-large.dat");
+    roots[2] = ByteCodeRunner::readPackedFile(&runner, roots);
+    write(2, large + '\0', true);
+    write(4, large, true); // The original mapping still has its exact byte count.
+    roots[0] = runner.AllocateString("legacy-large.dat");
+    roots[4] = ByteCodeRunner::getFileContentBinary(&runner, roots);
+    require(!rename("legacy-large.dat", "previous-large.dat"), "remove cached source name");
+    roots[0] = runner.AllocateString("legacy-large.dat");
+    require(ByteCodeRunner::getFileContentBinary(&runner, roots).IsVoid(), "missing source is not a cached copy");
+    std::string replacement(large.size(), 'Z');
+    read("legacy-large.dat", replacement, 3);
+    write(3, replacement, false);
+    write(4, large, false);
+#endif
+}
+
 static unsigned heapSize(ByteCodeRunner &runner) {
     return FlowPtrToInt(runner.GetHeapLimits(true).Start) - FlowPtrToInt(runner.GetHeapLimits(false).Bound);
 }
@@ -290,6 +350,7 @@ static void testRunner() {
 int main() {
     testMemory();
     testRunner();
+    testLegacyFileValues();
     testGrowth(256, 384, 128, 262144);
     testGrowth(8, 40, 2, 2 * 1024 * 1024);
     testYoungAllocation();
