@@ -163,6 +163,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
 
     std::vector<StructInfo::Ptr> structs;
     std::map<int, StructInfo::Ptr> struct_by_id;
+    StructInfo::Ptr require_struct(int id, FlowPtr addr);
     std::vector<int> struct_fcnt_limits;
 
     StackSlot *struct_name_table;
@@ -253,6 +254,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
 
     bool compile();
     bool disassemble();
+    void bytecode_error(FlowPtr addr, const std::string &message);
 
     bool find_functions();
     bool find_global_inits();
@@ -281,6 +283,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
     void link_accessor_table(StructAccessorTable::Ptr table);
 
     LabelAddr thunk_type_error, thunk_func_error, thunk_field_error, thunk_arridx_error;
+    LabelAddr thunk_stack_full;
     LabelAddr thunk_register_slot_write, thunk_register_ref_write;
     LabelAddr thunk_compare, thunk_plus_string, thunk_uncaught_switch, thunk_freeze_globals;
 
@@ -288,6 +291,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
     static void callback_func_error(ByteCodeRunner *runner, StackSlot value);
     static void callback_field_error(ByteCodeRunner *runner, StackSlot value, StructAccessorTable *table);
     static void callback_arridx_error(ByteCodeRunner *runner, int access, uint32_t size);
+    static void callback_stack_full(ByteCodeRunner *runner);
     static uint64_t callback_allocate(ByteCodeRunner *runner, uint32_t size);
     static void callback_register_slot_write(ByteCodeRunner *runner, uint32_t addr, int count);
     static void callback_register_ref_write(ByteCodeRunner *runner, uint32_t addr);
@@ -332,7 +336,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
 
         FunctionAssembler(FlowJitProgram *owner, const T_bytecode_list &code, FlowPtr end_addr);
 
-        void enter_func(bool is_closure, int num_args, int num_locals);
+        void enter_func(bool is_closure);
 
     private:
         struct CurPos {
@@ -370,7 +374,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
         void generate_switch(const std::map<int,T_swtable> &bintree, const std::vector<int> &binlist, size_t l, size_t r, int last_cmp, asmjit::Label def, asmjit::X86Gp reg);
 
     public:
-        void preprocess();
+        void preprocess(bool is_function);
         void generate();
 
     private:
