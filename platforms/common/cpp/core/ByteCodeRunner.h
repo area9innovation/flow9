@@ -738,6 +738,7 @@ public:
 
     StackSlot AllocateRef(const StackSlot &value);
     StackSlot AllocateArray(int64_t length, StackSlot *data = NULL);
+    StackSlot AllocateStringArray(const std::vector<std::string> &utf8);
     StackSlot AllocateStruct(const char *name, unsigned size);
 
     unsigned GetStringSize(const StackSlot &str) {
@@ -1144,17 +1145,13 @@ public:
     // Copy the closure reference
     StackSlot AllocateClosure(const StackSlot &base, unsigned short num_upvals, StackSlot *upval_data = NULL)
     {
-        if (base.IsNativeFn())
-        {
-            FlowPtr arr = AllocateClosureBuffer(GetNativeFnId(base), num_upvals, upval_data); // ALLOC
-            return StackSlot::InternalMakeNativeClosure(arr, num_upvals);
-        }
-        else
-        {
-            assert(base.IsFlowCode());
-            FlowPtr arr = AllocateClosureBuffer(FlowPtrToInt(GetCodePointer(base)), num_upvals, upval_data); // ALLOC
-            return StackSlot::InternalMakeClosurePointer(arr, num_upvals);
-        }
+        const bool native = base.IsNativeFn();
+        assert(native || base.IsFlowCode());
+        int code = native ? GetNativeFnId(base) : int(FlowPtrToInt(GetCodePointer(base)));
+        FlowPtr arr = AllocateClosureBuffer(code, num_upvals, upval_data); // ALLOC
+        if (unlikely(arr == 0)) return StackSlot::MakeVoid();
+        return native ? StackSlot::InternalMakeNativeClosure(arr, num_upvals)
+                      : StackSlot::InternalMakeClosurePointer(arr, num_upvals);
     }
 
     // Stop GC of currently allocated native functions
@@ -1237,7 +1234,7 @@ public:
     void PrintCallStack(ostream &out, bool with_args = false);
     void PrintCallStackLine(ostream &out, const FlowStackFrame &frame, bool with_args);
 
-    void ForceGC(unsigned ensure_space = 0, bool full = false);
+    void ForceGC(unsigned ensure_old_space = 0, bool full = false);
     void PrintDataStack();
 
     bool PrintData(ostream &out, const StackSlot &slot, int max_depth = -1, int max_count = -1);
@@ -1348,6 +1345,7 @@ private:
     static StackSlot setFileContent(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentUTF16(ByteCodeRunner*,StackSlot*);
     static StackSlot getFileContentBinary(ByteCodeRunner*,StackSlot*);
+    static StackSlot copyFile(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentBinary(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentBytes(ByteCodeRunner*,StackSlot*);
     static StackSlot getBytecodeFilename(ByteCodeRunner*,StackSlot*);

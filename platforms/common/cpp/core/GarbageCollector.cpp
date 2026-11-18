@@ -335,11 +335,9 @@ void GarbageCollector::GrowHeap(unsigned size)
 }
 
 /*
- * Do a full collection, possibly doubling the heap. The ensure_space parameter
- * can be used to force heap doubling if after collection there won't be enough
- * free space.
+ * Do a full collection, reserving old space for survivors and any pending big allocation.
  */
-bool GarbageCollector::Collect(unsigned ensure_space)
+bool GarbageCollector::Collect(unsigned ensure_old_space)
 {
     bool currentIsHigh = Runner->highHeap;
 
@@ -368,7 +366,7 @@ bool GarbageCollector::Collect(unsigned ensure_space)
     ProcessFullRoots();
     FlushArrays();
 
-    const int64_t needed = ComputeLiveBytes() + ((int64_t(ensure_space) + 3) & ~int64_t(3));
+    const int64_t needed = ComputeLiveBytes() + ((int64_t(ensure_old_space) + 3) & ~int64_t(3));
     const int64_t available = FlowPtrToInt(hp_big_pos) - FlowPtrToInt(hp_ref_end);
     if (needed > int64_t(MAX_HEAP_SIZE / 2) - EPHEMERAL_HEAP_SIZE)
         return false;

@@ -229,14 +229,7 @@ StackSlot FileSystemInterface::readDirectory(RUNNER_ARGS)
 
     closedir(dir);
 #endif
-    RUNNER_DefSlotAlias(result, name_str);
-    result = RUNNER->AllocateArray(items.size());
-    RUNNER_CheckError();
-
-    for (size_t i = 0; i < items.size(); i++)
-        RUNNER->SetArraySlot(result, i, RUNNER->AllocateString(parseUtf8(items[i])));
-
-    return result;
+    return RUNNER->AllocateStringArray(items);
 }
 
 StackSlot FileSystemInterface::fileSize(RUNNER_ARGS)

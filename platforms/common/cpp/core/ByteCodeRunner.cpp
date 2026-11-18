@@ -599,6 +599,7 @@ void ByteCodeRunner::Reset(bool inDestructor)
     Memory.DecommitRange(MakeFlowPtr(0), MakeFlowPtr(MAX_MEMORY_SIZE));
     Code.SetPosition(MakeFlowPtr(0));
     Code.SetBuffer(NULL,0,0);
+    NativeReturnInsn = CodeStartPtr();
 }
 
 ByteCodeRunner::~ByteCodeRunner()
@@ -1052,6 +1053,7 @@ StackSlot ByteCodeRunner::AllocNativeFn(NativeFunction *fn, FlowPtr cp)
         // Trying to call this native will overrun a stack buffer.
         // Increase the constant and recompile if this becomes a problem.
         ReportError(UnknownNativeName, "Too many args for native \"%s\": %d", fn->name(), fn->num_args());
+        delete fn;
         return StackSlot::MakeVoid();
     }
 
@@ -1099,7 +1101,7 @@ bool NativeProgram::InitFunctionTable(StackSlot *out, const FunctionSpec *in, un
 
 StackSlot ByteCodeRunner::AllocateNativeClosure(NativeClosurePtr ptr, const char *name, int num_args, void *data, int num_slots, ...)
 {
-    StackSlot *buf = new StackSlot[num_slots+1];
+    std::vector<StackSlot> buf(num_slots+1);
     StackSlot &base = buf[0];
 
     va_list vl;
@@ -1109,13 +1111,9 @@ StackSlot ByteCodeRunner::AllocateNativeClosure(NativeClosurePtr ptr, const char
     va_end(vl);
 
     base = AllocNativeFn(new NativeClosure(name, num_args, ptr, data), NativeReturnInsn);
-    assert(base.IsNativeFn() && !base.GetSign());
-
-    LocalRootDefinition frame(this, num_slots+1, buf); (void)&frame;
-    FlowPtr arr = AllocateClosureBuffer(base.slot_private.IntValue, num_slots, buf+1); // ALLOC
-
-    delete[] buf;
-    return StackSlot::InternalMakeNativeClosure(arr, num_slots);
+    if (unlikely(base.IsVoid())) return base;
+    LocalRootDefinition frame(this, num_slots+1, buf.data()); (void)&frame;
+    return AllocateClosure(base, num_slots, buf.data()+1); // ALLOC
 }
 
 StackSlot ByteCodeRunner::AllocateConstClosure(int num_args, StackSlot value) {
@@ -1124,6 +1122,7 @@ StackSlot ByteCodeRunner::AllocateConstClosure(int num_args, StackSlot value) {
 
     if (!ConstClosureCache[num_args].IsNativeFn())
         ConstClosureCache[num_args] = AllocNativeFn(new SimpleNative("$const$", num_args, const_closure), NativeReturnInsn);
+    if (unlikely(ConstClosureCache[num_args].IsVoid())) return StackSlot::MakeVoid();
 
     LocalRootDefinition frame(this, 1, &value); (void)&frame;
 
@@ -1160,10 +1159,8 @@ FlowPtr ByteCodeRunner::AllocateInner(unsigned size) {
         }
     }
 
-    if (gcStressTestEnabled)
-        ForceGC(size, rand()%3==0);
-    else
-        ForceGC(size);
+    // Collection empties the young generation. Only promotion needs old space here.
+    ForceGC(0, gcStressTestEnabled && rand()%3==0);
 
     FlowPtr nhp = FlowPtrAlignDown(hp - size, 4);
     if (unlikely(nhp < hpbound || nhp > hp)) {
@@ -1417,11 +1414,25 @@ StackSlot ByteCodeRunner::AllocateArray(int64_t length, StackSlot *data) { // da
     return rv;
 }
 
+StackSlot ByteCodeRunner::AllocateStringArray(const std::vector<std::string> &utf8)
+{
+    StackSlot list = AllocateArray(utf8.size());
+    if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
+    LocalRootDefinition frame(this, 1, &list);
+    for (size_t i = 0; i < utf8.size(); ++i) {
+        StackSlot item = AllocateString(parseUtf8(utf8[i]));
+        if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
+        SetArraySlot(list, i, item);
+    }
+    return list;
+}
+
 StackSlot ByteCodeRunner::AllocateUninitializedClosure(unsigned short len, FlowPtr code)
 {
     int bytes = len * STACK_SLOT_SIZE;
     FlowPtr buf = Allocate(bytes + 4 + 4) + 4; // ALLOC
 
+    if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
     Memory.SetFlowPtr(buf-4, code);
     Memory.SetInt32(buf, len);
 
@@ -3043,6 +3054,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
                 }
 
                 StackSlot clos = AllocateUninitializedClosure(n, Code.GetPosition() + offset); // ALLOC
+                if (unlikely(IsErrorReported())) break;
                 memcpy(GetClosureWritePtr(clos, n), DataStack.pop_ptr(n), n * STACK_SLOT_SIZE);
                 Push(clos);
                 break;
@@ -3532,7 +3544,7 @@ void ByteCodeRunner::FreezeNativeFunctions(bool compact)
 #endif
 }
 
-void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
+void ByteCodeRunner::ForceGC(unsigned ensure_old_space, bool full)
 {
     if (NativeValueBudget < 0) {
 #ifdef DEBUG_FLOW
@@ -3560,7 +3572,7 @@ void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
 
     if (!fast_ok)
     {
-        if (!gc.Collect(ensure_space))
+        if (!gc.Collect(ensure_old_space))
             return;
 
         // Heuristically force full gc when too many new natives are allocated
@@ -3796,6 +3808,7 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getDataTagForValue, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getFileContent, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getFileContentBinary, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, copyFile, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContent, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContentUTF16, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContentBinary, 2);

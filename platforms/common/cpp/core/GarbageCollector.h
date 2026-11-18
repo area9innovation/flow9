@@ -120,7 +120,7 @@ public:
     static const int MAX_SPECIAL_TAG = 2;
 
     bool CollectFast();
-    bool Collect(unsigned ensure_space);
+    bool Collect(unsigned ensure_old_space);
 
     int ComputeNativeBudget();
 

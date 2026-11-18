@@ -108,6 +108,28 @@ static void testDataFiles(ByteCodeRunner &runner) {
     }
 }
 
+static void testCopyFile(ByteCodeRunner &runner) {
+    StackSlot paths[] = {StackSlot::MakeVoid(), StackSlot::MakeVoid()};
+    LocalRootDefinition frame(&runner, 2, paths);
+    paths[0] = runner.AllocateString("source.dat");
+    paths[1] = runner.AllocateString("copy.dat");
+    for (size_t n : {size_t(3), size_t(4), size_t(MIN_MMAP_SIZE + 1), size_t(0)}) {
+        std::string bytes(n, '\0');
+        for (size_t i = 0; i < n; ++i) bytes[i] = char(i * 131);
+        FILE *f = fopen("source.dat", "wb");
+        require(f && fwrite(bytes.data(), 1, n, f) == n && !fclose(f), "write copy source");
+        require(ByteCodeRunner::copyFile(&runner, paths).GetBool(), "copy regular file");
+        StaticBuffer dest;
+        require(dest.load_file("copy.dat") && dest.size() == n && (!n || !memcmp(dest.data(), bytes.data(), n)),
+                "destination has exactly the source bytes");
+        // A failed copy must not replace the existing destination.
+        require(!remove("source.dat") && !ByteCodeRunner::copyFile(&runner, paths).GetBool(), "missing source returns false");
+        StaticBuffer retained;
+        require(retained.load_file("copy.dat") && retained.size() == n && (!n || !memcmp(retained.data(), bytes.data(), n)),
+                "failed copy preserves destination");
+    }
+}
+
 static unsigned heapSize(ByteCodeRunner &runner) {
     return FlowPtrToInt(runner.GetHeapLimits(true).Start) - FlowPtrToInt(runner.GetHeapLimits(false).Bound);
 }
@@ -140,6 +162,59 @@ static StackSlot generateItem(ByteCodeRunner *runner, StackSlot *args, void *dat
     require(!runner->IsErrorReported(), "no callback after an allocation error");
     ++*static_cast<int *>(data);
     return args[0];
+}
+
+static void testYoungAllocation() {
+    MIN_HEAP_SIZE = MAX_HEAP_SIZE = 4 * 1024 * 1024;
+    EPHEMERAL_HEAP_SIZE = 1024 * 1024;
+    ByteCodeRunner runner("valid.flowbc");
+    const int count = 20479; // Six such arrays fit in either generation; seven do not.
+    int roots[7];
+    for (int i = 0; i < 7; ++i) {
+        StackSlot arr = runner.AllocateArray(count);
+        require(!runner.IsErrorReported(), "allocate rooted arrays across a young collection");
+        runner.SetArraySlot(arr, count - 1, StackSlot::MakeInt(i));
+        roots[i] = runner.RegisterRoot(arr);
+    }
+    runner.ReleaseRoot(roots[0]); // Recoverable old space; one survivor is still young.
+    for (int i = 0; i < 5; ++i) {
+        runner.AllocateArray(count);
+        require(!runner.IsErrorReported(), "fill the remaining young space");
+    }
+    StackSlot next = runner.AllocateArray(count); // Needs automatic full GC, then goes into young space.
+    require(!runner.IsErrorReported() && runner.GetArraySize(next) == count && heapSize(runner) == MAX_HEAP_SIZE,
+            "young allocation succeeds at the same cap after automatic collection");
+    for (int i = 1; i < 7; ++i) {
+        require(runner.GetArraySlot(runner.LookupRoot(roots[i]), count - 1).GetInt() == i, "retain each live array");
+        runner.ReleaseRoot(roots[i]);
+    }
+}
+
+static void testAllocationResults() {
+    EPHEMERAL_HEAP_SIZE = 1024 * 1024;
+    MIN_HEAP_SIZE = MAX_HEAP_SIZE = 2 * EPHEMERAL_HEAP_SIZE;
+    ByteCodeRunner runner;
+    std::ostringstream errors;
+    runner.flow_err.rdbuf(errors.rdbuf());
+    // A capped heap with no room for promotion. Keep one ordinary array live.
+    auto leaveFree = [&](unsigned bytes) {
+        runner.Init("valid.flowbc");
+        runner.RegisterRoot(runner.AllocateArray((EPHEMERAL_HEAP_SIZE - bytes - 4) / STACK_SLOT_SIZE));
+        require(!runner.IsErrorReported(), "set up rooted array within the heap cap");
+    };
+    leaveFree(40); // The three-element list and its first name fit; the second name does not.
+    StackSlot names = runner.AllocateStringArray({"a", "second-filename", "third"});
+    require(names.IsVoid() && runner.GetLastErrorMsg().find("Cannot allocate memory") == 0,
+            "directory result propagates element allocation failure");
+
+    StackSlot capture = StackSlot::MakeInt(42);
+    leaveFree(4);
+    require(runner.AllocateClosure(StackSlot::MakeCodePointer(runner.CodeStartPtr()), 1, &capture).IsVoid() &&
+            runner.GetLastErrorMsg().find("Cannot allocate memory") == 0, "Flow closure preserves allocation error");
+    leaveFree(4);
+    require(runner.AllocateNativeClosure(generateItem, "item", 1, NULL, 1, capture).IsVoid() &&
+            runner.GetLastErrorMsg().find("Cannot allocate memory") == 0, "native closure preserves allocation error");
+    runner.flow_err.rdbuf(std::cerr.rdbuf());
 }
 
 static void testGenerate() {
@@ -180,9 +255,12 @@ static void testRunner() {
     require(!runner.IsErrorReported() && runner.CodeSize() == 1, "load nonempty bytecode");
     runner.RunMain();
     require(!runner.IsErrorReported(), "run valid bytecode");
+    runner.Init("not-present.flowbc");
+    require(runner.IsErrorReported() && runner.CodeSize() == 0, "failed reload clears the previous code size");
 
     runner.Init(&program);
     testDataFiles(runner);
+    testCopyFile(runner);
     StackSlot text = runner.AllocateString("flow9");
     StackSlot tail = text;
     require(runner.DoSubstring(&text, 0, 4) && runner.DoSubstring(&tail, 4, 1), "take adjacent slices");
@@ -214,6 +292,8 @@ int main() {
     testRunner();
     testGrowth(256, 384, 128, 262144);
     testGrowth(8, 40, 2, 2 * 1024 * 1024);
+    testYoungAllocation();
+    testAllocationResults();
     testGenerate();
     puts("Runtime memory tests passed");
 }

@@ -1,6 +1,7 @@
 #include "ByteCodeRunner.h"
 #ifndef _WIN32
     #include <sys/time.h>
+    #include <unistd.h>
 #else
     #include <Windows.h>
     #include <sys/timeb.h>
@@ -1633,6 +1634,45 @@ StackSlot ByteCodeRunner::getFileContentBinary(RUNNER_ARGS)
     return RUNNER->LoadFileAsString(name, false);
 }
 
+
+StackSlot ByteCodeRunner::copyFile(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(from, to);
+    RUNNER_CheckTag2(TString, from, to);
+    std::string dest = encodeUtf8(RUNNER->GetString(to));
+#ifdef _WIN32
+    unicode_string src_name = RUNNER->GetString(from), dest_name = RUNNER->GetString(to);
+    bool ok = CopyFileW(std::wstring(src_name.begin(), src_name.end()).c_str(),
+                        std::wstring(dest_name.begin(), dest_name.end()).c_str(), FALSE) != 0;
+#else
+    std::string src = encodeUtf8(RUNNER->GetString(from));
+    FILE *in = fopen(src.c_str(), "rb");
+    if (!in) return StackSlot::MakeBool(false);
+
+    // Stage beside the destination so existing readers (including mappings) keep their file.
+    std::string tmp = dest.substr(0, dest.find_last_of('/') + 1) + ".flowcopyXXXXXX";
+    int fd = mkstemp(&tmp[0]);
+    bool ok = false;
+    if (fd >= 0) {
+        if (FILE *out = fdopen(fd, "wb")) {
+            char buf[16384];
+            size_t n;
+            while ((n = fread(buf, 1, sizeof(buf), in)) != 0) {
+                if (fwrite(buf, 1, n, out) != n) break;
+            }
+            ok = n == 0 && !ferror(in);
+            if (fclose(out) != 0) ok = false;
+        } else {
+            close(fd);
+        }
+        if (ok) ok = rename(tmp.c_str(), dest.c_str()) == 0;
+        if (!ok) unlink(tmp.c_str());
+    }
+    fclose(in);
+#endif
+    if (ok) RUNNER->InvalidateFileCache(dest);
+    return StackSlot::MakeBool(ok);
+}
 
 StackSlot ByteCodeRunner::setFileContent(RUNNER_ARGS)
 {
