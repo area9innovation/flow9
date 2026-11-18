@@ -12,6 +12,38 @@ cd "$root"
 "$root/bin/flowc1" "$here/fixtures/legacy_copy.flow" bytecode="$work/copy.bytecode"
 cp "$here/fixtures/legacy_copy.flowbc" "$work/legacy.bytecode"
 
+check_preflight() (
+    mode=$1; shift
+    mkdir "permissions-$mode" && cd "permissions-$mode"
+    mkdir -p plan-src/sub plan-src/empty copy-out move-out
+    printf 'sibling' >plan-src/ordinary
+    printf 'child' >plan-src/sub/item
+    for out in copy-out move-out; do printf 'previous' >"$out/keep"; done
+
+    # 0400: names visible, child metadata unavailable. 0100: listing denied.
+    chmod "$mode" plan-src/sub
+    trap 'if [[ -d plan-src/sub ]]; then chmod 700 plan-src/sub; fi' EXIT
+    if [[ $mode == 0400 ]]; then
+        [[ $(ls -A plan-src/sub) == item && ! -e plan-src/sub/item ]]
+    else
+        [[ -f plan-src/sub/item ]]
+        if ls -A plan-src/sub >/dev/null 2>&1; then exit 1; fi
+    fi
+    "$@"
+    chmod 700 plan-src/sub
+    [[ $(cat plan-src/ordinary) == sibling && $(cat plan-src/sub/item) == child && -d plan-src/empty ]]
+    for out in copy-out move-out; do
+        [[ $(ls -A "$out") == keep && $(cat "$out/keep") == previous ]]
+    done
+    touch permissions-restored
+    "$@"
+    for out in copy-out move-out; do
+        [[ $(cat "$out/plan-src/ordinary") == sibling && $(cat "$out/plan-src/sub/item") == child ]]
+        [[ -d $out/plan-src/empty && -z $(ls -A "$out/plan-src/empty") && $(cat "$out/keep") == previous ]]
+    done
+    [[ ! -e plan-src ]]
+)
+
 check_local() {
     mkdir -p out/blocked.dat tree/sub copy-out referent linked-tree/sub/deep
     printf 'untouched referent' >referent/sentinel
@@ -54,6 +86,12 @@ check_local() {
     [[ -z $(ls -A alias-src/sub) && -z $(find . -name '.flowcopy*' -print -quit) ]]
     [[ ! -e large.dat && $(cat blocked.dat) == 'keep source' && $(cat out/blocked.dat/keep) == unchanged ]]
     [[ $(stat -c %a out/odd.dat) == 600 && $(stat -c %a out/empty.dat) == 644 && $(stat -c %a out/large.dat) == 640 ]]
+    if (( EUID != 0 )); then
+        check_preflight 0400 "$@"
+        check_preflight 0100 "$@"
+    else
+        echo 'Skipping directory permission cases (requires unprivileged user)' >&2
+    fi
 }
 
 umask 027

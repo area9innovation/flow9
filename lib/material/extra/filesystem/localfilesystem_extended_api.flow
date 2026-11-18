@@ -139,15 +139,23 @@ canCopyLocal(src : string, folder : string, dest : string) -> bool {
 native listLocalCopyDirectory : io (path : string) -> Maybe<[string]> = FlowFileSystem.listLocalCopyDirectory;
 listLocalCopyDirectory(__ : string) -> Maybe<[string]> { None() }
 
+// Follows file links. A false result (including a failed lookup) never admits a leaf.
+native isLocalCopyFile : io (path : string) -> bool = FlowFileSystem.isLocalCopyFile;
+isLocalCopyFile(__ : string) -> bool { false }
+
 LocalCopyEntry(src : string, dest : string, directory : bool);
 
 planLocalCopy(src : string, dest : string, plan : ref List<LocalCopyEntry>) -> string {
-	directory = isDirectory(src);
-	rlistPush(plan, LocalCopyEntry(src, dest, directory));
-	if (!directory) "" else switch (listLocalCopyDirectory(src)) {
-		None(): "Cannot traverse source directory '" + src + "'";
-		Some(names): fold(names, "", \err, name -> if (err != "") err
-			else planLocalCopy(src + "/" + name, dest + "/" + name, plan));
+	if (isLocalCopyFile(src)) {
+		rlistPush(plan, LocalCopyEntry(src, dest, false));
+		""
+	} else switch (listLocalCopyDirectory(src)) {
+		None(): "Cannot inspect source entry '" + src + "'";
+		Some(names): {
+			rlistPush(plan, LocalCopyEntry(src, dest, true));
+			fold(names, "", \err, name -> if (err != "") err
+				else planLocalCopy(src + "/" + name, dest + "/" + name, plan));
+		}
 	}
 }
 
@@ -159,8 +167,9 @@ copyElementsLocal(src : string, folder : string, move : bool) -> string {
 	else if (name == "" || name == "." || name == ".." || !canCopyLocal(src, folder, dest))
 		"Cannot copy '" + src + "' into '" + folder + "'"
 	else {
-		// Validate the complete tree before creating the first destination. Copy
-		// parents first; remove only copied entries, children first, on a move.
+		// Classify entries and list directories before creating any destination.
+		// Later I/O errors may leave part of the destination tree. Only remove
+		// source entries after all copies succeed, children first.
 		plan = ref makeList();
 		err = planLocalCopy(src, dest, plan);
 		if (err != "") err else {

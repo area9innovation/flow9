@@ -34,8 +34,17 @@ NativeFunction *QFileSystemInterface::MakeNativeFunction(const char *name, int n
 #undef NATIVE_NAME_PREFIX
 #define NATIVE_NAME_PREFIX "FlowFileSystem."
     TRY_USE_NATIVE_METHOD(QFileSystemInterface, canCopyLocal, 3);
+    TRY_USE_NATIVE_METHOD(QFileSystemInterface, isLocalCopyFile, 1);
     TRY_USE_NATIVE_METHOD(QFileSystemInterface, listLocalCopyDirectory, 1);
     return FileSystemInterface::MakeNativeFunction(name, num_args);
+}
+
+StackSlot QFileSystemInterface::isLocalCopyFile(RUNNER_ARGS) {
+    RUNNER_PopArgs1(src);
+    RUNNER_CheckTag(TString, src);
+    std::error_code ec;
+    const auto path = std::filesystem::u8path(encodeUtf8(RUNNER->GetString(src)));
+    return StackSlot::MakeBool(std::filesystem::is_regular_file(path, ec) && !ec);
 }
 
 StackSlot QFileSystemInterface::listLocalCopyDirectory(RUNNER_ARGS) {

@@ -75,6 +75,13 @@ public class FlowFileSystem extends NativeHost {
 		File file = new File(path);
 		return file.isDirectory();
 	}
+	public static boolean isLocalCopyFile(String path) {
+		try {
+			return Files.isRegularFile(Paths.get(path));
+		} catch (InvalidPathException | SecurityException ex) {
+			return false;
+		}
+	}
 	public static Struct listLocalCopyDirectory(String path) {
 		try {
 			Path dir = Paths.get(path);
