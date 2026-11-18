@@ -96,10 +96,10 @@ utf32_string decodeUtf16toUtf32(const unicode_char *str, size_t size) {
     out.reserve(size*4/5);  // Just a guess. Better 1 or less for usual cases and ½ or more for Chinese, Japan, Arabic, Hebrew, Yiddish, maybe some else.
     size_t len = size;
     uint32_t outbuf;
-    size_t outlen, auxlen;
+    size_t outlen;
     for (size_t pos = 0; pos < size; pos += len) {
-        len = (str[pos] >= 0xD800 && str[pos] <= 0xDC00) + 1;
-        if (len != (auxlen = decodeCharsUtf16toUtf32(str + pos, len, &outbuf, &outlen)) || outlen != 1) {
+        len = (size - pos >= 2 && str[pos] >= 0xD800 && str[pos] < 0xDC00) ? 2 : 1;
+        if (decodeCharsUtf16toUtf32(str + pos, len, &outbuf, &outlen) != len || outlen != 1) {
             // instead of throwing DecodeError
             outbuf = 0xFFFE;
             len = outlen = 1;
@@ -141,22 +141,24 @@ DecodeUtf16toUtf32::Iterator::Iterator(DecodeUtf16toUtf32 *parent, size_t pos) {
 }
 
 void DecodeUtf16toUtf32::Iterator::refreshState() {
-    if (pos >= parent->size) {
-        currentCharLen = 1;
-        return;
-    }
-    if (parent->org[pos] >= 0xD800 && parent->org[pos] <= 0xE000) {
+    currentCharLen = 1;
+    if (pos >= parent->size) return;
+
+    const unicode_char c = parent->org[pos];
+    if (c >= 0xD800 && c < 0xDC00) {
+        if (parent->size - pos >= 2) currentCharLen = 2;
+    } else if (c >= 0xDC00 && c < 0xE000 && pos > 0 &&
+               parent->org[pos-1] >= 0xD800 && parent->org[pos-1] < 0xDC00) {
+        --pos;
         currentCharLen = 2;
-        if (parent->org[pos] >= 0xDC00) {
-            if (pos && parent->org[pos-1] >= 0xD800 && parent->org[pos-1] < 0xDC00) --pos;
-            else currentCharLen = 1;
-        }
-    } else currentCharLen = 1;
+    }
 }
 
 void DecodeUtf16toUtf32::Iterator::decodeChar() {
-    size_t outlen, auxlen;
-    if (size_t(currentCharLen) != (auxlen = decodeCharsUtf16toUtf32(parent->org + pos, currentCharLen, &outbuf, &outlen)) || outlen != 1) {
+    const size_t len = currentCharLen;
+    size_t outlen;
+    if (pos >= parent->size || len > parent->size - pos ||
+        decodeCharsUtf16toUtf32(parent->org + pos, len, &outbuf, &outlen) != len || outlen != 1) {
         // instead of throwing DecodeError
         outbuf = 0xFFFE;
         currentCharLen = 1;

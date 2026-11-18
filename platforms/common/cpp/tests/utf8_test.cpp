@@ -1,4 +1,4 @@
-// Tests of the runner's UTF-8 decoder, file reads, stl_sprintf and font-name parsing.
+// Tests of the runner's Unicode decoders, file reads, stl_sprintf and font-name parsing.
 // Run with run_tests.sh, which builds it with the sanitizers in a temporary folder.
 
 #include <cstring>
@@ -9,6 +9,9 @@
 #include <cstdio>
 #include <string>
 #include <vector>
+
+// The whole-string decoder is defined in Utf32.cpp but not declared in STLHelpers.h.
+utf32_string decodeUtf16toUtf32(const unicode_string &str);
 
 static int failures = 0;
 static const unicode_char R = 0xFFFD;
@@ -89,6 +92,37 @@ static void testChunkedDecoder() {
     }
 }
 
+static void testUtf16Validator() {
+    const uint16_t input[] = {'A', 0xD83D};
+    uint32_t output[2] = {};
+    size_t outputSize;
+    const size_t consumed = decodeCharsUtf16toUtf32(input, sizeof input / sizeof input[0], output, &outputSize);
+    if (consumed != 1 || outputSize != 1 || output[0] != 'A')
+        fail("UTF-16 validator should report the incomplete character and preserve the decoded prefix");
+}
+
+static void testValidUtf16Decoding() {
+    unicode_string input = {'A', 0xE000, 0xD83D, 0xDE00};
+    const utf32_string expected = {'A', 0xE000, 0x1F600};
+    if (decodeUtf16toUtf32(input) != expected)
+        fail("UTF-16 string should decode to the expected Unicode code points");
+
+    DecodeUtf16toUtf32 decoder(input);
+    auto forward = decoder.begin();
+    auto reverse = decoder.rbegin();
+    for (size_t i = 0; i < expected.size(); ++i) {
+        const size_t reverseIndex = expected.size() - 1 - i;
+        if (forward.position() != i || *forward != expected[i])
+            fail("forward UTF-32 iterator should visit each Unicode code point");
+        if (reverse.position() != reverseIndex || *reverse != expected[reverseIndex])
+            fail("reverse UTF-32 iterator should visit each Unicode code point");
+        ++forward;
+        ++reverse;
+    }
+    if (forward.position() != input.size() || reverse.position() != input.size())
+        fail("UTF-32 iterators should reach the end position after visiting all code points");
+}
+
 static void testFileReads() {
     bool ok = true;
     if (!readFileAsUnicodeString(".", &ok).empty() || ok)
@@ -146,6 +180,8 @@ static void testFontNames() {
 int main() {
     testDecoder();
     testChunkedDecoder();
+    testUtf16Validator();
+    testValidUtf16Decoding();
     testFileReads();
     testSprintf();
     testFontNames();
