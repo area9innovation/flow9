@@ -557,7 +557,7 @@ void ByteCodeRunner::Reset(bool inDestructor)
 
     NumFullGCs = 0;
     FramePointer = LocalEnd = 0;
-    InstructionStarts.clear();
+    std::vector<bool>().swap(InstructionStarts);
     closurepointer = MakeFlowPtr(0);
 
 #ifdef FLOW_MMAP_HEAP
@@ -870,6 +870,10 @@ void ByteCodeRunner::RegisterStructDef(unsigned id, const StructDef &sd)
 
             fdefs[i].offset = offset;
             gcdef.offset = offset;
+            if (unlikely(size > unsigned(INT32_MAX - offset))) {
+                ReportError(InvalidArgument, "Struct layout exceeds the runtime offset range");
+                return;
+            }
             offset += size;
 
             if (has_gc)
@@ -1560,7 +1564,7 @@ bool ByteCodeRunner::IsCallableAddress(FlowPtr address) const
 // interpreted entry or trap installation, never on JIT/native constant data.
 bool ByteCodeRunner::PrepareInterpreter()
 {
-    if (!has_interpreter_code || IsErrorReported()) return false;
+    if (!has_interpreter_code || Code.GetSize() == 0 || IsErrorReported()) return false;
     if (!InstructionStarts.empty()) return true;
     try {
         const int size = Code.GetSize() - 1;
