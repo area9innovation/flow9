@@ -2,6 +2,8 @@
 
 #include <cassert>
 #include <iomanip>
+#include <limits>
+#include <memory>
 
 CodeMemory::CodeMemory()
 {
@@ -10,9 +12,57 @@ CodeMemory::CodeMemory()
 
 void CodeMemory::SetBuffer(char *buffer, int start, int size)
 {
+    if (start < 0 || size < 0 || (size && !buffer) || size > std::numeric_limits<int>::max() - start)
+        throw DecodeError("Invalid bytecode buffer range");
     Buffer = buffer;
     Position = Start = MakeFlowPtr(start);
     End = Start + size;
+}
+
+FlowPtr CodeMemory::RelativeTarget(FlowPtr base, int offset) const
+{
+    const int64_t target = int64_t(FlowPtrToInt(base)) + offset;
+    if (base < Start || base > End || target < FlowPtrToInt(Start) || target > FlowPtrToInt(End))
+        throw DecodeError("Bytecode target is outside the code range");
+    return MakeFlowPtr(unsigned(target));
+}
+
+int CodeMemory::ReadStructId()
+{
+    int id = ReadInt31();
+    if (id < 0 || id > MaxStructId)
+        throw DecodeError("Invalid bytecode struct id");
+    return id;
+}
+
+int CodeMemory::ReadStructFieldCount()
+{
+    const int count = ReadInt31();
+    // Each field needs at least a 4-byte name length and a type marker.
+    if (count > MaxStructFields || !CanRead(count, 5))
+        throw DecodeError("Invalid bytecode struct field count");
+    return count;
+}
+
+int CodeMemory::ReadSwitchCount(int *default_offset)
+{
+    const int count = ReadInt31();
+    // The interpreter uses fall-through for the default, but still consumes its operand.
+    const int offset = ReadInt31();
+    if (count > MaxStructId + 1 || !CanRead(count, 8))
+        throw DecodeError("Invalid bytecode switch table size");
+    if (default_offset)
+        *default_offset = offset;
+    return count;
+}
+
+unicode_string CodeMemory::ReadWideString(int len)
+{
+    const char *bytes = GetWideBytes(len);
+    unicode_string result(len, 0);
+    if (len)
+        memcpy(&result[0], bytes, len * 2);
+    return result;
 }
 
 std::string CodeMemory::ReadString()
@@ -27,32 +77,57 @@ std::string CodeMemory::ReadString()
 std::vector<FieldType> CodeMemory::ReadFieldType(char *is_mutable, std::string *structname)
 {
     std::vector<FieldType> res;
-    bool eot = false;
     *is_mutable = false;
-    do {
-        FieldType ft = (FieldType)(unsigned char)ReadByte();
-        if (ft == FTMutable) {
-            *is_mutable = true;
-            continue;
-        }
-        res.push_back(ft);
-        if (ft == FTTypedStruct) {
-            std::string name = ReadString();
+    unsigned char marker = ReadByte();
+    if (marker == FTMutable) {
+        *is_mutable = true;
+        marker = ReadByte();
+    }
+    for (int depth = 0; depth < MaxFieldTypeDepth; ++depth) {
+        switch (marker) {
+        case FTTypedArray: case FTTypedRefTo:
+            res.push_back(FieldType(marker));
+            if (depth + 1 == MaxFieldTypeDepth)
+                throw DecodeError("Bytecode field type is too deeply nested");
+            marker = ReadByte();
+            break;
+        case FTTypedStruct:
             if (structname)
-                *structname = name;
+                *structname = ReadString();
+            else
+                GetBytes(ReadInt31());
+            // Fall through: a typed struct is also a terminal type.
+        case FTVoid: case FTBool: case FTInt: case FTDouble: case FTString:
+        case FTArray: case FTStruct: case FTRefTo: case FTFlow:
+            res.push_back(FieldType(marker));
+            return res;
+        default:
+            throw DecodeError("Invalid bytecode field type marker");
         }
-        if (ft != FTTypedArray && ft != FTTypedRefTo) eot = true;
-    } while (!eot);
-    return res;
+    }
+    throw DecodeError("Bytecode field type is too deeply nested");
 }
 
 bool CodeMemory::ParseOpcode(FlowInstruction *out, bool reparse)
 {
     FlowPtr old_pos = GetPosition();
 
-    if (!reparse)
-        out->op = (OpCode)ReadByte();
+    try {
+        if (!reparse)
+            out->op = ReadOpcode();
+        if (ParseOpcodeOperands(out))
+            return true;
+        if (out->op == CBreakpoint || out->op == CCodeCoverageTrap)
+            return false; // The debugger reparses the operands with the original opcode.
+    } catch (const DecodeError &) {
+        // Keep the cursor at the start of an undecodable instruction.
+    }
+    SetPosition(old_pos);
+    return false;
+}
 
+bool CodeMemory::ParseOpcodeOperands(FlowInstruction *out)
+{
     OpCode opcode = out->op;
     FlowInstruction &insn = *out;
 
@@ -123,12 +198,15 @@ bool CodeMemory::ParseOpcode(FlowInstruction *out, bool reparse)
     case CWString:
     {
         SHAPE(String);
-        int size = ReadByte();
+        int size = static_cast<unsigned char>(ReadByte());
         insn.StrValue = encodeUtf8(ReadWideString(size));
         break;
     }
-    case CArray:
     case CStruct:
+        SHAPE(Int);
+        insn.IntValue = ReadStructId();
+        break;
+    case CArray:
     case CField:
     case CSetMutable:
     case CGetFreeVar:
@@ -150,7 +228,7 @@ bool CodeMemory::ParseOpcode(FlowInstruction *out, bool reparse)
     {
         SHAPE(Ptr);
         int v = ReadInt31();
-        insn.PtrValue = (GetPosition() + v);
+        insn.PtrValue = RelativeTarget(GetPosition(), v);
         break;
     }
     case CNativeFn:
@@ -164,16 +242,18 @@ bool CodeMemory::ParseOpcode(FlowInstruction *out, bool reparse)
     case CStructDef:
     {
         SHAPE(StructDef);
-        insn.IntValue = ReadInt31();
+        insn.IntValue = ReadStructId();
         insn.StrValue = ReadString();
-        insn.IntValue2 = ReadInt31();
+        insn.IntValue2 = ReadStructFieldCount();
 
-        insn.fields = new FlowInstruction::Field[insn.IntValue2];
+        std::unique_ptr<FlowInstruction::Field[]> fields(new FlowInstruction::Field[insn.IntValue2]);
         for (int k = 0; k < insn.IntValue2; ++k)
         {
-            insn.fields[k].name = ReadString();
-            insn.fields[k].type = ReadFieldType(&insn.fields[k].is_mutable, NULL);
+            fields[k].name = ReadString();
+            fields[k].type = ReadFieldType(&fields[k].is_mutable, NULL);
         }
+        delete[] insn.fields;
+        insn.fields = fields.release();
         break;
     }
     case CClosurePointer:
@@ -181,24 +261,25 @@ bool CodeMemory::ParseOpcode(FlowInstruction *out, bool reparse)
         SHAPE(IntPtr);
         insn.IntValue = ReadInt31();
         int v = ReadInt31();
-        insn.PtrValue = (GetPosition() + v);
+        insn.PtrValue = RelativeTarget(GetPosition(), v);
         break;
     }
     case CSwitch:
     case CSimpleSwitch:
     {
         SHAPE(Switch);
-        insn.IntValue = ReadInt31();
-        insn.IntValue2 = ReadInt31();
+        insn.IntValue = ReadSwitchCount(&insn.IntValue2);
 
         FlowPtr pos = GetPosition() + insn.IntValue * 8;
 
-        insn.cases = new FlowInstruction::Case[insn.IntValue];
+        std::unique_ptr<FlowInstruction::Case[]> cases(new FlowInstruction::Case[insn.IntValue]);
         for (int k = 0; k < insn.IntValue; ++k)
         {
-            insn.cases[k].id = ReadInt31();
-            insn.cases[k].target = (pos + ReadInt31());
+            cases[k].id = ReadStructId();
+            cases[k].target = RelativeTarget(pos, ReadInt31());
         }
+        delete[] insn.cases;
+        insn.cases = cases.release();
         break;
     }
 
@@ -213,7 +294,6 @@ bool CodeMemory::ParseOpcode(FlowInstruction *out, bool reparse)
     }
 
     default:
-        SetPosition(old_pos);
         return false;
     }
 

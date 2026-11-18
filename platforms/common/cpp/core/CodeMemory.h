@@ -2,6 +2,7 @@
 #define _CODE_MEMORY_H_
 
 #include "ByteMemory.h"
+#include <stdexcept>
 
 #ifdef _MSC_VER
 #define _ALIGNED_4 align(4)
@@ -35,15 +36,17 @@ private:
     FlowPtr Position, Start, End;
    
     PackedVals *GetItemPtr(int size) {
-        PackedVals *p = (PackedVals*)(Buffer + FlowPtrToInt(Position));
-        Position += size;
-#ifdef DEBUG_FLOW
-        assert(Position <= End);
-#endif
-        return p;
+        return reinterpret_cast<PackedVals*>(GetBytes(size));
     }
 
 public:
+    struct DecodeError : std::runtime_error {
+        explicit DecodeError(const char *message) : std::runtime_error(message) {}
+    };
+
+    // Limits of the struct ID and cached field index representations.
+    enum { MaxStructId = 65535, MaxStructFields = 32768, MaxFieldTypeDepth = 64 };
+
     CodeMemory();
     CodeMemory(char *buffer, int start, int size) {
         SetBuffer(buffer, start, size);
@@ -52,7 +55,7 @@ public:
     void SetBuffer(char *buffer, int start, int size);
 
     __INLINE_WRAP(void SetPosition(FlowPtr position)) {
-        if (position <= End)
+        if (position >= Start && position <= End)
             Position = position;
     }
     void ResetPosition()  { Position = Start; }
@@ -61,9 +64,25 @@ public:
     FlowPtr GetLastAddr() { return End; }
 
     bool Eof() { return Position >= End; }
+    bool CanRead(int count, int width = 1) const {
+        return count >= 0 && width > 0 && Position >= Start && Position <= End
+            && unsigned(count) <= (FlowPtrToInt(End) - FlowPtrToInt(Position)) / unsigned(width);
+    }
+
+    FlowPtr RelativeTarget(FlowPtr base, int offset) const;
+    int ReadStructId();
+    int ReadStructFieldCount();
+    int ReadSwitchCount(int *default_offset = NULL);
 
     char ReadByte() {
         return GetItemPtr(1)->bv;
+    }
+
+    OpCode ReadOpcode() {
+        const uint8_t opcode = static_cast<uint8_t>(ReadByte());
+        if (opcode > CCodeCoverageTrap)
+            throw DecodeError("Invalid bytecode opcode");
+        return static_cast<OpCode>(opcode);
     }
 
     unsigned ReadInt32() {
@@ -75,7 +94,7 @@ public:
     }
 
     void SkipInt() {
-        Position += 4;
+        GetBytes(4);
     }
 
     // Partial reads for constrained values:
@@ -97,24 +116,34 @@ public:
 #endif
     }
     
-    unicode_string ReadWideString(int len) {
-        unicode_string rv((unicode_char*)(Buffer + FlowPtrToInt(Position)), len);
-        Position += len * 2;
-        return rv;
+    const char *GetWideBytes(int len) {
+        if (!CanRead(len, 2))
+            throw DecodeError("Invalid UTF-16 string length");
+        return GetBytes(len * 2);
     }
 
+    unicode_string ReadWideString(int len);
+
     std::string ReadString(int len) {
-        return std::string(&GetItemPtr(len)->bv, len);
+        const char *bytes = GetBytes(len);
+        return len ? std::string(bytes, len) : std::string();
     }
 
     std::string ReadString();
     std::vector<FieldType> ReadFieldType(char *is_mutable, std::string *structname);
 
     char *GetBytes(int len) {
-        return &GetItemPtr(len)->bv;
+        if (!CanRead(len) || (len && !Buffer))
+            throw DecodeError("Bytecode operand exceeds the available bytes");
+        char *bytes = Buffer ? Buffer + FlowPtrToInt(Position) : NULL;
+        Position += len;
+        return bytes;
     }
 
     bool ParseOpcode(FlowInstruction *out, bool reparse = false);
+
+private:
+    bool ParseOpcodeOperands(FlowInstruction *out);
 };
 
 #endif

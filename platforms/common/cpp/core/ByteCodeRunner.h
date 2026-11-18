@@ -229,6 +229,7 @@ public:
         FlowPtr last_pc;
         FlowPtr last_closure;
         int last_frame;
+        unsigned last_local_end;
 #ifdef FLOW_DEBUGGER
         FlowPtr impersonate_pc;
         bool is_closure;
@@ -254,7 +255,10 @@ private:
     friend class HeapWalker;
 
     void Reset(bool inDestructor);
-    void DoInit(const char *bytecode_buffer_or_fn, int bytecode_length, bool from_file);
+    void DoInit(const char *bytecode_buffer_or_fn, int bytecode_length, bool from_file, bool index_bytecode = false);
+    void IndexBytecode();
+    bool IsInstructionStart(FlowPtr address) const;
+    FlowPtr CheckedCodeTarget(FlowPtr address, bool callable = false);
 
     // Byterunner initialization flag
     bool initializationComplete;
@@ -307,7 +311,17 @@ private:
 
     // Stacks
     unsigned                   FramePointer;
+    unsigned                   LocalEnd; // Exclusive end of arguments and locals, below temporaries.
     TCallStack                 CallStack;
+    std::vector<bool>          InstructionStarts;
+
+    bool HasOperands(unsigned count) const {
+        return LocalEnd <= DataStack.size() && count <= DataStack.size() - LocalEnd;
+    }
+
+    bool HasLocal(unsigned index) const {
+        return LocalEnd <= DataStack.size() && FramePointer <= LocalEnd && index < LocalEnd - FramePointer;
+    }
 
     // The overall memory layout
     FlowPtr HeapStart;
