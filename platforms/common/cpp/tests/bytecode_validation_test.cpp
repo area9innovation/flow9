@@ -65,12 +65,20 @@ int main(int argc, char **argv)
     check(code.Eof() && is_mutable && markers.size() == 3 && markers.back() == FTInt,
           "Nested mutable field type");
 
-    std::array<char, CodeMemory::MaxFieldTypeDepth> deep_type;
+    std::array<char, 257> deep_type;
     deep_type.fill(FTTypedArray);
     deep_type.back() = FTInt;
     code.SetBuffer(deep_type.data(), 0, deep_type.size());
     markers = code.ReadFieldType(&is_mutable, NULL);
-    check(code.Eof() && !is_mutable && markers.size() == deep_type.size(), "Field type depth limit");
+    check(code.Eof() && !is_mutable && markers.size() == deep_type.size(), "Deep field type");
+
+    // A complete table of empty field names and their int type markers.
+    const int fields = 32769;
+    std::vector<char> table(4 + 5 * fields, 0);
+    memcpy(table.data(), &fields, sizeof(fields));
+    for (int i = 0; i < fields; ++i) table[8 + i*5] = FTInt;
+    code.SetBuffer(table.data(), 0, table.size());
+    check(code.ReadStructFieldCount() == fields, "Field count does not depend on cache width");
 
     for (OpCode opcode : {CSwitch, CSimpleSwitch}) {
         // One case and a default, both falling through to the next instruction.

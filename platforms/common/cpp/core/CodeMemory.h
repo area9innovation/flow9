@@ -44,9 +44,6 @@ public:
         explicit DecodeError(const char *message) : std::runtime_error(message) {}
     };
 
-    // Limits of the struct ID and cached field index representations.
-    enum { MaxStructId = 65535, MaxStructFields = 32768, MaxFieldTypeDepth = 64 };
-
     CodeMemory();
     CodeMemory(char *buffer, int start, int size) {
         SetBuffer(buffer, start, size);
@@ -65,7 +62,8 @@ public:
 
     bool Eof() { return Position >= End; }
     bool CanRead(int count, int width = 1) const {
-        return count >= 0 && width > 0 && Position >= Start && Position <= End
+        // SetBuffer, SetPosition and GetBytes maintain Start <= Position <= End.
+        return count >= 0 && width > 0
             && unsigned(count) <= (FlowPtrToInt(End) - FlowPtrToInt(Position)) / unsigned(width);
     }
 
@@ -97,15 +95,6 @@ public:
         GetBytes(4);
     }
 
-    // Partial reads for constrained values:
-    int ReadInt31_8() {
-        return GetItemPtr(4)->ubv;
-    }
-
-    int ReadInt31_16() {
-        return GetItemPtr(4)->usv;
-    }
-
     FlowDouble ReadDouble() {
 #ifdef IOS
         double d;
@@ -133,9 +122,10 @@ public:
     std::vector<FieldType> ReadFieldType(char *is_mutable, std::string *structname);
 
     char *GetBytes(int len) {
-        if (!CanRead(len) || (len && !Buffer))
+        // SetBuffer limits the range to INT_MAX, so a negative len fails too.
+        if (unlikely(unsigned(len) > unsigned(End - Position)))
             throw DecodeError("Bytecode operand exceeds the available bytes");
-        char *bytes = Buffer ? Buffer + FlowPtrToInt(Position) : NULL;
+        char *bytes = (len || Buffer) ? Buffer + FlowPtrToInt(Position) : NULL;
         Position += len;
         return bytes;
     }

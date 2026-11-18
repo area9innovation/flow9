@@ -2705,10 +2705,10 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CArray:
             {
-                int len = Code.ReadInt31_16();
+                int len = Code.ReadInt31();
                 if (len)
                 {
-                    if (unlikely(DataStack.size() < unsigned(len))) {
+                    if (unlikely(!HasOperands(unsigned(len)))) {
                         StackError(DatastackFull, false);
                         break;
                     }
@@ -2947,7 +2947,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CGetGlobal:
             {
-                PushDataStackSlot(Code.ReadInt31_16());
+                PushDataStackSlot(Code.ReadInt31());
                 break;
             }
         case CGetLocal:
@@ -2965,7 +2965,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
                 int ncnt = Code.ReadInt31();
                 int args = Code.ReadInt31();
                 unsigned caller_end = CallStack.empty() ? 0 : CallStack.top().last_local_end;
-                if (unlikely(ncnt < 0 || ncnt > 65535 || args < 0 || args > 255
+                if (unlikely(ncnt < 0 || args < 0
                              || FramePointer != DataStack.size() || FramePointer != LocalEnd
                              || caller_end > FramePointer || unsigned(args) > FramePointer - caller_end)) {
                     ReportError(StackCorruption, "Invalid local frame reservation");
@@ -3030,7 +3030,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CField:
             {
-                int i = Code.ReadInt31_16();
+                int i = Code.ReadInt31();
                 DoField(i);
                 break;
             }
@@ -3043,7 +3043,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CSetMutable:
             {
-                int i = Code.ReadInt31_8();
+                int i = Code.ReadInt31();
                 DoSetMutable(i);
                 break;
             }
@@ -3119,7 +3119,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
                 int offset = Code.ReadInt31();
                 FlowPtr target = CheckedCodeTarget(Code.RelativeTarget(Code.GetPosition(), offset), true);
 
-                if (unlikely(n < 0 || n > 255 || !HasOperands(unsigned(n)))) {
+                if (unlikely(unsigned(n) > UINT16_MAX || !HasOperands(unsigned(n)))) {
                     StackError(DatastackFull, false);
                     break;
                 }

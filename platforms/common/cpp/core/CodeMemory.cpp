@@ -30,7 +30,7 @@ FlowPtr CodeMemory::RelativeTarget(FlowPtr base, int offset) const
 int CodeMemory::ReadStructId()
 {
     int id = ReadInt31();
-    if (id < 0 || id > MaxStructId)
+    if (unsigned(id) > std::numeric_limits<uint16_t>::max()) // StackSlot::GetStructId
         throw DecodeError("Invalid bytecode struct id");
     return id;
 }
@@ -39,7 +39,7 @@ int CodeMemory::ReadStructFieldCount()
 {
     const int count = ReadInt31();
     // Each field needs at least a 4-byte name length and a type marker.
-    if (count > MaxStructFields || !CanRead(count, 5))
+    if (!CanRead(count, 5))
         throw DecodeError("Invalid bytecode struct field count");
     return count;
 }
@@ -49,7 +49,7 @@ int CodeMemory::ReadSwitchCount(int *default_offset)
     const int count = ReadInt31();
     // The interpreter uses fall-through for the default, but still consumes its operand.
     const int offset = ReadInt31();
-    if (count > MaxStructId + 1 || !CanRead(count, 8))
+    if (!CanRead(count, 8))
         throw DecodeError("Invalid bytecode switch table size");
     if (default_offset)
         *default_offset = offset;
@@ -78,18 +78,14 @@ std::vector<FieldType> CodeMemory::ReadFieldType(char *is_mutable, std::string *
 {
     std::vector<FieldType> res;
     *is_mutable = false;
-    unsigned char marker = ReadByte();
-    if (marker == FTMutable) {
-        *is_mutable = true;
-        marker = ReadByte();
-    }
-    for (int depth = 0; depth < MaxFieldTypeDepth; ++depth) {
+    for (;;) {
+        unsigned char marker = ReadByte();
         switch (marker) {
+        case FTMutable:
+            *is_mutable = true;
+            break;
         case FTTypedArray: case FTTypedRefTo:
             res.push_back(FieldType(marker));
-            if (depth + 1 == MaxFieldTypeDepth)
-                throw DecodeError("Bytecode field type is too deeply nested");
-            marker = ReadByte();
             break;
         case FTTypedStruct:
             if (structname)
@@ -105,7 +101,6 @@ std::vector<FieldType> CodeMemory::ReadFieldType(char *is_mutable, std::string *
             throw DecodeError("Invalid bytecode field type marker");
         }
     }
-    throw DecodeError("Bytecode field type is too deeply nested");
 }
 
 bool CodeMemory::ParseOpcode(FlowInstruction *out, bool reparse)
