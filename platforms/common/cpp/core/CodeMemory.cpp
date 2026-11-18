@@ -33,13 +33,14 @@ FlowPtr CodeMemory::RelativeTarget(FlowPtr base, int offset) const
     return MakeFlowPtr(unsigned(target));
 }
 
-int CodeMemory::ReadStructId()
+static int CheckStructId(int id)
 {
-    int id = ReadInt31();
     if (unsigned(id) > std::numeric_limits<uint16_t>::max()) // StackSlot::GetStructId
-        throw DecodeError("Invalid bytecode struct id");
+        throw CodeMemory::DecodeError("Invalid bytecode struct id");
     return id;
 }
+
+int CodeMemory::ReadStructId() { return CheckStructId(ReadInt31()); }
 
 int CodeMemory::ReadStructFieldCount()
 {
@@ -47,18 +48,6 @@ int CodeMemory::ReadStructFieldCount()
     // Each field needs at least a 4-byte name length and a type marker.
     if (!CanRead(count, 5))
         throw DecodeError("Invalid bytecode struct field count");
-    return count;
-}
-
-int CodeMemory::ReadSwitchCount(int *default_offset)
-{
-    const int count = ReadInt31();
-    // The interpreter uses fall-through for the default, but still consumes its operand.
-    const int offset = ReadInt31();
-    if (!CanRead(count, 8))
-        throw DecodeError("Invalid bytecode switch table size");
-    if (default_offset)
-        *default_offset = offset;
     return count;
 }
 
@@ -133,18 +122,10 @@ bool CodeMemory::ParseOpcode(FlowInstruction *out, bool reparse)
     return false;
 }
 
-template<bool indexing>
-bool CodeMemory::DecodeOperands(FlowInstruction &insn, std::vector<FlowPtr> *targets)
+// Most instructions need only a small fixed-width read. Share that layout
+// with the disassembler without materializing operands in the index loop.
+static inline int FixedOperandBytes(OpCode opcode)
 {
-    OpCode opcode = insn.op;
-
-#define SHAPE(sname) if (!indexing) insn.shape = FlowInstruction::sname;
-
-    auto string_operand = [&]() {
-        int size = ReadInt31();
-        if (indexing) GetBytes(size); else insn.StrValue = ReadString(size);
-    };
-
     switch (opcode)
     {
     case CVoid:
@@ -179,20 +160,48 @@ bool CodeMemory::DecodeOperands(FlowInstruction &insn, std::vector<FlowPtr> *tar
     case CDivideInt:
     case CModuloInt:
     case CLast:
-        SHAPE(Atom);
-        break;
+        return 0;
     case CBool:
-        SHAPE(Int);
-        if (indexing) GetBytes(1); else insn.IntValue = ReadByte();
-        break;
+        return 1;
     case CInt:
-        SHAPE(Int);
-        if (indexing) GetBytes(4); else insn.IntValue = ReadInt32();
-        break;
+    case CArray: case CField: case CSetMutable: case CGetFreeVar:
+    case CSetLocal: case CGetGlobal: case CGetLocal: case CTailCall:
+        return 4;
     case CDouble:
-        SHAPE(Double);
-        if (indexing) GetBytes(8); else insn.DoubleVal = ReadDouble();
-        break;
+    case CReserveLocals:
+        return 8;
+    default:
+        return -1;
+    }
+}
+
+template<bool indexing>
+bool CodeMemory::DecodeOperands(FlowInstruction &insn, std::vector<FlowPtr> *targets)
+{
+    const OpCode opcode = insn.op;
+#define SHAPE(sname) insn.shape = FlowInstruction::sname
+
+    if (!indexing) {
+        switch (FixedOperandBytes(opcode)) {
+        case 0: SHAPE(Atom); return true;
+        case 1: SHAPE(Int); insn.IntValue = ReadByte(); return true;
+        case 4: SHAPE(Int); insn.IntValue = ReadInt31(); return true;
+        case 8:
+            if (opcode == CDouble) {
+                SHAPE(Double); insn.DoubleVal = ReadDouble();
+            } else {
+                SHAPE(IntInt); insn.IntValue = ReadInt31(); insn.IntValue2 = ReadInt31();
+            }
+            return true;
+        }
+    }
+
+    auto string_operand = [&]() {
+        int size = ReadInt31();
+        if (indexing) GetBytes(size); else insn.StrValue = ReadString(size);
+    };
+
+    switch (opcode) {
     case CString:
     case CNotImplemented:
     case CDebugInfo:
@@ -222,24 +231,6 @@ bool CodeMemory::DecodeOperands(FlowInstruction &insn, std::vector<FlowPtr> *tar
     case CStruct:
         SHAPE(Int);
         insn.IntValue = ReadStructId();
-        break;
-    case CArray:
-    case CField:
-    case CSetMutable:
-    case CGetFreeVar:
-    case CSetLocal:
-    case CGetGlobal:
-    case CGetLocal:
-    case CTailCall:
-        SHAPE(Int);
-        if (indexing) GetBytes(4); else insn.IntValue = ReadInt31();
-        break;
-    case CReserveLocals:
-        SHAPE(IntInt);
-        if (indexing) GetBytes(8); else {
-            insn.IntValue = ReadInt32();
-            insn.IntValue2 = ReadInt32();
-        }
         break;
     case CGoto:
     case CCodePointer:
@@ -304,15 +295,14 @@ bool CodeMemory::DecodeOperands(FlowInstruction &insn, std::vector<FlowPtr> *tar
     case CSimpleSwitch:
     {
         SHAPE(Switch);
-        insn.IntValue = ReadSwitchCount(&insn.IntValue2);
-
-        FlowPtr pos = GetPosition() + insn.IntValue * 8;
+        const PackedVals *table = ReadSwitchTable(insn.IntValue, &insn.IntValue2);
+        FlowPtr pos = GetPosition();
 
         std::unique_ptr<FlowInstruction::Case[]> cases(indexing ? NULL : new FlowInstruction::Case[insn.IntValue]);
         for (int k = 0; k < insn.IntValue; ++k)
         {
-            int id = ReadStructId();
-            FlowPtr target = RelativeTarget(pos, ReadInt31());
+            int id = CheckStructId(table[k].pair[0]);
+            FlowPtr target = RelativeTarget(pos, table[k].pair[1]);
             if (indexing) targets->push_back(target);
             else {
                 cases[k].id = id;
@@ -351,7 +341,13 @@ void CodeMemory::BuildInstructionIndex(std::vector<bool> &starts)
     FlowInstruction scratch;
     while (!Eof()) {
         index[Cursor - Begin] = true;
-        scratch.op = ReadOpcode();
+        OpCode opcode = ReadOpcode();
+        int bytes = FixedOperandBytes(opcode);
+        if (bytes >= 0) {
+            GetBytes(bytes);
+            continue;
+        }
+        scratch.op = opcode;
         if (!DecodeOperands<true>(scratch, &targets))
             throw DecodeError("Cannot decode bytecode instruction");
     }

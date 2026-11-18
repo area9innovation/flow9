@@ -1548,8 +1548,7 @@ void ByteCodeRunner::MoveStructToStack(StackSlot str, unsigned count)
 
 bool ByteCodeRunner::IsInstructionStart(FlowPtr address) const
 {
-    const unsigned offset = FlowPtrToInt(address);
-    return offset < InstructionStarts.size() && InstructionStarts[offset];
+    return address <= NativeReturnInsn && InstructionStarts[FlowPtrToInt(address)];
 }
 
 bool ByteCodeRunner::IsCallableAddress(FlowPtr address) const
@@ -2678,7 +2677,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CStruct:
             {
-                int id = Code.ReadStructId();
+                int id = Code.ReadInt31(); // The executable index already checked the encoded ID.
                 StructDef *def = safeVectorPtrAt(StructDefs, id);
                 if (unlikely(def == NULL || def->Name.empty())) {
                     ReportError(UnknownStructDefId, "Unknown struct kind: %d", id);
@@ -2915,8 +2914,8 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CReserveLocals:
             {
-                int ncnt = Code.ReadInt31();
-                int args = Code.ReadInt31();
+                const PackedVals *counts = reinterpret_cast<const PackedVals*>(Code.GetBytes(8));
+                int ncnt = counts->pair[0], args = counts->pair[1];
                 unsigned caller_end = CallStack.empty() ? 0 : CallStack.top().last_local_end;
                 if (unlikely(ncnt < 0 || args < 0
                              || FramePointer != DataStack.size() || FramePointer != LocalEnd
@@ -3085,8 +3084,8 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
         case CSimpleSwitch:
         case CSwitch:
             {
-                const int cases = Code.ReadSwitchCount();
-                const char *data = Code.GetBytes(cases * 8);
+                int cases;
+                const PackedVals *table = Code.ReadSwitchTable(cases);
                 if (unlikely(!HasOperands(1))) {
                     StackError(DatastackFull, false);
                     break;
@@ -3101,12 +3100,11 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
 
                 for (int i = 0; i < cases; ++i)
                 {
-                    const PackedVals *entry = reinterpret_cast<const PackedVals*>(data + i*8);
-                    int cn = entry->iv;
+                    int cn = table[i].pair[0];
                     if (cn == structId)
                     {
                         // We have a hit. Let's unpack the struct on the stack.
-                        int offset = reinterpret_cast<const PackedVals*>(data + i*8 + 4)->iv;
+                        int offset = table[i].pair[1];
 
                         if (opcode != CSimpleSwitch) {
                             int len = GetStructSize(struct_ref);

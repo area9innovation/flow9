@@ -24,6 +24,7 @@ union PackedVals {
     unsigned char ubv;
     unsigned short usv;
     int iv;
+    int pair[2];
     unsigned uv;
     double dv;
 } _ATTR_PACK;
@@ -68,7 +69,14 @@ public:
     FlowPtr RelativeTarget(FlowPtr base, int offset) const;
     int ReadStructId();
     int ReadStructFieldCount();
-    int ReadSwitchCount(int *default_offset = NULL);
+    const PackedVals *ReadSwitchTable(int &count, int *default_offset = NULL) {
+        static_assert(sizeof(PackedVals) == 8, "Switch entries are pairs of int32");
+        const PackedVals *header = GetItemPtr(8);
+        count = header->pair[0];
+        if (!CanRead(count, 8)) throw DecodeError("Invalid bytecode switch table size");
+        if (default_offset) *default_offset = header->pair[1];
+        return GetItemPtr(count * 8);
+    }
 
     char ReadByte() {
         return GetItemPtr(1)->bv;
