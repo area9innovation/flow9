@@ -1,6 +1,12 @@
 #include "STLHelpers.h"
 
 #include <stdio.h>
+#ifdef _WIN32
+#include <io.h>
+#else
+#include <fcntl.h>
+#include <unistd.h>
+#endif
 
 #ifdef QT_CORE_LIB
 #include <QDebug>
@@ -364,18 +370,38 @@ FILE *MakeTemporaryFile(std::string *pname)
     if (!file.open())
         return NULL;
 
-    std::string name = encodeUtf8(qt2unicode(file.fileName()));
-    if (pname)
-        *pname = name;
-
-    if (FILE *fobj = fopen(name.c_str(), "w+b"))
-    {
-        file.setAutoRemove(false);
-        return fobj;
+    // Qt owns its descriptor; give stdio a separate descriptor for the same file.
+    const int qt_fd = file.handle();
+    if (qt_fd < 0)
+        return NULL;
+#ifdef _WIN32
+    const int fd = _dup(qt_fd);
+    if (fd < 0)
+        return NULL;
+    FILE *fobj = _fdopen(fd, "w+b");
+    if (!fobj) {
+        _close(fd);
+        return NULL;
     }
-
-    file.remove();
-    return NULL;
+#else
+    const int fd = fcntl(qt_fd, F_DUPFD_CLOEXEC, 0);
+    if (fd < 0)
+        return NULL;
+    FILE *fobj = fdopen(fd, "w+b");
+    if (!fobj) {
+        close(fd);
+        return NULL;
+    }
+#endif
+    const QString name = file.fileName();
+    if (name.isEmpty()) {
+        fclose(fobj);
+        return NULL;
+    }
+    if (pname)
+        *pname = encodeUtf8(qt2unicode(name));
+    file.setAutoRemove(false);
+    return fobj;
 #else
     path.push_back(0);
 
@@ -383,10 +409,15 @@ FILE *MakeTemporaryFile(std::string *pname)
     if (fd == -1)
         return NULL;
 
+    FILE *fobj = fdopen(fd, "w+b");
+    if (!fobj) {
+        close(fd);
+        unlink(path.c_str());
+        return NULL;
+    }
     if (pname)
         *pname = path.substr(0, path.size()-1);
-
-    return fdopen(fd, "w+b");
+    return fobj;
 #endif
 }
 
