@@ -1567,6 +1567,7 @@ void iosGLRenderSupport::callFlowFromJS(UIView * web_view, NSString * absolute_u
         ByteCodeRunner * RUNNER = getFlowRunner();
         RUNNER_DefSlots1(arr);
         arr = RUNNER->AllocateArray([args count] - 1);
+        if (RUNNER->IsErrorReported()) return;
         for (int i = 0; i < [args count] - 1; ++i) {
             RUNNER->SetArraySlot(arr, i, jsstring2stackslot([args objectAtIndex: i + 1]));
         }
@@ -2268,4 +2269,3 @@ void iosGLRenderSupport::doTakeAudioRecord() {
         getFlowRunner()->NotifyCameraEventAudio(5, "Nothing to save yet", lastCameraAdditionalArgs, -1, -1);
     }
 }
-

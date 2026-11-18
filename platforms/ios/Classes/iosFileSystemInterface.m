@@ -40,6 +40,10 @@ void iosFileSystemInterface::doOpenFileDialog(int maxFilesCount, std::vector<std
         controller.delegate = [[FlowUIImagePickerControllerDelegate alloc] initWithFileListener:^(NSDictionary<UIImagePickerControllerInfoKey,id> *info) {
             RUNNER_DefSlots1(flowFilesArray);
             flowFilesArray = RUNNER->AllocateArray(1);
+            if (RUNNER->IsErrorReported()) {
+                [viewController dismissViewControllerAnimated:YES completion:nil];
+                return;
+            }
             NSURL *fileURL = info[@"UIImagePickerControllerImageURL"];
             if([info[@"UIImagePickerControllerMediaType"] isEqualToString:@"public.movie"]) {
                 fileURL = info[@"UIImagePickerControllerMediaURL"];

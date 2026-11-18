@@ -232,7 +232,8 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
 
     int nqueries = RUNNER->GetArraySize(rawqueries);
     queriesResults = RUNNER->AllocateArray(nqueries);
-    int nresults = 0;
+    RUNNER_CheckError();
+    int64_t nresults = 0;
     int validQueries = 0;
     for (int i = 0; i < nqueries; i++) {
         StackSlot querySlot = RUNNER->GetArraySlot(rawqueries, i);
@@ -254,18 +255,22 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
         int resultsCnt = 0;
         int realCapacity = 1;
         queryResults = RUNNER->AllocateArray(realCapacity);
+        RUNNER_CheckError();
         do {
             int nRows = query->size();
             nRows = nRows == 0 ? 1 : nRows;
             resultRows = RUNNER->AllocateArray(nRows);
+            RUNNER_CheckError();
             for (int j = 0; j < nRows; j++) {
                 query->next();
                 StackSlot requestResult = databaseResult->getRecord(RUNNER);
+                RUNNER_CheckError();
                 RUNNER->SetArraySlot(resultRows, j, requestResult);
             }
             resultsCnt++;
             if (realCapacity == resultsCnt) {
                 queryResults2 = RUNNER->AllocateArray(realCapacity * 2);
+                RUNNER_CheckError();
                 for (int k = 0; k < realCapacity; k++ ) {
                     RUNNER->SetArraySlot(queryResults2, k, RUNNER->GetArraySlot(queryResults, k));
                 }
@@ -276,6 +281,7 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
         } while (query->nextResult());
         if (resultsCnt < realCapacity) {
             queryResults2 = RUNNER->AllocateArray(resultsCnt);
+            RUNNER_CheckError();
             for (int k = 0; k < resultsCnt; k++ ) {
                 RUNNER->SetArraySlot(queryResults2, k, RUNNER->GetArraySlot(queryResults, k));
             }
@@ -286,6 +292,7 @@ StackSlot DatabaseConnection::requestDbMulti(RUNNER_ARGS) {
     }
 
     resultArr = RUNNER->AllocateArray(nresults);
+    RUNNER_CheckError();
     for (int i = 0, n = 0; i < validQueries; i++) {
         StackSlot qResults = RUNNER->GetArraySlot(queriesResults, i);
         for (unsigned int c = 0; c < RUNNER->GetArraySize(qResults); c++, n++) {
@@ -396,6 +403,7 @@ StackSlot DatabaseResult::getRecord(RUNNER_VAR) {
 
     QSqlRecord record = query->record();
     result = RUNNER->AllocateArray(record.count());
+    RUNNER_CheckError();
 
     for (int i = 0; i < record.count(); ++i) {
         QSqlField field = record.field(i);

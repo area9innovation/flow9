@@ -681,7 +681,7 @@ private:
     unicode_char *AllocateStringBuffer(StackSlot *out, unsigned length);
     FlowPtr *AllocateStringRef(StackSlot *out, unsigned length);
 
-    StackSlot AllocateUninitializedArray(unsigned length);
+    StackSlot AllocateUninitializedArray(uint64_t length);
     StackSlot AllocateUninitializedClosure(unsigned short length, FlowPtr code);
 
 public:
@@ -737,7 +737,7 @@ public:
     void InvalidateFileCache(std::string filename);
 
     StackSlot AllocateRef(const StackSlot &value);
-    StackSlot AllocateArray(int length, StackSlot *data = NULL);
+    StackSlot AllocateArray(int64_t length, StackSlot *data = NULL);
     StackSlot AllocateStruct(const char *name, unsigned size);
 
     unsigned GetStringSize(const StackSlot &str) {

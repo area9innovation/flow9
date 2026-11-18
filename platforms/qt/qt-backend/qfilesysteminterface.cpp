@@ -51,12 +51,13 @@ void QFileSystemInterface::selectAccepted()
 
     flowFilesArray = RUNNER->AllocateArray(length);
 
-    for (int i = 0; i < length; ++i) {
+    for (int i = 0; !RUNNER->IsErrorReported() && i < length; ++i) {
         FlowFile *file = new FlowFile(RUNNER, filePaths.at(i).toStdString());
         RUNNER->SetArraySlot(flowFilesArray, i, RUNNER->AllocNative(file));
     }
 
-    RUNNER->EvalFunction(RUNNER->LookupRoot(selectCallbackId), 1, flowFilesArray);
+    if (!RUNNER->IsErrorReported())
+        RUNNER->EvalFunction(RUNNER->LookupRoot(selectCallbackId), 1, flowFilesArray);
 
     RUNNER->ReleaseRoot(selectCallbackId);
     delete currentDialog;

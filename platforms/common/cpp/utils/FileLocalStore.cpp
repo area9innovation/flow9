@@ -227,6 +227,7 @@ StackSlot FileLocalStore::getKeysList(RUNNER_ARGS)
     KeysVector keys = getKeysList();
     RUNNER_DefSlots1(list);
     list = RUNNER->AllocateArray(keys.size());
+    RUNNER_CheckError();
     for (KeysVector::iterator it = keys.begin(); it != keys.end(); it++)
         RUNNER->SetArraySlot(list, it - keys.begin(), RUNNER->AllocateString(parseUtf8(*it)));
     

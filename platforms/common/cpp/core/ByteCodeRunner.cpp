@@ -1357,7 +1357,7 @@ void ByteCodeRunner::InvalidateFileCache(std::string filename)
 #endif
 }
 
-StackSlot ByteCodeRunner::AllocateUninitializedArray(unsigned len)
+StackSlot ByteCodeRunner::AllocateUninitializedArray(uint64_t len)
 {
     assert(len > 0);
 
@@ -1385,6 +1385,7 @@ StackSlot ByteCodeRunner::AllocateRef(const StackSlot &value) {
     unsigned id = NextRefId++;
 
     FlowPtr buf = Allocate(STACK_SLOT_SIZE + 4); // ALLOC
+    if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
     Memory.SetInt32(buf, id & 0xffffu);
 
     SetMemorySlot(buf+4, 0, value);
@@ -1399,7 +1400,7 @@ StackSlot ByteCodeRunner::AllocateRef(const StackSlot &value) {
     return rv;
 }
 
-StackSlot ByteCodeRunner::AllocateArray(int length, StackSlot *data) { // data must be immovable
+StackSlot ByteCodeRunner::AllocateArray(int64_t length, StackSlot *data) { // data must be immovable
     if (length <= 0)
         return StackSlot::MakeEmptyArray();
 

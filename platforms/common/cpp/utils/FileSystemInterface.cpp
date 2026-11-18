@@ -231,6 +231,7 @@ StackSlot FileSystemInterface::readDirectory(RUNNER_ARGS)
 #endif
     RUNNER_DefSlotAlias(result, name_str);
     result = RUNNER->AllocateArray(items.size());
+    RUNNER_CheckError();
 
     for (size_t i = 0; i < items.size(); i++)
         RUNNER->SetArraySlot(result, i, RUNNER->AllocateString(parseUtf8(items[i])));
@@ -439,4 +440,3 @@ void FileSystemInterface::doFileRead(const StackSlot &file, std::string readAs, 
 
     flowFile->close();
 }
-

@@ -136,6 +136,30 @@ static void testGrowth(unsigned initial, unsigned cap, unsigned young, unsigned 
     runner.ReleaseRoot(text);
 }
 
+static StackSlot generateItem(ByteCodeRunner *runner, StackSlot *args, void *data) {
+    require(!runner->IsErrorReported(), "no callback after an allocation error");
+    ++*static_cast<int *>(data);
+    return args[0];
+}
+
+static void testGenerate() {
+    MIN_HEAP_SIZE = MAX_HEAP_SIZE = 4 * 1024 * 1024;
+    EPHEMERAL_HEAP_SIZE = 1024 * 1024;
+    ByteCodeRunner runner;
+    runner.Init("valid.flowbc");
+    int calls = 0;
+    StackSlot args[] = {StackSlot::MakeInt(-1), StackSlot::MakeInt(2),
+                        runner.AllocateNativeClosure(generateItem, "item", 1, &calls, 1, StackSlot::MakeVoid())};
+    StackSlot arr = ByteCodeRunner::generate(&runner, args);
+    require(calls == 3 && runner.GetArraySize(arr) == 3 && runner.GetArraySlot(arr, 2).GetInt() == 1, "generate an ordinary range");
+    std::ostringstream errors;
+    runner.flow_err.rdbuf(errors.rdbuf());
+    args[1] = StackSlot::MakeInt(160000); // Ordinary range, but exceeds this runner's old generation.
+    require(ByteCodeRunner::generate(&runner, args).IsVoid() && runner.IsErrorReported() && calls == 3,
+            "generate propagates allocation failure before invoking the callback");
+    runner.flow_err.rdbuf(std::cerr.rdbuf());
+}
+
 static void testRunner() {
     require(FlowSlotsFit(3, 4, 28) && !FlowSlotsFit(3, 4, 27), "slot count includes header bytes");
     require(FlowSlotsFit((INT_MAX - 8u) / STACK_SLOT_SIZE, 8) &&
@@ -190,5 +214,6 @@ int main() {
     testRunner();
     testGrowth(256, 384, 128, 262144);
     testGrowth(8, 40, 2, 2 * 1024 * 1024);
+    testGenerate();
     puts("Runtime memory tests passed");
 }

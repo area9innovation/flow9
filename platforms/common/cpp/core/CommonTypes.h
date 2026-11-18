@@ -14,7 +14,7 @@
 #define STACK_SLOT_SIZE 8
 
 // Keep object sizes (including their headers) representable by GC's byte counts.
-inline bool FlowSlotsFit(unsigned count, unsigned header_bytes, unsigned byte_limit = INT_MAX) {
+inline bool FlowSlotsFit(uint64_t count, unsigned header_bytes, unsigned byte_limit = INT_MAX) {
     return header_bytes <= byte_limit && count <= (byte_limit - header_bytes) / STACK_SLOT_SIZE;
 }
 

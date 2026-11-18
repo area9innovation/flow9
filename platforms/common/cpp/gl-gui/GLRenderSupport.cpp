@@ -1818,6 +1818,7 @@ StackSlot GLRenderSupport::makeCamera(RUNNER_ARGS)
 
     int ncamFps = round(camFps.GetDouble());
     ret_arr = RUNNER->AllocateArray(2);
+    RUNNER_CheckError();
 
     GLCamera *cam = new GLCamera(this, ivec2(vidWidth.GetInt(), vidHeight.GetInt()), camID.GetInt(), camWidth.GetInt(), camHeight.GetInt(), ncamFps, recordMode.GetInt(), cbOnReadyForRecording, cbOnFailed);
 
