@@ -2643,13 +2643,12 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
         case CWString:
             {
                 const uint8_t len = static_cast<uint8_t>(Code.ReadByte());
-                const FlowPtr start = Code.GetPosition();
-                Code.GetWideBytes(len);
                 if (len)
                 {
                     StackSlot str;
-                    *AllocateStringRef(&str, len) = start;
+                    *AllocateStringRef(&str, len) = Code.GetPosition();
                     Push(str);
+                    Code.GetWideBytes(len);
                 }
                 else
                 {
