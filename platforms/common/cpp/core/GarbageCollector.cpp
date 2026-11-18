@@ -933,12 +933,15 @@ void GarbageCollector::Enumerate(const StackSlot &value)
         {
             FlowPtr ptr = value.slot_private.PtrValue;
 
+            // The slot's type ID is distinct from the compact object's layout ID.
+            if (unlikely(unsigned(value.GetStructId()) >= NumStructDefs))
+                abort();
+
             if (IsHeapPtr(ptr))
             {
 #ifdef FLOW_COMPACT_STRUCTS
                 EnumerateStruct(ptr);
 #else
-                CheckStructId(value.GetStructId());
                 EnumerateArray(ptr, StructSizes[value.GetStructId()]);
 #endif
             }
