@@ -3073,14 +3073,13 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             {
                 int n = Code.ReadInt31();
                 int offset = Code.ReadInt31();
-                FlowPtr target = Code.GetPosition() + offset;
 
                 if (unlikely(unsigned(n) > UINT16_MAX || !HasOperands(unsigned(n)))) {
                     StackError(DatastackFull, false);
                     break;
                 }
 
-                StackSlot clos = AllocateUninitializedClosure(n, target); // ALLOC
+                StackSlot clos = AllocateUninitializedClosure(n, Code.GetPosition() + offset); // ALLOC
                 memcpy(GetClosureWritePtr(clos, n), DataStack.pop_ptr(n), n * STACK_SLOT_SIZE);
                 Push(clos);
                 break;
