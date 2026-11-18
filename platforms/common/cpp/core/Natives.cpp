@@ -15,6 +15,7 @@
 #include <errno.h>
 
 #include "RunnerMacros.h"
+#include "StringRange.h"
 
 #include <algorithm>
 #include <sstream>
@@ -606,9 +607,7 @@ int ByteCodeRunner::strRangeIndexOf(const unicode_char *pstr, const unicode_char
 
     if (l2 == 0) {
         return 0;
-	} else if (!pstr) {
-		return -1;
-    } else if (l2 > end - start) {
+    } else if (!pstr || !stringRangeFits(start, end, l2)) {
         return -1;
     } else if (l2 == 1) {
         unicode_char key = *psub;
@@ -649,20 +648,23 @@ StackSlot ByteCodeRunner::strContainsAt(RUNNER_ARGS)
     RUNNER_CheckTag2(TString, str, sub);
     RUNNER_CheckTag1(TInt, pos);
 
-    unsigned ppos = pos.GetInt();
-
-    unsigned lstr, lsub;
-    const unicode_char *pstr = RUNNER->GetStringPtrSize(str, &lstr);
-    const unicode_char *psub = RUNNER->GetStringPtrSize(sub, &lsub);
-
-    if (ppos + lsub > lstr) {
+    const int ppos = pos.GetInt();
+    if (ppos < 0) {
         return StackSlot::MakeBool(false);
     }
 
-    const unicode_char *pstrpos = pstr + ppos;
-    unsigned size               = lsub * FLOW_CHAR_SIZE;
+    const unsigned lstr = RUNNER->GetStringSize(str);
+    const unsigned lsub = RUNNER->GetStringSize(sub);
+    if (!stringRangeFits(unsigned(ppos), lstr, lsub)) {
+        return StackSlot::MakeBool(false);
+    }
+    if (lsub == 0) {
+        return StackSlot::MakeBool(true);
+    }
 
-    return StackSlot::MakeBool(memcmp(pstrpos, psub, size) == 0);
+    const unicode_char *pstrpos = RUNNER->GetStringPtr(str) + ppos;
+    const unicode_char *psub = RUNNER->GetStringPtr(sub);
+    return StackSlot::MakeBool(memcmp(pstrpos, psub, lsub * FLOW_CHAR_SIZE) == 0);
 }
 
 StackSlot ByteCodeRunner::strRangeIndexOf(RUNNER_ARGS)

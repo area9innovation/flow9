@@ -16,5 +16,9 @@ trap 'rm -rf "$WORK_DIR"' EXIT
     "$CPP_DIR/core/Utf8.cpp" "$CPP_DIR/font/TextFont.cpp" "$SCRIPT_DIR/utf8_test.cpp" \
     -o "$WORK_DIR/utf8_test"
 
+"${CXX:-g++}" -std=c++11 -g -O1 -Wall -fsanitize=address,undefined \
+    -I"$CPP_DIR" "$SCRIPT_DIR/string_range_test.cpp" -o "$WORK_DIR/string_range_test"
+
 cd "$WORK_DIR"
 ./utf8_test
+./string_range_test
