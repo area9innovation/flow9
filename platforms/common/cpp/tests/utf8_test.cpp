@@ -10,6 +10,7 @@
 #ifndef _WIN32
 #include <cstdlib>
 #include <fcntl.h>
+#include <sys/stat.h>
 #endif
 #include <string>
 #include <vector>
@@ -153,8 +154,24 @@ static void testTemporaryFile() {
         fail("could not remove temporary file by name");
 
     file = MakeTemporaryFile();
-    if (!file || fclose(file) != 0)
-        fail("could not create and close unnamed temporary stream");
+    if (!file) {
+        fail("could not create unnamed temporary stream");
+        return;
+    }
+    struct stat st;
+    if (fstat(fileno(file), &st) != 0)
+        fail("could not stat unnamed temporary stream");
+    else if (st.st_nlink != 0)
+        fail("unnamed temporary file should already be unlinked on return");
+
+    if (fwrite(bytes.data(), 1, bytes.size(), file) != bytes.size())
+        fail("could not write to unnamed temporary stream");
+    rewind(file);
+    std::vector<uint8_t> readback(bytes.size());
+    if (fread(readback.data(), 1, readback.size(), file) != readback.size() || readback != bytes)
+        fail("could not read back data from unnamed temporary stream");
+    if (fclose(file) != 0)
+        fail("could not close unnamed temporary stream");
 }
 #endif
 
