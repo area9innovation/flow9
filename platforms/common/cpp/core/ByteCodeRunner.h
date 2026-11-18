@@ -104,7 +104,7 @@ public:
     bool getInterval(FlowPtr point, range_type *output) const;
     bool listIntervals(FlowPtr start, FlowPtr end, std::vector<range_type> *output) const;
 
-    int getTotalSize(int align = 1);
+    int64_t getTotalSize(int align = 1);
 
     void addInterval(FlowPtr start, FlowPtr end);
 };

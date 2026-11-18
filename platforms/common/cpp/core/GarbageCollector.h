@@ -72,9 +72,10 @@ class GarbageCollector : private GarbageCollectorFnCallback
     bool inEnumPhase, inFastGC;
 
     // Statistics
-    int NumRefs, NumSlots, NumClosures, NumLongStrings, NumObjects;
+    int NumRefs, NumClosures, NumLongStrings, NumObjects;
+    int64_t NumSlots;
 #ifdef FLOW_COMPACT_STRUCTS
-    int NumStructBytes;
+    int64_t NumStructBytes;
 #endif
 
     // GC tag tracking
@@ -142,7 +143,7 @@ private:
     void NextTag();
 
     int64_t ComputeLiveBytes();
-    bool DoubleHeap();
+    void GrowHeap(unsigned size);
 
     void UpdateRunnerHeap();
 

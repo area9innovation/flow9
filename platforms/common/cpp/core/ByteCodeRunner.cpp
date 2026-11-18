@@ -373,11 +373,12 @@ void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_leng
     else
         HeapStart = FlowPtrAlignUp(HeapStart, 4);
 
-    HeapEnd = HeapStart + MIN_HEAP_SIZE; // The highest address
+    const unsigned initial_heap = std::min(MIN_HEAP_SIZE, MAX_HEAP_SIZE);
+    HeapEnd = MakeFlowPtr(FlowPtrToInt(HeapStart) + initial_heap);
 
 #ifdef FLOW_MMAP_HEAP
     MapStringPtr = MakeFlowPtr(align_down(MAX_MEMORY_SIZE, MemoryArea::page_size()));
-    MapAreaBase = HeapStart + MAX_HEAP_SIZE;
+    MapAreaBase = FlowPtrAlignUp(MakeFlowPtr(FlowPtrToInt(HeapStart) + MAX_HEAP_SIZE), Memory.PageSize());
 #endif
 
     Memory.SetSize(FlowPtrToInt(HeapEnd));
@@ -392,7 +393,8 @@ void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_leng
 
     NativeReturnInsn = getLastCodeAddress() - 1;
 
-    UpdateHeapLimits(true);
+    // A first growth smaller than a doubling can copy safely from the low half.
+    UpdateHeapLimits(initial_heap <= MAX_HEAP_SIZE / 2 || initial_heap == MAX_HEAP_SIZE);
     RefWriteMask.clear();
     SlotWriteSet.clear();
 #ifdef FLOW_COMPACT_STRUCTS
@@ -633,7 +635,7 @@ void ByteCodeRunner::SetExtendedDebugInfo(ExtendedDebugInfo *dinfo)
 
 HeapLimits ByteCodeRunner::GetHeapLimits(bool high)
 {
-    unsigned size = HeapEnd - HeapStart;
+    unsigned size = FlowPtrToInt(HeapEnd) - FlowPtrToInt(HeapStart);
     FlowPtr m = HeapStart + size / 2;
     HeapLimits ret;
     ret.Start = high ? HeapEnd : m;

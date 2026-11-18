@@ -108,6 +108,34 @@ static void testDataFiles(ByteCodeRunner &runner) {
     }
 }
 
+static unsigned heapSize(ByteCodeRunner &runner) {
+    return FlowPtrToInt(runner.GetHeapLimits(true).Start) - FlowPtrToInt(runner.GetHeapLimits(false).Bound);
+}
+
+static void testGrowth(unsigned initial, unsigned cap, unsigned young, unsigned count) {
+    const unsigned mib = 1024 * 1024;
+    MIN_HEAP_SIZE = initial * mib;
+    MAX_HEAP_SIZE = cap * mib;
+    EPHEMERAL_HEAP_SIZE = young * mib;
+    ByteCodeRunner runner;
+    runner.Init("valid.flowbc");
+    require(!runner.IsErrorReported() && heapSize(runner) == MIN_HEAP_SIZE, "start at configured minimum");
+    int text = runner.RegisterRoot(runner.AllocateString("root"));
+    StackSlot arr = runner.AllocateArray(count);
+    require(!runner.IsErrorReported() && runner.GetArraySize(arr) == count, "allocate beyond the initial old generation");
+    require(heapSize(runner) == MAX_HEAP_SIZE, "use the final semispace within the cap");
+    runner.SetArraySlot(arr, count - 1, runner.LookupRoot(text));
+    int root = runner.RegisterRoot(arr);
+    for (int i = 0; i < 2; ++i) {
+        runner.ForceGC(0, true);
+        arr = runner.LookupRoot(root);
+        require(!runner.IsErrorReported() && heapSize(runner) == MAX_HEAP_SIZE &&
+                runner.GetString(runner.GetArraySlot(arr, count - 1)) == parseUtf8("root"), "live data survives both flips");
+    }
+    runner.ReleaseRoot(root);
+    runner.ReleaseRoot(text);
+}
+
 static void testRunner() {
     require(FlowSlotsFit(3, 4, 28) && !FlowSlotsFit(3, 4, 27), "slot count includes header bytes");
     require(FlowSlotsFit((INT_MAX - 8u) / STACK_SLOT_SIZE, 8) &&
@@ -160,5 +188,7 @@ static void testRunner() {
 int main() {
     testMemory();
     testRunner();
+    testGrowth(256, 384, 128, 262144);
+    testGrowth(8, 40, 2, 2 * 1024 * 1024);
     puts("Runtime memory tests passed");
 }

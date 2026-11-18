@@ -1,4 +1,5 @@
 #include "core/ByteCodeRunner.h"
+#include "HeapSize.h"
 
 #include "qt-backend/DatabaseSupport.h"
 #include "qt-backend/QtTimerSupport.h"
@@ -400,10 +401,10 @@ int main(int argc, char *argv[])
            screen_h = max(200, atoi(argv[3]));
            shift_args(argc, argv, 3);
         } else if (!strcmp(argv[1], "--ephemeral-heap")) {
-            EPHEMERAL_HEAP_SIZE = atoi(argv[2]) * 1048576;
+            EPHEMERAL_HEAP_SIZE = heapSizeInBytes(QString::fromLatin1(argv[2]));
             shift_args(argc, argv, 2);
         } else if (!strcmp(argv[1], "--max-ephemeral-alloc")) {
-            MAX_EPHEMERAL_ALLOC = atoi(argv[2]) * 1048576;
+            MAX_EPHEMERAL_ALLOC = heapSizeInBytes(QString::fromLatin1(argv[2]));
             shift_args(argc, argv, 2);
         } else if (!strcmp(argv[1], "--no-qglfb")) {
             // GUI cannot work without qglfb now
@@ -417,10 +418,10 @@ int main(int argc, char *argv[])
             shift_args(argc, argv, 1);
 #endif
         } else if (!strcmp(argv[1], "--max-heap")) {
-            MAX_HEAP_SIZE = atoi(argv[2]) * 1048576;
+            MAX_HEAP_SIZE = heapSizeInBytes(QString::fromLatin1(argv[2]));
             shift_args(argc, argv, 2);
         } else if (!strcmp(argv[1], "--min-heap")) {
-            MIN_HEAP_SIZE = atoi(argv[2]) * 1048576;
+            MIN_HEAP_SIZE = heapSizeInBytes(QString::fromLatin1(argv[2]));
             shift_args(argc, argv, 2);
         } else if (!strcmp(argv[1], "--use_wtf8")) {
             setUtf8StyleGlobalFlag(false);

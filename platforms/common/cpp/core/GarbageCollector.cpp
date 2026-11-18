@@ -127,9 +127,9 @@ bool AddrIntervalSet::listIntervals(FlowPtr start, FlowPtr end, std::vector<rang
     return !output->empty();
 }
 
-int AddrIntervalSet::getTotalSize(int align)
+int64_t AddrIntervalSet::getTotalSize(int align)
 {
-    int size = 0;
+    int64_t size = 0;
 
     T_bounds::const_iterator icur = bounds.begin();
 
@@ -137,7 +137,8 @@ int AddrIntervalSet::getTotalSize(int align)
     {
         FlowPtr start = icur->first;
         ++icur;
-        size += (icur->first - start + align - 1) & ~(align - 1);
+        int64_t span = int64_t(FlowPtrToInt(icur->first)) - FlowPtrToInt(start);
+        size += (span + align - 1) & ~int64_t(align - 1);
         ++icur;
     }
 
@@ -218,7 +219,7 @@ GarbageCollector::GarbageCollector(ByteCodeRunner *rnr)
  */
 int64_t GarbageCollector::ComputeLiveBytes()
 {
-    int strbytes = StringRanges.getTotalSize(4);
+    int64_t strbytes = StringRanges.getTotalSize(4);
     int64_t live_bytes = int64_t(NumRefs) * sizeof(FlowHeapRef) + int64_t(NumSlots) * STACK_SLOT_SIZE
         + int64_t(NumLongStrings) * sizeof(FlowStringRef) + int64_t(NumObjects) * 4 + int64_t(NumClosures) * 4 + strbytes;
 
@@ -245,7 +246,8 @@ int64_t GarbageCollector::ComputeLiveBytes()
  */
 int GarbageCollector::ComputeNativeBudget()
 {
-    return 1000 + (NumRefs + NumSlots + NumLongStrings + NumObjects) * 100 /*per mb*/ / 88000 + NativeValuesAlive.size();
+    int64_t budget = 1000 + (NumRefs + NumSlots + NumLongStrings + NumObjects) * 100 /*per mb*/ / 88000 + NativeValuesAlive.size();
+    return int(std::min<int64_t>(budget, INT_MAX));
 }
 
 /*
@@ -281,7 +283,7 @@ bool GarbageCollector::CollectFast()
 
     // Check if enough size to do fast gc
     int64_t live_bytes = ComputeLiveBytes();
-    if (live_bytes >= int(hp_big_pos - hp_ref_end))
+    if (live_bytes > FlowPtrToInt(hp_big_pos) - FlowPtrToInt(hp_ref_end))
         return false;
 
     Runner->DataStack.readonly(Runner->NumFrozenDataStack, false);
@@ -313,36 +315,23 @@ bool GarbageCollector::CollectFast()
 }
 
 /*
- * Double the heap if there is still space to do it.
+ * Install a larger heap with the high semispace as the copy destination.
  */
-bool GarbageCollector::DoubleHeap()
+void GarbageCollector::GrowHeap(unsigned size)
 {
-    unsigned size = Runner->HeapEnd - Runner->HeapStart;
-    if (size == 0 || size > MAX_HEAP_SIZE / 2)
-        return false;
-
 #ifdef DEBUG_FLOW
-    Runner->flow_err << "Doubling flow heap to " << size*2 << " bytes." << endl;
+    Runner->flow_err << "Growing flow heap to " << size << " bytes." << endl;
 #endif
 
-    // Double the heap area
-    Runner->HeapEnd = Runner->HeapStart + size*2;
+    Runner->HeapEnd = MakeFlowPtr(FlowPtrToInt(Runner->HeapStart) + size);
     Memory->SetSize(FlowPtrToInt(Runner->HeapEnd));
-    //Runner->Code.Update();
-
-    // Adjust the heap limits. The current heap
-    // contents always end up in the low half.
-    Runner->highHeap = false;
-
-    // Reinitialize fields
     NewLimits = Runner->GetHeapLimits(true);
+    assert(OldLimits.Start <= NewLimits.Bound);
 
     hp_ref_end = NewLimits.Ephemeral;
     hp_big_pos = NewLimits.Start;
 
     MemoryBuffer = (char*)Memory->GetRawPointer(MakeFlowPtr(0), FlowPtrToInt(Runner->HeapEnd), true);
-
-    return true;
 }
 
 /*
@@ -379,18 +368,30 @@ bool GarbageCollector::Collect(unsigned ensure_space)
     ProcessFullRoots();
     FlushArrays();
 
-    // Check if need to double the heap
-    int64_t live_bytes = ComputeLiveBytes() + ensure_space;
-    int64_t heap_bytes = hp_big_pos - hp_ref_end;
-    int64_t ehlimit = heap_bytes - int64_t(EPHEMERAL_HEAP_SIZE)*3;
+    const int64_t needed = ComputeLiveBytes() + ((int64_t(ensure_space) + 3) & ~int64_t(3));
+    const int64_t available = FlowPtrToInt(hp_big_pos) - FlowPtrToInt(hp_ref_end);
+    if (needed > int64_t(MAX_HEAP_SIZE / 2) - EPHEMERAL_HEAP_SIZE)
+        return false;
 
-    if (live_bytes >= heap_bytes)
-    {
-        if (!DoubleHeap())
-            return false;
+    const unsigned size = FlowPtrToInt(Runner->HeapEnd) - FlowPtrToInt(Runner->HeapStart);
+    bool dest_high = !currentIsHigh;
+    if (size < MAX_HEAP_SIZE) {
+        uint64_t target = size;
+        if (needed >= std::max(available * 3 / 4, available - int64_t(EPHEMERAL_HEAP_SIZE) * 3)) {
+            do {
+                target *= 2;
+            } while (int64_t(target / 2) - EPHEMERAL_HEAP_SIZE < needed);
+        }
+        // Once copying into the high half, a later resize needs at least twice
+        // its size to leave the source intact. Take the final step now if a
+        // further doubling wouldn't fit. Such an initial heap starts low.
+        if (target > MAX_HEAP_SIZE / 2)
+            target = MAX_HEAP_SIZE;
+        if (target > size) {
+            GrowHeap(unsigned(target));
+            dest_high = true;
+        }
     }
-    else if (live_bytes >= std::max(heap_bytes*3/4, ehlimit))
-        DoubleHeap();
 
     // Move objects to the new half-heap
     Memory->CommitRange(NewLimits.Bound, NewLimits.Start);
@@ -413,7 +414,7 @@ bool GarbageCollector::Collect(unsigned ensure_space)
     Runner->DataStack.readonly(Runner->NumFrozenDataStack, true);
 
     // Flip the runner state
-    Runner->UpdateHeapLimits(!Runner->highHeap);
+    Runner->UpdateHeapLimits(dest_high);
     Runner->ResetRefMask(hp_ref_end, hp_big_pos);
     return true;
 }
@@ -554,8 +555,8 @@ void GarbageCollector::PrintStats(ostream &out, std::string fname, int FirstNewI
     }
 
     int heap_bytes = NewLimits.Start - NewLimits.Ephemeral - (hp_big_pos - hp_ref_end);
-    int strbytes = StringRanges.getTotalSize(4);
-    int known_bytes = NumRefs * sizeof(FlowHeapRef) + NumSlots * STACK_SLOT_SIZE + NumLongStrings * sizeof(FlowStringRef) + NumClosures * 4 + NumObjects * 4 + strbytes;
+    int64_t strbytes = StringRanges.getTotalSize(4);
+    int64_t known_bytes = NumRefs * sizeof(FlowHeapRef) + NumSlots * STACK_SLOT_SIZE + NumLongStrings * sizeof(FlowStringRef) + int64_t(NumClosures) * 4 + int64_t(NumObjects) * 4 + strbytes;
 
 #ifdef FLOW_COMPACT_STRUCTS
     known_bytes += NumStructBytes;
@@ -1071,10 +1072,6 @@ void GarbageCollector::EnumerateArray(FlowPtr ptr, unsigned len, bool closure)
 
     // Register the memory requirements
     NumObjects++;
-    if (unlikely(!FlowSlotsFit(len, 0, INT_MAX - NumSlots * STACK_SLOT_SIZE))) {
-        Runner->ReportError(GCFailure, "Invalid total slot count in garbage collector.");
-        abort();
-    }
     NumSlots += len;
     if (closure)
         NumClosures++;
