@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.FileNotFoundException;
 import java.net.*;
 import java.nio.charset.Charset;
+import java.nio.file.*;
 import java.nio.channels.Channels;
 import java.nio.channels.FileChannel;
 import java.nio.channels.ReadableByteChannel;
@@ -55,6 +56,19 @@ public class FlowFileSystem extends NativeHost {
 	public static boolean fileExists(String path) {
 		File file = new File(path);
 		return file.exists();
+	}
+	public static boolean canCopyLocal(String src, String folder, String dest) {
+		try {
+			Path source = Paths.get(src), target = Paths.get(dest);
+			if (!Files.notExists(target) && Files.isSameFile(source, target)) return false;
+			if (Files.isDirectory(source)) {
+				for (Path p = Paths.get(folder).toRealPath(); p != null; p = p.getParent())
+					if (Files.isSameFile(source, p)) return false;
+			}
+			return true;
+		} catch (IOException | InvalidPathException | SecurityException ex) {
+			return false;
+		}
 	}
 	public static boolean isDirectory(String path) {
 		File file = new File(path);

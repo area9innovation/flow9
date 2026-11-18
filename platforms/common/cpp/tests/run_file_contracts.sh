@@ -13,6 +13,12 @@ cp "$here/fixtures/legacy_copy.flowbc" "$work/legacy.bytecode"
 
 check_local() {
     mkdir -p out/blocked.dat tree/sub
+    mkdir -p alias-src/sub hardlink-dir
+    printf 'same entry' >alias-src/item
+    ln -s alias-src alias-parent
+    ln -s alias-parent/sub alias-child
+    ln alias-src/item hardlink-dir/item
+    ln -s out alias-out
     printf 'previous' >out/odd.dat
     chmod 0600 out/odd.dat
     printf 'previous' >out/empty.dat
@@ -27,6 +33,9 @@ check_local() {
     "$@"
     cmp odd.dat out/odd.dat && cmp empty.dat out/empty.dat && cmp expected out/large.dat || return 1
     cmp odd.dat out/tree/sub/odd.dat
+    [[ alias-src/item -ef hardlink-dir/item && $(cat alias-src/item) == 'same entry' ]]
+    cmp alias-src/item out/item
+    [[ -z $(ls -A alias-src/sub) && -z $(find . -name '.flowcopy*' -print -quit) ]]
     [[ ! -e large.dat && $(cat blocked.dat) == 'keep source' && $(cat out/blocked.dat/keep) == unchanged ]]
     [[ $(stat -c %a out/odd.dat) == 600 && $(stat -c %a out/empty.dat) == 644 && $(stat -c %a out/large.dat) == 640 ]]
 }

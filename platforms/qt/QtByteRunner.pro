@@ -5,6 +5,7 @@
 #-------------------------------------------------
 
 QT       += core
+CONFIG += c++17
 QMAKE_TARGET_BUNDLE_PREFIX = dk.area9
 
 CONFIG(no_gui) {
@@ -30,8 +31,6 @@ DEFINES += QT_NO_BEARERMANAGEMENT
 
 CONFIG(use_gui) {
     QT += gui opengl openglwidgets multimedia multimediawidgets
-
-    CONFIG += c++17
 
     QT += opengl
     QT += widgets gui

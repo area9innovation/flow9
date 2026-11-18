@@ -2,6 +2,7 @@
 #include "utils/flowfilestruct.h"
 
 #include <limits.h>
+#include <filesystem>
 #include "core/STLHelpers.h"
 #include "core/RunnerMacros.h"
 
@@ -27,6 +28,35 @@ QFileSystemInterface::QFileSystemInterface(ByteCodeRunner *owner, QObject *windo
 	Q_UNUSED(window)
 #endif
     mimeDatabase = new QMimeDatabase();
+}
+
+NativeFunction *QFileSystemInterface::MakeNativeFunction(const char *name, int num_args) {
+#undef NATIVE_NAME_PREFIX
+#define NATIVE_NAME_PREFIX "FlowFileSystem."
+    TRY_USE_NATIVE_METHOD(QFileSystemInterface, canCopyLocal, 3);
+    return FileSystemInterface::MakeNativeFunction(name, num_args);
+}
+
+StackSlot QFileSystemInterface::canCopyLocal(RUNNER_ARGS) {
+    RUNNER_PopArgs3(src, folder, dest);
+    RUNNER_CheckTag3(TString, src, folder, dest);
+    namespace fs = std::filesystem;
+    auto path = [&](const StackSlot &s) { return fs::u8path(encodeUtf8(RUNNER->GetString(s))); };
+    const auto source = path(src), target = path(dest);
+    std::error_code ec;
+    if (fs::exists(target, ec) && fs::equivalent(source, target, ec)) return StackSlot::MakeBool(false);
+    if (ec) return StackSlot::MakeBool(false);
+    if (fs::is_directory(source, ec)) {
+        // Resolve the existing folder, not the possibly absent target. Compare
+        // identities all the way to the root (also on case-insensitive volumes).
+        auto dir = fs::canonical(path(folder), ec);
+        while (!ec) {
+            if (fs::equivalent(source, dir, ec)) return StackSlot::MakeBool(false);
+            if (dir == dir.root_path()) break;
+            dir = dir.parent_path();
+        }
+    }
+    return StackSlot::MakeBool(!ec);
 }
 
 char* QFileSystemInterface::doResolveRelativePath(std::string &filename, char* buffer) {
