@@ -18,6 +18,6 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 
 cd "$ROOT"
 bin/flowc1 platforms/common/cpp/tests/bytecode_validation.flow "bytecode=$WORK_DIR/valid.bytecode" debug=1
-"$WORK_DIR/bytecode_validation_test" "$WORK_DIR/valid.bytecode" > "$WORK_DIR/actual"
-printf 'true\nFlow ✓\n' > "$WORK_DIR/expected"
+"$WORK_DIR/bytecode_validation_test" "$WORK_DIR/valid.bytecode" "$WORK_DIR/coverage" > "$WORK_DIR/actual"
+for run in 1 2 3 4; do printf 'true\nFlow ✓\n'; done > "$WORK_DIR/expected"
 diff -u "$WORK_DIR/expected" "$WORK_DIR/actual"

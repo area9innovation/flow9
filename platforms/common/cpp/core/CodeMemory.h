@@ -32,8 +32,8 @@ union PackedVals {
 class CodeMemory
 {
 private:
-    char *Buffer;
-    FlowPtr Position, Start, End;
+    char *Begin, *Cursor, *Limit;
+    FlowPtr Start;
    
     PackedVals *GetItemPtr(int size) {
         return reinterpret_cast<PackedVals*>(GetBytes(size));
@@ -52,19 +52,17 @@ public:
     void SetBuffer(char *buffer, int start, int size);
 
     __INLINE_WRAP(void SetPosition(FlowPtr position)) {
-        if (position >= Start && position <= End)
-            Position = position;
+        unsigned offset = FlowPtrToInt(position) - FlowPtrToInt(Start);
+        if (offset <= unsigned(GetSize())) Cursor = Begin + offset;
     }
-    void ResetPosition()  { Position = Start; }
-    FlowPtr GetPosition() { return Position; }
-    int GetSize()         { return End - Start; }
-    FlowPtr GetLastAddr() { return End; }
+    void ResetPosition()        { Cursor = Begin; }
+    FlowPtr GetPosition() const { return Start + int(Cursor - Begin); }
+    int GetSize() const         { return int(Limit - Begin); }
+    FlowPtr GetLastAddr() const { return Start + GetSize(); }
 
-    bool Eof() { return Position >= End; }
+    bool Eof() const { return Cursor == Limit; }
     bool CanRead(int count, int width = 1) const {
-        // SetBuffer, SetPosition and GetBytes maintain Start <= Position <= End.
-        return count >= 0 && width > 0
-            && unsigned(count) <= (FlowPtrToInt(End) - FlowPtrToInt(Position)) / unsigned(width);
+        return count >= 0 && width > 0 && unsigned(count) <= unsigned(Limit - Cursor) / unsigned(width);
     }
 
     FlowPtr RelativeTarget(FlowPtr base, int offset) const;
@@ -123,17 +121,23 @@ public:
 
     char *GetBytes(int len) {
         // SetBuffer limits the range to INT_MAX, so a negative len fails too.
-        if (unlikely(unsigned(len) > unsigned(End - Position)))
-            throw DecodeError("Bytecode operand exceeds the available bytes");
-        char *bytes = (len || Buffer) ? Buffer + FlowPtrToInt(Position) : NULL;
-        Position += len;
+        if (unlikely(unsigned(len) > unsigned(Limit - Cursor))) OperandOutOfRange();
+        char *bytes = Cursor;
+        Cursor += len;
         return bytes;
     }
 
     bool ParseOpcode(FlowInstruction *out, bool reparse = false);
 
+    // For an executable image only, on a fresh reader excluding the runner's
+    // return sentinel. Validate static edges and reset embedded field caches.
+    void BuildInstructionIndex(std::vector<bool> &starts);
+
 private:
-    bool ParseOpcodeOperands(FlowInstruction *out);
+    [[noreturn]] static void OperandOutOfRange();
+    void DecodeFieldType(std::vector<FieldType> *type, char *is_mutable, std::string *structname);
+    template<bool indexing>
+    bool DecodeOperands(FlowInstruction &insn, std::vector<FlowPtr> *targets);
 };
 
 #endif

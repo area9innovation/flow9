@@ -255,10 +255,7 @@ private:
     friend class HeapWalker;
 
     void Reset(bool inDestructor);
-    void DoInit(const char *bytecode_buffer_or_fn, int bytecode_length, bool from_file, bool index_bytecode = false);
-    void IndexBytecode();
-    bool IsInstructionStart(FlowPtr address) const;
-    FlowPtr CheckedCodeTarget(FlowPtr address, bool callable = false);
+    void DoInit(const char *bytecode_buffer_or_fn, int bytecode_length, bool from_file);
 
     // Byterunner initialization flag
     bool initializationComplete;
@@ -314,13 +311,17 @@ private:
     unsigned                   LocalEnd; // Exclusive end of arguments and locals, below temporaries.
     TCallStack                 CallStack;
     std::vector<bool>          InstructionStarts;
+    bool PrepareInterpreter();
+    bool IsInstructionStart(FlowPtr address) const;
+    bool IsCallableAddress(FlowPtr address) const;
 
     bool HasOperands(unsigned count) const {
         return LocalEnd <= DataStack.size() && count <= DataStack.size() - LocalEnd;
     }
 
     bool HasLocal(unsigned index) const {
-        return LocalEnd <= DataStack.size() && FramePointer <= LocalEnd && index < LocalEnd - FramePointer;
+        // Calls and frame reservation maintain FramePointer <= LocalEnd.
+        return index < LocalEnd - FramePointer && LocalEnd <= DataStack.size();
     }
 
     unsigned short ClosureSlotCount(FlowPtr data) {
@@ -460,7 +461,6 @@ private:
 #undef STRUCT
 
     // For optimization of opcodes that access fields by name
-    std::vector<std::string> FieldRefNames;
     std::map<std::string,int> FieldRefIds;
 
     // Debugger data
@@ -491,6 +491,7 @@ private:
 #ifdef FLOW_INSTRUCTION_PROFILING
     bool ProfileCodeCoverage;
     std::vector<char> CoverageCodeBackup;
+    void SetCoverageOpcode(FlowPtr address, OpCode opcode);
 
     unsigned ProfileMemStep, ProfileICStep;
 
@@ -556,9 +557,9 @@ private:
     _INLINE_FORCE(void DoDouble2Int());
     _INLINE_FORCE(void DoField(int i));
     _INLINE_FORCE(void DoSetMutable(int i));
-    int LookupFieldName(const StackSlot &struct_ref, char const * n, int length, short *idx, StructDef **pdef);
-    void DoFieldName(char const * n, int length, short *idx);
-    void DoSetMutableName(char const * n, int length, short *idx);
+    int LookupFieldName(const StackSlot &struct_ref, char const * n, int length, void *idx, StructDef **pdef);
+    void DoFieldName(char const * n, int length, void *idx);
+    void DoSetMutableName(char const * n, int length, void *idx);
 
 public:
     void DoPlus(StackSlot &inout, const StackSlot &in2);
@@ -584,6 +585,7 @@ public:
 
 private:
     bool is_raw_bytecode;
+    bool has_interpreter_code = false; // Excludes JIT and native constant buffers.
     std::string BytecodeFilename;
 
     std::string LastErrorDescr;

@@ -1,7 +1,11 @@
 #include "core/ByteCodeRunner.h"
+#include "core/NativeProgram.h"
 
 #include <array>
 #include <cstdlib>
+#include <fstream>
+#include <iterator>
+#include <memory>
 
 static void check(bool ok, const char *message)
 {
@@ -23,6 +27,33 @@ static void rejects(CodeMemory &code, F operation)
     }
     check(false, "Reader did not reject an invalid request");
 }
+
+#ifdef FLOW_DEBUGGER
+class BreakAtEntry : public FlowDebuggerBase {
+public:
+    int hits = 0;
+    explicit BreakAtEntry(ByteCodeRunner *runner) : FlowDebuggerBase(runner) { arm(); }
+    void arm() { SetBreakpoint(MakeFlowPtr(0), true); }
+    void onRunnerInit() override { FlowDebuggerBase::onRunnerInit(); arm(); }
+    void onBreakpointTrap(FlowPtr addr) override { check(addr == 0, "Entry breakpoint"); ++hits; }
+    void onInsnTrap(FlowPtr) override {}
+    void onCallTrap(FlowPtr, bool) override {}
+    void onReturnTrap(FlowPtr) override {}
+    void onAsyncInterrupt(FlowPtr) override {}
+    void onError(RuntimeError, FlowPtr) override { check(false, "Debugger reported a runner error"); }
+};
+#endif
+
+class ConstantProgram : public NativeProgram {
+public:
+    bool ran = false;
+    const char *getByteCode(int *length) override {
+        static const char literal[] = "compiled program constant";
+        *length = sizeof(literal);
+        return literal;
+    }
+    void onRunMain() override { ran = true; }
+};
 
 int main(int argc, char **argv)
 {
@@ -72,31 +103,63 @@ int main(int argc, char **argv)
     markers = code.ReadFieldType(&is_mutable, NULL);
     check(code.Eof() && !is_mutable && markers.size() == deep_type.size(), "Deep field type");
 
-    // A complete table of empty field names and their int type markers.
+    // Struct definitions have 32-bit counts and individually named fields.
     const int fields = 32769;
-    std::vector<char> table(4 + 5 * fields, 0);
-    memcpy(table.data(), &fields, sizeof(fields));
-    for (int i = 0; i < fields; ++i) table[8 + i*5] = FTInt;
-    code.SetBuffer(table.data(), 0, table.size());
-    check(code.ReadStructFieldCount() == fields, "Field count does not depend on cache width");
+    std::string record(1, CStructDef);
+    auto writeInt = [&](int n) { record.append(reinterpret_cast<const char*>(&n), sizeof(n)); };
+    auto writeName = [&](const std::string &name) { writeInt(name.size()); record += name; };
+    writeInt(0);
+    writeName("Wide");
+    writeInt(fields);
+    for (int i = 0; i < fields; ++i) {
+        writeName("f" + std::to_string(i));
+        if (i == fields-1) record.append(deep_type.data(), deep_type.size());
+        else record += char(FTInt);
+    }
+    code.SetBuffer(&record[0], 0, record.size());
+    std::vector<bool> starts;
+    code.BuildInstructionIndex(starts);
+    check(starts.front() && starts.back(), "Boundaries of a wide struct definition");
+    code.ResetPosition();
+    FlowInstruction def;
+    check(code.ParseOpcode(&def) && code.Eof() && def.IntValue2 == fields &&
+          def.fields[fields-1].name == "f32768" && def.fields[fields-1].type.size() == deep_type.size(),
+          "Large field tables and extended types do not depend on cache width");
 
     for (OpCode opcode : {CSwitch, CSimpleSwitch}) {
-        // One case and a default, both falling through to the next instruction.
-        const int table[] = {1, 0, 0, 0};
-        char bytes[1 + sizeof(table) + 1];
-        bytes[0] = opcode;
-        memcpy(bytes + 1, table, sizeof(table));
-        bytes[sizeof(bytes) - 1] = CLast;
-        code.SetBuffer(bytes, 0, sizeof(bytes));
+        // All arms fall through. Both the count and the case IDs exceed the
+        // narrowed reads historically used by this dispatch path.
+        record.assign(1, opcode);
+        writeInt(300);
+        writeInt(0);
+        for (int i = 0; i < 300; ++i) { writeInt(32768 + i); writeInt(0); }
+        record += char(CLast);
+        code.SetBuffer(&record[0], 0, record.size());
+        code.BuildInstructionIndex(starts);
+        code.ResetPosition();
         FlowInstruction sw;
-        check(code.ParseOpcode(&sw) && sw.IntValue == 1 && sw.cases[0].id == 0
-              && sw.cases[0].target == code.GetPosition() && code.ReadOpcode() == CLast && code.Eof(),
-              "Switch table with one complete entry");
+        check(code.ParseOpcode(&sw) && sw.IntValue == 300 && sw.cases[299].id == 33067
+              && sw.cases[299].target == code.GetPosition() && code.ReadOpcode() == CLast && code.Eof(),
+              "Full-width switch table");
     }
 
-    for (int i = 1; i < argc; ++i) {
-        ByteCodeRunner runner{std::string(argv[i])};
-        check(!runner.IsErrorReported(), "Compiler output did not pass bytecode validation");
+    check(argc == 3, "Expected compiler output and a coverage output path");
+    for (bool raw : {false, true}) {
+#ifdef FLOW_DEBUGGER
+        std::unique_ptr<BreakAtEntry> debugger; // Outlives the attached runner.
+#endif
+        ByteCodeRunner runner;
+        std::ifstream file(argv[1], std::ios::binary);
+        std::string image((std::istreambuf_iterator<char>(file)), {});
+        check(!image.empty(), "Empty compiler output");
+        if (raw) runner.Init(image.data(), image.size()); else runner.Init(std::string(argv[1]));
+#ifdef FLOW_DEBUGGER
+        // Install coverage before and after a breakpoint; both must see the
+        // original instruction and leave an executable image for reload.
+        if (raw) runner.BeginCoverageProfile(argv[2]);
+        debugger.reset(new BreakAtEntry(&runner));
+        if (!raw) runner.BeginCoverageProfile(argv[2]);
+#endif
         runner.RunMain();
         check(!runner.IsErrorReported(), "Compiler output did not run successfully");
 
@@ -106,5 +169,16 @@ int main(int argc, char **argv)
         check(runner.GetClosureSize(live) == 1, "Collection must preserve the exact capture count");
         check(runner.EvalFunction(live, 0).GetInt() == 42, "Retained capture after collection");
         runner.ReleaseRoot(root);
+
+        runner.ReloadBytecode();
+        runner.RunMain();
+        check(!runner.IsErrorReported(), "Reloaded compiler output did not run successfully");
+#ifdef FLOW_DEBUGGER
+        check(debugger->hits == 2, "Entry trap must fire in both images");
+#endif
+        ConstantProgram compiled;
+        runner.Init(&compiled);
+        runner.RunMain();
+        check(compiled.ran && !runner.IsErrorReported(), "Native constant buffer is not interpreter code");
     }
 }
