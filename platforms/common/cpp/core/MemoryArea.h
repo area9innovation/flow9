@@ -18,6 +18,9 @@ inline size_t align_down(size_t size, size_t page) {
     return (size & ~(page-1));
 }
 
+// Measure an open stream and rewind it for a subsequent read.
+int64_t ReadFileLength(FILE *file);
+
 class MemoryArea {
 protected:
     uint8_t *buf;

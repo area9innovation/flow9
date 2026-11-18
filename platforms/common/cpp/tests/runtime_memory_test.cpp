@@ -87,6 +87,27 @@ class TestProgram : public NativeProgram {
     }
 };
 
+static void testDataFiles(ByteCodeRunner &runner) {
+    require(runner.LoadFileAsString("absent.dat").IsVoid() && !runner.IsErrorReported(), "missing data has no value");
+    StackSlot empty = runner.LoadFileAsString("empty.dat");
+    require(empty.IsString() && !runner.GetStringSize(empty), "present empty data has a value");
+
+    for (size_t n : {size_t(3), size_t(MIN_MMAP_SIZE + 3)}) {
+        std::string bytes(n, 'x');
+        bytes.back() = 'z';
+        FILE *f = fopen("odd.dat", "wb");
+        require(f && fwrite(bytes.data(), 1, n, f) == n && !fclose(f), "write odd-length file");
+        StackSlot data = runner.LoadFileAsString("odd.dat", true);
+        require(data.IsString() && runner.GetStringSize(data) == (n + 1) / 2, "retain the final partial code unit");
+#ifdef FLOW_MMAP_HEAP
+        require(runner.IsMappedArea(runner.GetStringAddr(data)) == (n >= MIN_MMAP_SIZE), "exercise read and map paths");
+#endif
+        bytes.push_back('\0');
+        require(!memcmp(bytes.data(), runner.GetStringPtr(data), bytes.size()), "identical padding for read and map");
+        require(runner.LoadFileAsString("odd.dat").IsVoid(), "temporary input removed");
+    }
+}
+
 static void testRunner() {
     require(FlowSlotsFit(3, 4, 28) && !FlowSlotsFit(3, 4, 27), "slot count includes header bytes");
     require(FlowSlotsFit((INT_MAX - 8u) / STACK_SLOT_SIZE, 8) &&
@@ -109,6 +130,7 @@ static void testRunner() {
     require(!runner.IsErrorReported(), "run valid bytecode");
 
     runner.Init(&program);
+    testDataFiles(runner);
     StackSlot text = runner.AllocateString("flow9");
     StackSlot tail = text;
     require(runner.DoSubstring(&text, 0, 4) && runner.DoSubstring(&tail, 4, 1), "take adjacent slices");

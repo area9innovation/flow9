@@ -254,7 +254,8 @@ private:
     friend class HeapWalker;
 
     void Reset(bool inDestructor);
-    void DoInit(const char *bytecode_buffer_or_fn, int64_t length, bool from_file);
+    int PrepareBytecode(const char *filename, int64_t length, bool &mapped);
+    void DoInit(const char *bytecode_buffer_or_fn, int bytecode_length, bool from_file);
 
     // Byterunner initialization flag
     bool initializationComplete;

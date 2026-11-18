@@ -184,8 +184,8 @@ static void *MapFileToMemory(FILE *file, size_t size, bool writable)
     HANDLE hMapFile = CreateFileMapping(writable ? INVALID_HANDLE_VALUE : (HANDLE)_get_osfhandle(fd),
                                         NULL,
                                         writable ? PAGE_READWRITE : PAGE_READONLY,
-                                        0,
-                                        size,
+                                        DWORD(uint64_t(size) >> 32),
+                                        DWORD(size),
                                         NULL);
 
     if (hMapFile == NULL) {
@@ -405,6 +405,17 @@ bool StaticBuffer::map_file(FILE *file, size_t size, bool writable)
 }
 
 
+int64_t ReadFileLength(FILE *file)
+{
+#ifdef _WIN32
+    int64_t length = _fseeki64(file, 0, SEEK_END) == 0 ? _ftelli64(file) : -1;
+    return length >= 0 && _fseeki64(file, 0, SEEK_SET) == 0 ? length : -1;
+#else
+    int64_t length = fseeko(file, 0, SEEK_END) == 0 ? ftello(file) : -1;
+    return length >= 0 && fseeko(file, 0, SEEK_SET) == 0 ? length : -1;
+#endif
+}
+
 bool StaticBuffer::load_file(const std::string &fname, size_t size)
 {
     FILE *file = fopen(fname.c_str(), "rb");
@@ -415,9 +426,9 @@ bool StaticBuffer::load_file(const std::string &fname, size_t size)
 
     if (auto_size)
     {
-        long pos = fseek(file, 0, SEEK_END) == 0 ? ftell(file) : -1;
+        int64_t pos = ReadFileLength(file);
 
-        if (pos < 0 || fseek(file, 0, SEEK_SET) != 0) {
+        if (pos < 0 || uint64_t(pos) > SIZE_MAX) {
             fclose(file);
             return false;
         }

@@ -291,16 +291,60 @@ void ByteCodeRunner::ReloadBytecode()
     }
 }
 
-// Return a wide, signed length and require the stream to be positioned for reading.
-static int64_t ReadFileLength(FILE *file)
+// Prepare space for the code and CLast; load file input before installing any runner state.
+int ByteCodeRunner::PrepareBytecode(const char *filename, int64_t length, bool &mapped)
 {
-#ifdef _WIN32
-    int64_t length = _fseeki64(file, 0, SEEK_END) == 0 ? _ftelli64(file) : -1;
-    return length >= 0 && _fseeki64(file, 0, SEEK_SET) == 0 ? length : -1;
-#else
-    int64_t length = fseeko(file, 0, SEEK_END) == 0 ? ftello(file) : -1;
-    return length >= 0 && fseeko(file, 0, SEEK_SET) == 0 ? length : -1;
-#endif
+    auto fail = [&](const char *message, int error) {
+        // No executable bytecode is installed yet; don't disassemble an opcode.
+        LastError = InvalidArgument;
+        LastErrorDescr = message;
+        LastErrorInfo = filename ? filename : "";
+        if (error)
+            LastErrorInfo += std::string(": ") + strerror(error);
+        flow_err << LastErrorDescr << " " << LastErrorInfo << endl;
+        return 0;
+    };
+
+    auto close_file = [](FILE *f) { fclose(f); };
+    std::unique_ptr<FILE, decltype(close_file)> file(NULL, close_file);
+    if (filename)
+    {
+        file.reset(fopen(filename, "rb"));
+        if (!file)
+            return fail("Could not open bytecode file:", errno);
+        length = ReadFileLength(file.get());
+        if (length < 0)
+            return fail("Could not determine bytecode file size:", errno);
+    }
+
+    // Leave space for CLast, alignment, and the maximum heap before narrowing.
+    const uint64_t limit = align_down(MAX_MEMORY_SIZE, Memory.PageSize());
+    const uint64_t heap = MAX_HEAP_SIZE;
+    const unsigned initial_heap = std::min(MIN_HEAP_SIZE, MAX_HEAP_SIZE);
+    if (!initial_heap || initial_heap / 2 < EPHEMERAL_HEAP_SIZE ||
+        initial_heap % 8 || MAX_HEAP_SIZE % 8) {
+        return fail("Heap limits must allow two aligned semispaces:", 0);
+    }
+    if (length < 0 || length >= INT_MAX || heap > limit ||
+        uint64_t(length) + 1 > align_down(limit - heap, Memory.PageSize())) {
+        return fail("Bytecode size exceeds the runner limit:", 0);
+    }
+
+    const int bytecode_length = int(length) + 1;
+    mapped = false;
+    if (file && length > 0) {
+        Memory.SetSize(bytecode_length);
+        mapped = Memory.MapFile(MakeFlowPtr(0), length, file.get(), 0, true);
+        if (!mapped) {
+            char *p = Memory.GetRawPointer(MakeFlowPtr(0), length, true);
+            if (fread(p, 1, length, file.get()) != size_t(length)) {
+                Memory.SetSize(0);
+                return fail("Could not read complete bytecode file:", ferror(file.get()) ? errno : 0);
+            }
+        }
+    }
+
+    return bytecode_length;
 }
 
 /*
@@ -309,73 +353,18 @@ static int64_t ReadFileLength(FILE *file)
  * Compiled C++ and JIT also provide a dummy 'bytecode' buffer
  * in order to load string constants into the flow memory area.
  */
-void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int64_t length, bool from_file)
+void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_length, bool from_file)
 {
-    static StackSlot dummy_ss[2];
-    static FlowPtr dummy_fp[2];
-
-    if (sizeof(int) != 4 || sizeof(FlowPtr) != 4 || sizeof(StackSlot) != STACK_SLOT_SIZE ||
-        sizeof(dummy_fp) != 8 || sizeof(dummy_ss) != 2*STACK_SLOT_SIZE)
-    {
-        flow_err << "Platform violates data type size assumptions.\n";
-        abort();
-    }
-
+    static_assert(sizeof(int) == 4 && sizeof(FlowPtr) == 4 && sizeof(StackSlot) == STACK_SLOT_SIZE,
+                  "Platform violates data type size assumptions");
     Reset(false);
 
-    // Set up the different memory segments
     int CodePosition = 0;
     FlowPtr CodeStart = MakeFlowPtr(CodePosition);
-
-    auto fail = [&](const char *message, int error = 0) {
-        // No executable bytecode is installed yet; don't disassemble an opcode.
-        LastError = InvalidArgument;
-        LastErrorDescr = message;
-        LastErrorInfo = from_file ? bytecode_buffer_or_fn : "";
-        if (error)
-            LastErrorInfo += std::string(": ") + strerror(error);
-        flow_err << LastErrorDescr << " " << LastErrorInfo << endl;
-    };
-
-    auto close_file = [](FILE *f) { fclose(f); };
-    std::unique_ptr<FILE, decltype(close_file)> file(NULL, close_file);
-    if (from_file)
-    {
-        file.reset(fopen(bytecode_buffer_or_fn, "rb"));
-        if (!file) {
-            fail("Could not open bytecode file:", errno);
-            return;
-        }
-        length = ReadFileLength(file.get());
-        if (length < 0) {
-            fail("Could not determine bytecode file size:", errno);
-            return;
-        }
-    }
-
-    // Leave space for CLast, alignment, and the maximum heap before narrowing.
-    const uint64_t limit = align_down(MAX_MEMORY_SIZE, Memory.PageSize());
-    const uint64_t heap = std::max(MIN_HEAP_SIZE, MAX_HEAP_SIZE);
-    if (length < 0 || length >= INT_MAX || heap > limit ||
-        uint64_t(length) + 1 > align_down(limit - heap, Memory.PageSize())) {
-        fail("Bytecode size exceeds the runner limit:");
+    bool code_mapped;
+    bytecode_length = PrepareBytecode(from_file ? bytecode_buffer_or_fn : NULL, bytecode_length, code_mapped);
+    if (!bytecode_length)
         return;
-    }
-
-    const int bytecode_length = int(length) + 1;
-    bool code_mapped = false;
-    if (file && length > 0) {
-        Memory.SetSize(bytecode_length);
-        code_mapped = Memory.MapFile(CodeStart, length, file.get(), 0, true);
-        if (!code_mapped) {
-            char *p = Memory.GetRawPointer(CodeStart, length, true);
-            if (fread(p, 1, length, file.get()) != size_t(length)) {
-                Memory.SetSize(0);
-                fail("Could not read complete bytecode file:");
-                return;
-            }
-        }
-    }
 
     // Call stack: starts right after the code, aligned up to 4 bytes
     HeapStart = MakeFlowPtr(bytecode_length);
@@ -1322,17 +1311,18 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
 
             if (map_ptr >= MapAreaBase && Memory.MapFile(map_ptr, size, file))
             {
-                MappedAreaInfo::Ptr area(new MappedAreaInfo(map_ptr, bytes));
-                MappedAreas[map_ptr] = area;
-                MapStringPtr = map_ptr;
-
-                if (FlowPtr *ref = AllocateStringRef(&rv, length))
+                if (FlowPtr *ref = AllocateStringRef(&rv, length)) {
                     *ref = map_ptr;
+                    MappedAreaInfo::Ptr area(new MappedAreaInfo(map_ptr, bytes));
+                    MappedAreas[map_ptr] = area;
+                    MapStringPtr = map_ptr;
 
-                if (!temporary && !rv.IsVoid())
-                {
-                    MappedFiles[filename] = rv;
-                    area->filename = filename;
+                    if (!temporary) {
+                        MappedFiles[filename] = rv;
+                        area->filename = filename;
+                    }
+                } else {
+                    Memory.DecommitRange(map_ptr, MapStringPtr);
                 }
             }
         }
@@ -1343,8 +1333,12 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
             StackSlot out;
             unicode_char *p = AllocateStringBuffer(&out, length);
 
-            if (p && fread(p, FLOW_CHAR_SIZE, length, file) == length)
-                rv = out;
+            if (p) {
+                // mmap zero-fills the partial page at EOF; match its trailing code unit.
+                p[length - 1] = 0;
+                if (fread(p, 1, size_t(size), file) == size_t(size))
+                    rv = out;
+            }
         }
     }
 
