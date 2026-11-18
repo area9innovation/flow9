@@ -12,7 +12,7 @@
 #endif
 
 inline size_t align_up(size_t size, size_t page) {
-    return ((size+page-1) & ~(page-1));
+    return ((size+(page-1)) & ~(page-1));
 }
 inline size_t align_down(size_t size, size_t page) {
     return (size & ~(page-1));
@@ -22,6 +22,8 @@ class MemoryArea {
 protected:
     uint8_t *buf;
     size_t length;
+
+    void check_range(size_t start, size_t end) const;
 
     friend class FlowJitProgram;
 
@@ -42,6 +44,7 @@ public:
     void readonly(size_t start, size_t end, bool enable = true);
 
     bool map_file(size_t off, size_t length, std::string filename, size_t offset, bool writable);
+    bool map_file(size_t off, size_t length, FILE *file, size_t offset, bool writable);
 
     static size_t page_size();
     static size_t alloc_step_size();

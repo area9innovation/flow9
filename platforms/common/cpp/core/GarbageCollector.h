@@ -110,6 +110,8 @@ class GarbageCollector : private GarbageCollectorFnCallback
     T_LiveTable NativeFunctionsAlive;
 
     void ReportTagError(int tag);
+    void CheckStructId(unsigned id);
+    unsigned CheckArrayBytes(FlowPtr ptr, unsigned count, bool closure);
 
 public:
     GarbageCollector(ByteCodeRunner *rnr);
@@ -139,7 +141,7 @@ private:
     void EnumPhaseTag(T_GC_Tag tag);
     void NextTag();
 
-    int ComputeLiveBytes();
+    int64_t ComputeLiveBytes();
     bool DoubleHeap();
 
     void UpdateRunnerHeap();
@@ -211,7 +213,8 @@ private:
     FlowPtr AllocFailure(int bytes);
 
     FlowPtr Allocate(int bytes) {
-        if (unlikely(bytes < 0))
+        if (unlikely(bytes < 0 || hp_big_pos < hp_ref_end ||
+                     unsigned(bytes) > FlowPtrToInt(hp_big_pos) - FlowPtrToInt(hp_ref_end)))
             return AllocFailure(bytes);
         hp_big_pos = FlowPtrAlignDown(hp_big_pos - bytes, 4);
         if (unlikely(hp_big_pos < hp_ref_end))

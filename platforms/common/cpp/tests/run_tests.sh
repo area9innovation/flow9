@@ -16,5 +16,13 @@ trap 'rm -rf "$WORK_DIR"' EXIT
     "$CPP_DIR/core/Utf8.cpp" "$CPP_DIR/font/TextFont.cpp" "$SCRIPT_DIR/utf8_test.cpp" \
     -o "$WORK_DIR/utf8_test"
 
+# Verify runtime guards with assertions disabled, like the release runner.
+"${CXX:-g++}" -std=c++11 -g -O1 -DNDEBUG -fsanitize=address,undefined -include cstring \
+    -I"$CPP_DIR" -I"$CPP_DIR/core" -I"$CPP_DIR/include" -pthread \
+    "$CPP_DIR"/core/{ByteCodeRunner,ByteMemory,CodeMemory,GarbageCollector,HeapWalker,MemoryArea,Natives,Utf8}.cpp \
+    "$CPP_DIR/utils/md5.cpp" "$SCRIPT_DIR/runtime_memory_test.cpp" \
+    -o "$WORK_DIR/runtime_memory_test"
+
 cd "$WORK_DIR"
 ./utf8_test
+./runtime_memory_test

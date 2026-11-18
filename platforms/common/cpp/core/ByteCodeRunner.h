@@ -254,7 +254,7 @@ private:
     friend class HeapWalker;
 
     void Reset(bool inDestructor);
-    void DoInit(const char *bytecode_buffer_or_fn, int bytecode_length, bool from_file);
+    void DoInit(const char *bytecode_buffer_or_fn, int64_t length, bool from_file);
 
     // Byterunner initialization flag
     bool initializationComplete;
@@ -719,7 +719,7 @@ public:
     }
 #endif
 
-    StackSlot AllocateString(const unicode_char *str, int length);
+    StackSlot AllocateString(const unicode_char *str, size_t length);
     StackSlot AllocateString(const unicode_string &str) {
         return AllocateString(str.data(), str.size());
     }
@@ -816,19 +816,43 @@ public:
         return GetSplitAuxValue(ref);
     }
 
+    bool CheckSlotCopy(unsigned count) {
+        if (likely(FlowSlotsFit(count, 0))) return true;
+        ReportError(InvalidArgument, "Slot copy is too large.");
+        return false;
+    }
+    bool OffsetSlotCopy(FlowPtr *ptr, int offset) {
+        if (unlikely(offset < 0 || !FlowSlotsFit(offset, 0) ||
+                     uint64_t(FlowPtrToInt(*ptr)) + uint64_t(offset) * STACK_SLOT_SIZE > UINT32_MAX)) {
+            ReportError(InvalidArgument, "Slot copy offset is out of range.");
+            return false;
+        }
+        *ptr += offset * STACK_SLOT_SIZE;
+        return true;
+    }
     void CopySlots(FlowPtr target, FlowPtr src, unsigned count) {
+        if (!count) return;
+        if (!CheckSlotCopy(count)) return;
         Memory.Copy(src, target, count*STACK_SLOT_SIZE);
         if (unlikely(target >= hp_big_pos)) RegisterWrite(target, count);
     }
     void CopySlots(FlowPtr target, const StackSlot *src, unsigned count) {
+        if (!count) return;
+        if (!CheckSlotCopy(count)) return;
         Memory.SetBytes(target, src, count*STACK_SLOT_SIZE);
         if (unlikely(target >= hp_big_pos)) RegisterWrite(target, count);
     }
     void CopyArraySlots(const StackSlot &target, int toff, const StackSlot &src, int soff, unsigned count) {
-        CopySlots(target.GetInternalArrayPtr() + toff*STACK_SLOT_SIZE, src.GetInternalArrayPtr() + soff*STACK_SLOT_SIZE, count);
+        if (!count) return;
+        FlowPtr to = target.GetInternalArrayPtr(), from = src.GetInternalArrayPtr();
+        if (OffsetSlotCopy(&to, toff) && OffsetSlotCopy(&from, soff))
+            CopySlots(to, from, count);
     }
     void CopyArraySlots(const StackSlot &target, int toff, const StackSlot *src, unsigned count) {
-        CopySlots(target.GetInternalArrayPtr() + toff*STACK_SLOT_SIZE, src, count);
+        if (!count) return;
+        FlowPtr to = target.GetInternalArrayPtr();
+        if (OffsetSlotCopy(&to, toff))
+            CopySlots(to, src, count);
     }
 
     // These are type-specific:

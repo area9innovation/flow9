@@ -209,17 +209,18 @@ GarbageCollector::GarbageCollector(ByteCodeRunner *rnr)
     Memory = rnr->GetMemory();
 
     StructDefs = Runner->StructDefs.data();
-    StructSizes = &Runner->StructSizes[0];
+    StructSizes = Runner->StructSizes.empty() ? NULL : &Runner->StructSizes[0];
     NumStructDefs = Runner->StructDefs.size();
 }
 
 /*
  * Compute the amount of memory required to hold all live objects.
  */
-int GarbageCollector::ComputeLiveBytes()
+int64_t GarbageCollector::ComputeLiveBytes()
 {
     int strbytes = StringRanges.getTotalSize(4);
-    int live_bytes = NumRefs * sizeof(FlowHeapRef) + NumSlots * STACK_SLOT_SIZE + NumLongStrings * sizeof(FlowStringRef) + NumObjects * 4 + NumClosures * 4 + strbytes;
+    int64_t live_bytes = int64_t(NumRefs) * sizeof(FlowHeapRef) + int64_t(NumSlots) * STACK_SLOT_SIZE
+        + int64_t(NumLongStrings) * sizeof(FlowStringRef) + int64_t(NumObjects) * 4 + int64_t(NumClosures) * 4 + strbytes;
 
 #ifdef FLOW_COMPACT_STRUCTS
     live_bytes += NumStructBytes;
@@ -279,7 +280,7 @@ bool GarbageCollector::CollectFast()
     FlushArrays();
 
     // Check if enough size to do fast gc
-    int live_bytes = ComputeLiveBytes();
+    int64_t live_bytes = ComputeLiveBytes();
     if (live_bytes >= int(hp_big_pos - hp_ref_end))
         return false;
 
@@ -317,7 +318,7 @@ bool GarbageCollector::CollectFast()
 bool GarbageCollector::DoubleHeap()
 {
     unsigned size = Runner->HeapEnd - Runner->HeapStart;
-    if (size >= MAX_HEAP_SIZE)
+    if (size == 0 || size > MAX_HEAP_SIZE / 2)
         return false;
 
 #ifdef DEBUG_FLOW
@@ -379,9 +380,9 @@ bool GarbageCollector::Collect(unsigned ensure_space)
     FlushArrays();
 
     // Check if need to double the heap
-    int live_bytes = ComputeLiveBytes() + ensure_space;
-    int heap_bytes = hp_big_pos - hp_ref_end;
-    int ehlimit = heap_bytes - EPHEMERAL_HEAP_SIZE*3;
+    int64_t live_bytes = ComputeLiveBytes() + ensure_space;
+    int64_t heap_bytes = hp_big_pos - hp_ref_end;
+    int64_t ehlimit = heap_bytes - int64_t(EPHEMERAL_HEAP_SIZE)*3;
 
     if (live_bytes >= heap_bytes)
     {
@@ -880,6 +881,26 @@ void GarbageCollector::ReportTagError(int tag)
     abort();
 }
 
+void GarbageCollector::CheckStructId(unsigned id)
+{
+    if (unlikely(id >= NumStructDefs || StructDefs[id].Name.empty())) {
+        Runner->ReportError(GCFailure, "Invalid struct ID in garbage collector: %u", id);
+        abort();
+    }
+}
+
+unsigned GarbageCollector::CheckArrayBytes(FlowPtr ptr, unsigned count, bool closure)
+{
+    const unsigned prefix = closure ? 4 : 0;
+    if (unlikely(!FlowSlotsFit(count, 4 + prefix) ||
+                 FlowPtrToInt(ptr) - FlowPtrToInt(HeapStart) < prefix ||
+                 !FlowSlotsFit(count, 4, FlowPtrToInt(HeapEnd) - FlowPtrToInt(ptr)))) {
+        Runner->ReportError(GCFailure, "Invalid slot count in garbage collector: %u", count);
+        abort();
+    }
+    return count * STACK_SLOT_SIZE + 4 + prefix;
+}
+
 /*
  * Main function of the enumeration phase.
  */
@@ -912,8 +933,7 @@ void GarbageCollector::Enumerate(const StackSlot &value)
         {
             FlowPtr ptr = value.slot_private.PtrValue;
 
-            if (unlikely(unsigned(value.GetStructId()) >= NumStructDefs))
-                abort();
+            CheckStructId(value.GetStructId());
 
             if (IsHeapPtr(ptr))
             {
@@ -1032,6 +1052,7 @@ void GarbageCollector::EnumerateArray(FlowPtr ptr, unsigned len, bool closure)
     if (!IsHeapPtr(ptr))
         return;
 
+    CheckArrayBytes(ptr, len, closure);
     FlowHeapArray *obj = HEADER_PTR(FlowHeapArray, ptr);
 
     // Check tag
@@ -1052,6 +1073,10 @@ void GarbageCollector::EnumerateArray(FlowPtr ptr, unsigned len, bool closure)
 
     // Register the memory requirements
     NumObjects++;
+    if (unlikely(!FlowSlotsFit(len, 0, INT_MAX - NumSlots * STACK_SLOT_SIZE))) {
+        Runner->ReportError(GCFailure, "Invalid total slot count in garbage collector.");
+        abort();
+    }
     NumSlots += len;
     if (closure)
         NumClosures++;
@@ -1093,10 +1118,10 @@ void GarbageCollector::EnumerateStruct(FlowPtr ptr, bool closure)
     if (unlikely(!(obj->header.GC_Tag < MaxOKTag || obj->header.GC_Tag == LastTag)))
         ReportTagError(obj->header.GC_Tag);
 
-    obj->header.GC_Tag = CurTag;
-
     // Register
+    CheckStructId(obj->header.DataValue);
     StructDef &def = StructDefs[obj->header.DataValue];
+    obj->header.GC_Tag = CurTag;
 
     if (def.GCFieldCount > 0)
     {
@@ -1128,6 +1153,7 @@ void GarbageCollector::EnumerateArrays()
             FlowHeapStruct *obj = HEADER_PTR(FlowHeapStruct, item.first);
             assert(obj->header.GC_Tag == CurTag);
 
+            CheckStructId(obj->header.DataValue);
             StructDef &def = StructDefs[obj->header.DataValue];
 
             for (int i = 0; i < def.GCFieldCount; i++)
@@ -1207,8 +1233,7 @@ void GarbageCollector::Collect(StackSlot &value)
             FlowPtr ptr = value.slot_private.PtrValue;
 
 #ifdef DEBUG_FLOW
-            if (unlikely(unsigned(value.GetStructId()) >= NumStructDefs))
-                abort();
+            CheckStructId(value.GetStructId());
 #endif
 
             if (IsHeapPtr(ptr))
@@ -1441,6 +1466,7 @@ void GarbageCollector::CollectArrays()
             FlowHeapStruct *obj = HEADER_PTR(FlowHeapStruct, item.first);
             assert(obj->header.GC_Tag == CurTag);
 
+            CheckStructId(obj->header.DataValue);
             StructDef &def = StructDefs[obj->header.DataValue];
 
             for (int i = 0; i < def.GCFieldCount; i++)
@@ -1473,6 +1499,7 @@ FlowPtr GarbageCollector::CollectArray(FlowPtr ptr, unsigned len, bool closure)
     if (!IsHeapPtr(ptr))
         return ptr;
 
+    const unsigned bytes = CheckArrayBytes(ptr, len, closure);
     FlowHeapArray *obj = HEADER_PTR(FlowHeapArray, ptr);
 
     // Check tag
@@ -1489,12 +1516,11 @@ FlowPtr GarbageCollector::CollectArray(FlowPtr ptr, unsigned len, bool closure)
 
     // Allocate and copy
     unsigned prefix = closure ? 4 : 0;
-    unsigned bytes = len * STACK_SLOT_SIZE + 4 + prefix;
 
     FlowPtr new_base = Allocate(bytes);
     FlowPtr old_base = ptr - prefix;
 
-    memcpy(MEMORY_PTR(new_base, bytes, true), MEMORY_PTR(old_base, bytes, false), bytes);
+    Memory->Copy(old_base, new_base, bytes);
 
     FlowPtr newptr = new_base + prefix;
 
@@ -1576,10 +1602,10 @@ FlowPtr GarbageCollector::CollectStruct(FlowPtr ptr, bool closure)
     if (unlikely(!(obj->header.GC_Tag < MaxOKTag || obj->header.GC_Tag == LastTag)))
         ReportTagError(obj->header.GC_Tag);
 
-    obj->header.GC_Tag = CurTag;
-
     // Copy
+    CheckStructId(obj->header.DataValue);
     StructDef &def = StructDefs[obj->header.DataValue];
+    obj->header.GC_Tag = CurTag;
     assert(unsigned(def.ByteSize) >= sizeof(FlowHeapStruct));
 
     unsigned prefix = closure ? 4 : 0;

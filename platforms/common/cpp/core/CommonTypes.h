@@ -2,6 +2,7 @@
 #define _COMMON_TYPES_H_
 
 #include <stdlib.h>
+#include <limits.h>
 
 #include "STLHelpers.h"
 
@@ -11,6 +12,13 @@
 #endif
 
 #define STACK_SLOT_SIZE 8
+
+// Keep object sizes (including their headers) representable by GC's byte counts.
+inline bool FlowSlotsFit(unsigned count, unsigned header_bytes, unsigned byte_limit = INT_MAX) {
+    return header_bytes <= byte_limit && count <= (byte_limit - header_bytes) / STACK_SLOT_SIZE;
+}
+
+static const unsigned FLOW_MAX_STRING_LENGTH = (INT_MAX - 8u) / FLOW_CHAR_SIZE;
 
 #if defined(_WIN64)
 #ifndef FLOW_JIT
@@ -763,14 +771,14 @@ class FlowStack
         for (unsigned i = 0; i < pos; ++ i) {
         	new_buf[i] = buf[i];
         }
-        delete buf;
+        delete[] buf;
         buf = new_buf;
         //buf = (T*)realloc(buf, sizeof(T)*limit);
     }
 
 public:
     FlowStack() : buf(nullptr) { clear(); }
-    ~FlowStack() { free(buf); }
+    ~FlowStack() { delete[] buf; }
 
     void swap(FlowStack<T,MinSize> &other) {
         std::swap(buf, other.buf);
@@ -779,7 +787,7 @@ public:
     }
 
     void clear() {
-    	delete buf;
+        delete[] buf;
         buf = new T[sizeof(T) * MinSize];
         pos = 0; limit = MinSize;
     }

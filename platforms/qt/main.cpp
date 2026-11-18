@@ -757,6 +757,9 @@ int main(int argc, char *argv[])
             FlowRunner.Init(bytecodeFile.toStdString());
         }
 
+        if (FlowRunner.IsErrorReported())
+            return 1;
+
         if (disassemble) {
             FlowRunner.Disassemble(FlowRunner.flow_out, FlowRunner.CodeStartPtr(), FlowRunner.CodeSize());
             return 0;

@@ -701,6 +701,8 @@ bool ByteCodeRunner::DoSubstring(StackSlot *pdata, int idx, unsigned len)
 
     StackSlot tmp;
     FlowPtr *pp = AllocateStringRef(&tmp, len); // ALLOC
+    if (!pp)
+        return false;
 
     *pp = GetStringAddr(*pdata) + idx * FLOW_CHAR_SIZE;
     *pdata = tmp;
@@ -814,10 +816,15 @@ StackSlot ByteCodeRunner::concat(RUNNER_ARGS)
     RUNNER_PopArgs2(arr1, arr2);
     RUNNER_CheckTag2(TArray, arr1, arr2);
 
-    int arr1_len = RUNNER->GetArraySize(arr1);
-    int arr2_len = RUNNER->GetArraySize(arr2);
+    const unsigned arr1_len = RUNNER->GetArraySize(arr1);
+    const unsigned arr2_len = RUNNER->GetArraySize(arr2);
+    const unsigned max_slots = (INT_MAX - 4u) / STACK_SLOT_SIZE;
+    if (arr1_len > max_slots || arr2_len > max_slots - arr1_len) {
+        RUNNER->ReportError(HeapFull, "Concatenated array is too large.");
+        return StackSlot::MakeVoid();
+    }
 
-    int len = arr1_len + arr2_len;
+    const unsigned len = arr1_len + arr2_len;
 
     if (len == 0) {
         return StackSlot::MakeEmptyArray();
@@ -1550,11 +1557,16 @@ StackSlot ByteCodeRunner::list2string(RUNNER_ARGS)
     RUNNER_DefSlots3(cur,str_item,string);
 
     // 1st pass: measure size
-    int size = 0;
+    unsigned size = 0;
     RUNNER_ForEachCons(cur, list) {
         str_item = RUNNER->GetConsItem(cur);
         RUNNER_CheckTag(TString, str_item);
-        size += RUNNER->GetStringSize(str_item);
+        unsigned item_size = RUNNER->GetStringSize(str_item);
+        if (item_size > FLOW_MAX_STRING_LENGTH - size) {
+            RUNNER->ReportError(HeapFull, "Concatenated string is too large.");
+            return StackSlot::MakeVoid();
+        }
+        size += item_size;
     }
 
     RUNNER_CheckEmptyList(cur, "list2string");
@@ -1569,7 +1581,7 @@ StackSlot ByteCodeRunner::list2string(RUNNER_ARGS)
 
     RUNNER_ForEachCons(cur, list) {
         str_item = RUNNER->GetConsItem(cur);
-        int item_size = RUNNER->GetStringSize(str_item);
+        unsigned item_size = RUNNER->GetStringSize(str_item);
         size -= item_size;
         MEMORY->Copy(RUNNER->GetStringAddr(str_item), dest_ptr + size * FLOW_CHAR_SIZE, item_size * FLOW_CHAR_SIZE);
     }
@@ -2440,7 +2452,7 @@ FlowPtr BinaryDeserializer::NewBuffer(int bytes)
 
 StackSlot BinaryDeserializer::NewArray(int size, bool do_map)
 {
-    if (error || size < 0 || (slot_budget -= size) < 0)
+    if (error || size < 0 || !FlowSlotsFit(size, 4) || (slot_budget -= size) < 0)
     {
         error = true;
         return StackSlot::MakeVoid();
@@ -2584,6 +2596,10 @@ StackSlot BinaryDeserializer::readString()
 #endif
     {
         pp = RUNNER->AllocateStringRef(&rv, len); // ALLOC
+        if (!pp) {
+            error = true;
+            return StackSlot::MakeVoid();
+        }
     }
 
     *pp = RUNNER->GetStringAddr(*pinput) + start_idx*FLOW_CHAR_SIZE;
@@ -2908,7 +2924,8 @@ StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlo
 
 #ifdef FLOW_MMAP_HEAP
     bool input_mapped = RUNNER->IsMappedArea(RUNNER->GetStringAddr(input));
-    bool enough_free = unsigned(RUNNER->MapStringPtr - RUNNER->MapAreaBase) >= STACK_SLOT_SIZE * unsigned(slot_budget);
+    bool enough_free = RUNNER->MapStringPtr >= RUNNER->MapAreaBase &&
+        FlowSlotsFit(slot_budget, 0, FlowPtrToInt(RUNNER->MapStringPtr) - FlowPtrToInt(RUNNER->MapAreaBase));
 
     if (input_mapped && enough_free && !has_fixups)
     {
