@@ -9,11 +9,16 @@ export {
 	// - block code quotations
 	// - lists (ordered, unordered)
 	// - tables
+	// The escaping is written for CommonMark readers, but the output also uses ^x^ for <sup>, ~x~ for
+	// <sub> and pipe tables, which CommonMark does not have. A reader must decode character references
+	// such as &lt; and &amp;, also inside the text of a link, where [ and ] are written as &#91; and &#93;.
+	// A < from an entity is written as &lt;, so a &lt; b gives a &lt; b. A < in the text itself
+	// is left as it is: a < b gives a < b.
 	ruHtml2md(html : [HtmlNode]) -> string;
 }
 
 ruHtml2md(html : [HtmlNode]) -> string {
-	output = ruDoHtml2md(html, "*");
+	output = ruDoHtml2md(html, "*", false);
 	// OK, now clean it up and avoid too many empty lines
 	lines = strSplit(output, "\n");
 	// Clean out whitespace
@@ -27,77 +32,379 @@ ruHtml2md(html : [HtmlNode]) -> string {
 	strGlue(simplify, "\n");
 }
 
-ruDoHtml2md(html : [HtmlNode], indent : string) -> string {
-	concatStrings(map(html, \elem -> ruHtmlNode2md(elem, indent)))
+// In code, Markdown shows the text as it is written, so nothing is escaped there
+ruDoHtml2md(html : [HtmlNode], indent : string, code : bool) -> string {
+	ruJoinHtml2md(html, map(html, \elem -> ruHtmlNode2md(elem, indent, code)), code);
 }
 
-ruHtmlNode2md(html : HtmlNode, indent : string) -> string {
+// A & from an entity is written as &amp; if it makes a new entity with the text after it, as in &amp;copy;.
+// If the name after it runs to the end of the element, the text after the element is read too.
+// A \ right before an entity written here, a link or an image would make it plain text, so it is written as &#92;.
+ruJoinHtml2md(html : [HtmlNode], parts : [string], code : bool) -> string {
+	joined = concatStrings(parts);
+	if (code || length(parts) < 2) {
+		joined;
+	} else if (strIndexOf(joined, "\\") == -1) {
+		// Without a \, only a & can change, and most texts have none
+		amp = strIndexOf(joined, "&");
+		if (amp == -1) joined else ruEscapeMdAmps(html, parts, joined, 0, 0, amp, 0, makeList());
+	} else if (!exists(parts, ruMayEscapeMdJoin)) {
+		joined;
+	} else {
+		// Where the text after the part starts in the joined text
+		end = ref 0;
+		list2string(foldi(parts, makeList(), \i, acc, part -> {
+			end := ^end + strlen(part);
+			md = switch (html[i]) {
+				HtmlEntity(__, __): ruEscapeMdAmpEnd(part, joined, ^end);
+				HtmlTag(__, __, __): ruEscapeMdAmpEnd(part, joined, ^end);
+				HtmlText(__): part;
+				HtmlComment(__): part;
+			};
+			Cons(md, if (ruIsMdEscapeStart(html[i], md)) ruEscapeMdPartsEnd(acc, makeList()) else acc);
+		}));
+	}
+}
+
+// The joined text of the parts, with the & written as &amp; where ruEscapeMdAmpEnd writes it, for a text
+// with no \. Part i starts at start in the joined text, the next & in it is at amp, and the joined text
+// up to done is in acc. Only the parts with a & in them are read.
+ruEscapeMdAmps(html : [HtmlNode], parts : [string], joined : string, i : int, start : int, amp : int, done : int, acc : List<string>) -> string {
+	if (i == length(parts) || amp == -1) {
+		if (done == 0) joined else list2string(Cons(strRight(joined, done), acc));
+	} else {
+		part = parts[i];
+		end = start + strlen(part);
+		if (amp >= end) {
+			ruEscapeMdAmps(html, parts, joined, i + 1, end, amp, done, acc);
+		} else {
+			next = strRangeIndexOf(joined, "&", end, strlen(joined));
+			escape = switch (html[i]) {
+				HtmlEntity(__, __): ruMdAmpToEscape(part, joined, end);
+				HtmlTag(__, __, __): ruMdAmpToEscape(part, joined, end);
+				HtmlText(__): -1;
+				HtmlComment(__): -1;
+			};
+			if (escape == -1) {
+				ruEscapeMdAmps(html, parts, joined, i + 1, end, next, done, acc);
+			} else {
+				md = strLeft(part, escape) + "&amp;" + strRight(part, escape + 1);
+				ruEscapeMdAmps(html, parts, joined, i + 1, end, next, end, Cons(md, Cons(substring(joined, done, start - done), acc)));
+			}
+		}
+	}
+}
+
+// Whether ruJoinHtml2md may change this part. Only a part that ends in a \, or in a & and then only
+// a name or # and a number, can change.
+ruMayEscapeMdJoin(part : string) -> bool {
+	n = strlen(part);
+	n > 0 && getCharCodeAt(part, n - 1) == 0x5C || ruMdAmpAtEnd(part) != -1;
+}
+
+ruIsMdEscapeStart(node : HtmlNode, md : string) -> bool {
+	switch (node) {
+		// The link or image can also be inside the element
+		HtmlTag(__, __, __): startsWith(md, "[") || startsWith(md, "![") || ruStartsWithMdEntity(md);
+		HtmlEntity(__, __): ruStartsWithMdEntity(md);
+		HtmlText(__): ruStartsWithMdEntity(md);
+		HtmlComment(__): false;
+	}
+}
+
+ruStartsWithMdEntity(md : string) -> bool {
+	startsWith(md, "&") && exists(["&lt;", "&amp;", "&#91;", "&#92;", "&#93;"], \entity -> startsWith(md, entity));
+}
+
+ruHtmlNode2md(html : HtmlNode, indent : string, code : bool) -> string {
 	switch (html) {
 		HtmlTag(tag, attribs, body): {
-			contents = ruDoHtml2md(body, indent);
-			if (strlen(tag) == 2 && getCharAt(tag, 0) == "h") {
-				ruHtmlHeading2md(s2i(getCharAt(tag, 1)), contents);
-			} else if (tag == "p" || tag == "div" || tag == "body" || tag == "section" || tag == "html") {
-				trim2(contents, " \n\t\r") + "\n\n";
-			} else if (tag == "br") {
-				"\n";
-			} else if (tag == "strong" || tag == "b") {
-				"**" + contents + "**";
-			} else if (tag == "pre" || tag == "tt") {
-				"`" + contents + "`";
-			} else if (tag == "sup") {
-				"^" + contents + "^";
-			} else if (tag == "sub") {
-				"~" + contents + "~";
-			} else if (tag == "em" || tag == "i" || tag == "it") {
-				"*" + contents + "*";
-			} else if (tag == "blockquote") {
-				strGlue(map(strSplit(contents, "\n"), \line -> "> " + line), "\n");
-			} else if (tag == "ol" || tag == "ul" || tag == "li") {
-				ruHtmlList2md(tag, body, indent);
-			} else if (tag == "sub") {
-				"_" + contents;
-			} else if (tag == "table") {
-				ruHtmlTable2md(body);
-			} else if (tag == "span") {
-				trimmed = trim2(contents, " \n\t\r");
-				if (trimmed != contents) trimmed + " " else trimmed
-			} else if (tag == "a") {
-				href = fold(attribs, "", \acc, attrib -> if (attrib.key == "href") attrib.val else acc);
-				if (startsWith(href, "http")) {
-					"[" + trim2(contents, " \n\t\r") + "](" + href + ")";
+			if (tag == "a") {
+				linkUrl = ruHtmlWebUrl(attribs, "href");
+				if (linkUrl != "") {
+					// In the text of a link, [ and ] are written as entities, as a ] would end the text
+					contents = ruDoHtml2md(if (code) body else ruHtmlLinkText(body), indent, code);
+					ruMdLink(trim2(contents, " \n\t\r"), linkUrl, code);
 				} else {
 					// Internal link. Ignore
-					trim2(contents, " \n\t\r");
+					trim2(ruDoHtml2md(body, indent, code), " \n\t\r");
 				}
-			} else if (tag == "head" || tag == "header" || tag == "style" || tag == "script" || tag == "link" || tag == "title") {
-				// Ignore these
-				"";
-			} else if (tag == "tr" || tag == "th" || tag == "td") {
-				// These tags are processed in `ruHtmlTable2md`
-				"";
-			} else if (tag == "img") {
-				// ![Image](http://example.com/image.png)
-				src = fold(attribs, "", \acc, attrib -> if (attrib.key == "src") attrib.val else acc);
-				alt = fold(attribs, "Image", \acc, attrib -> if (attrib.key == "alt") attrib.val else acc);
-				"![" + alt + "](" + src + ")"
-			} else if (tag == "code") {
-				if (strContains(contents, "\n")) {
+			} else if (tag == "pre" || tag == "tt" || tag == "code") {
+				contents = ruDoHtml2md(body, indent, true);
+				if (tag != "code") {
+					"`" + contents + "`";
+				} else if (strContains(contents, "\n")) {
 					"```\n" + contents + "\n```";
 				} else {
 					"`" + contents + "`";
 				}
-			} else if (tag != "") {
-				println("TODO: Support " + tag + " in ruHtmlNode2md");
-				contents;
 			} else {
-				contents;
+				contents = ruDoHtml2md(body, indent, code);
+				if (strlen(tag) == 2 && getCharAt(tag, 0) == "h") {
+					ruHtmlHeading2md(s2i(getCharAt(tag, 1)), contents);
+				} else if (tag == "p" || tag == "div" || tag == "body" || tag == "section" || tag == "html") {
+					trim2(contents, " \n\t\r") + "\n\n";
+				} else if (tag == "br") {
+					"\n";
+				} else if (tag == "strong" || tag == "b") {
+					"**" + contents + "**";
+				} else if (tag == "sup") {
+					"^" + contents + "^";
+				} else if (tag == "sub") {
+					"~" + contents + "~";
+				} else if (tag == "em" || tag == "i" || tag == "it") {
+					"*" + contents + "*";
+				} else if (tag == "blockquote") {
+					strGlue(map(strSplit(contents, "\n"), \line -> "> " + line), "\n");
+				} else if (tag == "ol" || tag == "ul" || tag == "li") {
+					ruHtmlList2md(tag, body, indent, code);
+				} else if (tag == "sub") {
+					"_" + contents;
+				} else if (tag == "table") {
+					ruHtmlTable2md(body, code);
+				} else if (tag == "span") {
+					trimmed = trim2(contents, " \n\t\r");
+					if (trimmed != contents) trimmed + " " else trimmed
+				} else if (tag == "head" || tag == "header" || tag == "style" || tag == "script" || tag == "link" || tag == "title") {
+					// Ignore these
+					"";
+				} else if (tag == "tr" || tag == "th" || tag == "td") {
+					// These tags are processed in `ruHtmlTable2md`
+					"";
+				} else if (tag == "img") {
+					// ![Image](http://example.com/image.png)
+					src = ruHtmlUrl(attribs, "src");
+					alt = fold(attribs, None(), \acc, attrib -> if (attrib.key == "alt") Some(attrib.val) else acc);
+					alt2md = \text -> if (code) text else ruEscapeMdAlt(text);
+					if (ruIsWebUrl(src) || startsWith(toLowerCase(strLeft(src, 11)), "data:image/")) {
+						"!" + ruMdLink(alt2md(either(alt, "Image")), src, code);
+					} else {
+						// Markdown can not show this image, so only its text is kept
+						alt2md(either(alt, ""));
+					}
+				} else if (tag != "") {
+					println("TODO: Support " + tag + " in ruHtmlNode2md");
+					contents;
+				} else {
+					contents;
+				}
 			}
 		}
 		HtmlText(text): text;
 		HtmlComment(text): "";
-		HtmlEntity(prefix, body): unescapeHtmlEntity(html);
+		HtmlEntity(prefix, body): {
+			text = unescapeHtmlEntity(html);
+			// A < from an entity is written as &lt;, so that it does not start a tag
+			if (text == "<" && !code) "&lt;" else text;
+		}
 	}
+}
+
+ruHtmlLinkText(body : [HtmlNode]) -> [HtmlNode] {
+	map(body, \node -> switch (node) {
+		HtmlTag(tag, attribs, children): {
+			if (tag == "code" || tag == "pre" || tag == "tt") node else HtmlTag(tag, attribs, ruHtmlLinkText(children));
+		}
+		HtmlText(text): HtmlText(ruEscapeMdBrackets(text));
+		HtmlEntity(__, __): {
+			text = unescapeHtmlEntity(node);
+			if (text == "[" || text == "]") HtmlText(ruEscapeMdBrackets(text)) else node;
+		}
+		HtmlComment(__): node;
+	});
+}
+
+// Writes the & in the part as &amp; if it makes an entity with the text after the part, which starts
+// at end in joined. The part is a & from an entity, or the Markdown of an element that ends in a & and
+// the start of a name.
+ruEscapeMdAmpEnd(part : string, joined : string, end : int) -> string {
+	amp = ruMdAmpToEscape(part, joined, end);
+	if (amp != -1) {
+		ruEscapeMdEnd(strLeft(part, amp)) + "&amp;" + strRight(part, amp + 1);
+	} else {
+		part;
+	}
+}
+
+// Where the & is that ruEscapeMdAmpEnd writes as &amp;, or -1
+ruMdAmpToEscape(part : string, joined : string, end : int) -> int {
+	amp = ruMdAmpAtEnd(part);
+	hash = amp != -1 && getCharAt(part, amp + 1) == "#";
+	if (amp != -1 && ruMayStartEntity(joined, end, strlen(part) - amp - 1 - b2i(hash), hash)) amp else -1;
+}
+
+// Where the & is if only a name or # and a number follow it up to the end of the text, or -1.
+// Entity names have at most 31 characters, so only the end of the text is read.
+ruMdAmpAtEnd(text : string) -> int {
+	n = strlen(text);
+	if (strRangeIndexOf(text, "&", max(n - 34, 0), n) == -1) {
+		-1;
+	} else {
+		j = countUntilDown(n - 1, max(n - 33, -1), \k -> !ruIsAsciiAlnum(getCharCodeAt(text, k)));
+		if (j >= 0 && getCharAt(text, j) == "&") j
+		else if (j >= 1 && getCharAt(text, j) == "#" && getCharAt(text, j - 1) == "&") j - 1
+		else -1;
+	}
+}
+
+ruIsAsciiAlnum(c : int) -> bool {
+	c >= 0x30 && c <= 0x39 || c >= 0x41 && c <= 0x5A || c >= 0x61 && c <= 0x7A;
+}
+
+// Whether a & before position i of the text starts an entity in Markdown: a name or #number, then ;.
+// If the name runs to the end of the text, the & is at the end of the Markdown of this element,
+// and ruEscapeMdAmpEnd checks it again with the text after the element.
+// name is the length of the name before i, hash tells if it starts with #.
+ruMayStartEntity(text : string, i : int, name : int, hash : bool) -> bool {
+	n = strlen(text);
+	start = if (name == 0 && !hash && i < n && getCharCodeAt(text, i) == 0x23) i + 1 else i;
+	end = ruAsciiAlnumEnd(text, start, n);
+	end < n && name + end - start > 0 && getCharCodeAt(text, end) == 0x3B;
+}
+
+// Where the letters and digits that start at i end in the text
+ruAsciiAlnumEnd(text : string, i : int, n : int) -> int {
+	if (i < n && ruIsAsciiAlnum(getCharCodeAt(text, i))) ruAsciiAlnumEnd(text, i + 1, n) else i;
+}
+
+ruHtmlUrl(attribs : [HtmlAttrib], key : string) -> string {
+	ruCleanHtmlUrl(ruHtmlAttrib(attribs, key));
+}
+
+ruHtmlAttrib(attribs : [HtmlAttrib], key : string) -> string {
+	fold(attribs, "", \acc, attrib -> if (attrib.key == key) attrib.val else acc);
+}
+
+// Browsers drop tabs and line breaks from a url, and spaces around it
+ruCleanHtmlUrl(url : string) -> string {
+	n = strlen(url);
+	if (n == 0 || strIndexOf(url, "\t") == -1 && strIndexOf(url, "\n") == -1 && strIndexOf(url, "\r") == -1
+		&& getCharCodeAt(url, 0) != 0x20 && getCharCodeAt(url, n - 1) != 0x20) {
+		url;
+	} else {
+		trim2(strReplaces(url, ["\t", "", "\n", "", "\r", ""]), " ");
+	}
+}
+
+// The url if it is a web url, or ""
+ruHtmlWebUrl(attribs : [HtmlAttrib], key : string) -> string {
+	url = ruHtmlAttrib(attribs, key);
+	c = if (url == "") 0 else getCharCodeAt(url, 0);
+	// Only h, H or a character that browsers drop can start a web url
+	if (c == 0x68 || c == 0x48 || c == 0x09 || c == 0x0A || c == 0x0D || c == 0x20) {
+		clean = ruCleanHtmlUrl(url);
+		if (ruIsWebUrl(clean)) clean else "";
+	} else {
+		"";
+	}
+}
+
+ruIsWebUrl(url : string) -> bool {
+	scheme = toLowerCase(strLeft(url, 8));
+	startsWith(scheme, "http://") || startsWith(scheme, "https://");
+}
+
+ruEscapeMdBrackets(text : string) -> string {
+	if (strIndexOf(text, "[") == -1 && strIndexOf(text, "]") == -1) text else ruEscapeMdChars(text, "[]");
+}
+
+// Entities in an attribute value are not decoded, so they are kept. A < is written as &lt;
+ruEscapeMdAlt(alt : string) -> string {
+	ruEscapeMdChars(alt, "[]<");
+}
+
+// Writes these characters as entities. A \ right before them would make the entity plain text,
+// so it is written as &#92;.
+ruEscapeMdChars(text : string, chars : string) -> string {
+	if (strFindFirstOf(text, chars) == -1) {
+		text;
+	} else {
+		// The parts written so far, last first, and where the text after them starts
+		done = stringFoldi(text, Pair(makeList(), 0), \i, acc, c -> {
+			ch = fromCharCode(c);
+			if (!strContains(chars, ch)) acc else {
+				before = ruEscapeMdEnd(substring(text, acc.second, i - acc.second));
+				Pair(Cons(if (ch == "<") "&lt;" else "&#" + i2s(c) + ";", Cons(before, acc.first)), i + 1);
+			}
+		});
+		list2string(Cons(strRight(text, done.second), done.first));
+	}
+}
+
+// Writes the \ at the end of the text as &#92;
+ruEscapeMdEnd(text : string) -> string {
+	if (endsWith(text, "\\")) {
+		trimmed = rtrim2(text, "\\");
+		trimmed + strRepeat("&#92;", strlen(text) - strlen(trimmed));
+	} else {
+		text;
+	}
+}
+
+// Writes the \ at the end of the parts as &#92;. The last part is the first in the list.
+ruEscapeMdPartsEnd(parts : List<string>, done : List<string>) -> List<string> {
+	switch (parts) {
+		EmptyList(): ruPrependParts(done, parts);
+		Cons(part, rest): {
+			escaped = Cons(ruEscapeMdEnd(part), done);
+			if (rtrim2(part, "\\") == "") ruEscapeMdPartsEnd(rest, escaped) else ruPrependParts(escaped, rest);
+		}
+	}
+}
+
+ruPrependParts(parts : List<string>, to : List<string>) -> List<string> {
+	foldList(parts, to, \acc, part -> Cons(part, acc));
+}
+
+// In code, Markdown shows the text as it is written, so nothing is escaped there
+ruMdLink(text : string, url : string, code : bool) -> string {
+	if (code) {
+		"[" + text + "](" + url + ")";
+	} else {
+		"[" + text + "](" + ruEscapeMdUrl(url) + ")";
+	}
+}
+
+// A space or control character ends the url in Markdown, and so does a round bracket without its pair,
+// so these are written as %XX. A \ is written too, as \) would not end the url. Browsers read a \ in
+// an http(s) url before its ? or # as /, so there it is written as /, and elsewhere as %5C.
+ruEscapeMdUrl(url : string) -> string {
+	if (ruMdUrlNeedsEscape(url)) {
+		depth = stringFold(url, 0, \d, c -> if (d < 0) d else if (c == 0x28) d + 1 else if (c == 0x29) d - 1 else d);
+		escape = \c -> c <= 0x20 || c == 0x7F || c == 0x5C || depth != 0 && (c == 0x28 || c == 0x29);
+		query = strFindFirstOf(url, "?#");
+		path = if (!ruIsWebUrl(url)) 0 else if (query == -1) strlen(url) else query;
+		concatStrings(mapi(s2a(url), \i, c ->
+			if (c == 0x5C && i < path) "/"
+			else if (escape(c)) "%" + lpad(formatHex(c), "0", 2)
+			else fromCharCode(c)
+		));
+	} else {
+		url;
+	}
+}
+
+// Whether ruEscapeMdUrl writes a character of the url as %XX
+ruMdUrlNeedsEscape(url : string) -> bool {
+	strIndexOf(url, " ") != -1 || strIndexOf(url, "\\") != -1 || strIndexOf(url, "\u007F") != -1
+	|| (strIndexOf(url, "(") != -1 || strIndexOf(url, ")") != -1) && ruMdUrlDepth(url, 0, strlen(url), 0) != 0
+	|| ruHasControlChar(url, 0, strlen(url));
+}
+
+// The number of round brackets open at the end of the url, or a negative number once a closing one has no pair
+ruMdUrlDepth(url : string, i : int, n : int, depth : int) -> int {
+	if (depth < 0 || i == n) {
+		depth;
+	} else {
+		c = getCharCodeAt(url, i);
+		ruMdUrlDepth(url, i + 1, n, if (c == 0x28) depth + 1 else if (c == 0x29) depth - 1 else depth);
+	}
+}
+
+ruHasControlChar(text : string, i : int, n : int) -> bool {
+	if (i == n) false
+	else if (getCharCodeAt(text, i) < 0x20) true
+	else ruHasControlChar(text, i + 1, n);
 }
 
 ruHtmlHeading2md(level : int, body : string) -> string {
@@ -123,11 +430,11 @@ insertPrefix2md(pref : string, s : string) -> string {
 	}
 }
 
-ruHtmlList2md(tag : string, body : [HtmlNode], indent : string) -> string {
+ruHtmlList2md(tag : string, body : [HtmlNode], indent : string, code : bool) -> string {
 	i = ref 0;
-	"\n" + concatStrings(
+	"\n" + ruJoinHtml2md(body,
 		map(body, \elem ->  {
-			str = ruHtmlNode2md(elem, indent);
+			str = ruHtmlNode2md(elem, indent, code);
 			switch (elem) {
 				HtmlTag(tag1, __,__): {
 					if (tag1 != "li") str else {
@@ -141,7 +448,8 @@ ruHtmlList2md(tag : string, body : [HtmlNode], indent : string) -> string {
 				}
 				default: str;
 			}
-		})
+		}),
+		code
 	);
 }
 
@@ -159,14 +467,14 @@ ruFirstTag(body : [HtmlNode]) -> HtmlTag {
 	firstElement(tags, HtmlTag("", [], [])); 
 }
 
-ruHtmlTable2md(children : [HtmlNode]) -> string {
+ruHtmlTable2md(children : [HtmlNode], code : bool) -> string {
 	first_row = ruFirstTag(children);
 	first_col = ruFirstTag(first_row.children);
 	headers = if (first_col.tag != "th") None() else {
 		Some(filtermap(first_row.children, \elem ->
 			switch(elem) {
 				HtmlTag(tag, __, children1): {
-					if (tag != "th") None() else Some(ruDoHtml2md(children1, ""));
+					if (tag != "th") None() else Some(ruDoHtml2md(children1, "", code));
 				}
 				default: None();
 			}
@@ -189,7 +497,7 @@ ruHtmlTable2md(children : [HtmlNode]) -> string {
 								switch(elem1) {
 									HtmlTag(tag1, __, cell): {
 										if (tag1 != "td") None() else {
-											Some(ruDoHtml2md(cell, ""));
+											Some(ruDoHtml2md(cell, "", code));
 										}
 									}
 									default: None();
