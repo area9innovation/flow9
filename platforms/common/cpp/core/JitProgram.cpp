@@ -2,6 +2,7 @@
 #include "NativeProgram.h"
 #include "GarbageCollector.h"
 #include "JitProgram.h"
+#include "JitMetadata.h"
 
 #include <iomanip>
 #include <sstream>
@@ -839,10 +840,10 @@ bool FlowJitProgram::find_structs()
 
 FlowJitProgram::StructInfo::Ptr FlowJitProgram::require_struct(int id, FlowPtr addr)
 {
-    std::map<int, StructInfo::Ptr>::const_iterator it = struct_by_id.find(id);
-    if (it == struct_by_id.end())
+    StructInfo::Ptr info = jit_metadata::find_struct(id, struct_by_id);
+    if (!info)
         bytecode_error(addr, stl_sprintf("Unknown struct id %d", id));
-    return it->second;
+    return info;
 }
 
 /*
@@ -2798,9 +2799,7 @@ void FlowJitProgram::FunctionAssembler::enter_func(bool is_closure)
         num_args = reserve.IntValue2;
         num_locals = reserve.IntValue;
 
-        // Check the combined size without adding unvalidated operands.
-        const int max_slots = ByteCodeRunner::MAX_DATA_STACK;
-        if (num_args < 0 || num_args > max_slots || num_locals < 0 || num_locals > max_slots - num_args)
+        if (!jit_metadata::valid_frame(num_args, num_locals, ByteCodeRunner::MAX_DATA_STACK))
             owner->bytecode_error(code_in.front()->first, "Invalid function frame size");
     }
 
@@ -2817,9 +2816,7 @@ void FlowJitProgram::FunctionAssembler::enter_func(bool is_closure)
         // The frame may fit on its own but not on top of the caller's stack.
         Label available = as.newLabel();
         as.mov(rcx, STATE(DataStack.buf));
-        as.lea(rcx, ptr(rcx, (int(ByteCodeRunner::MAX_DATA_STACK) - num_locals)*QWORD));
-        as.cmp(rDStack, rcx);
-        as.short_().jbe(available);
+        jit_metadata::branch_if_locals_fit(as, rcx, rDStack, ByteCodeRunner::MAX_DATA_STACK, num_locals, available);
         owner->thunk_stack_full.call(as);
         as.bind(available);
 
@@ -2863,25 +2860,23 @@ void FlowJitProgram::FunctionAssembler::preprocess(bool is_function)
         switch (insn.op)
         {
         case CGetGlobal:
-            if (insn.IntValue < 0 || size_t(insn.IntValue) >= owner->globals.size() ||
-                unsigned(insn.IntValue) >= ByteCodeRunner::MAX_DATA_STACK ||
-                owner->globals[insn.IntValue]->name == "--end--")
+            if (!jit_metadata::valid_global(insn.IntValue, owner->globals, ByteCodeRunner::MAX_DATA_STACK))
                 owner->bytecode_error(ipair->first, stl_sprintf("Invalid global index %d", insn.IntValue));
             break;
 
         case CGetLocal:
         case CSetLocal:
-            if (insn.IntValue < 0 || insn.IntValue >= num_args + num_locals)
+            if (!jit_metadata::valid_slot(insn.IntValue, num_args + num_locals))
                 owner->bytecode_error(ipair->first, stl_sprintf("Invalid local slot %d", insn.IntValue));
             break;
 
         case CReserveLocals:
-            if (!is_function || i != 0)
+            if (!jit_metadata::valid_reserve_position(is_function, i))
                 owner->bytecode_error(ipair->first, "ReserveLocals outside function entry");
             break;
 
         case CTailCall:
-            if (insn.IntValue < 0 || unsigned(insn.IntValue) > ByteCodeRunner::MAX_DATA_STACK)
+            if (!jit_metadata::valid_tail_count(insn.IntValue, ByteCodeRunner::MAX_DATA_STACK))
                 owner->bytecode_error(ipair->first, "Invalid tail call argument count");
             break;
 

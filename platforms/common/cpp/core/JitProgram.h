@@ -138,7 +138,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
         std::string name;
         StackSlot name_string;
 
-        // address of the unique instance for fieldless structs
+        // address of the unique instance for fieldless structs, zero otherwise
         uint32_t empty_addr;
 
         uint64_t type_tag;
@@ -156,7 +156,7 @@ class FlowJitProgram : protected asmjit::ErrorHandler {
 
         std::vector<StructFieldAccessor::Ptr> field_accessors;
 
-        StructInfo(int compare_idx) : index(-1), compare_idx(compare_idx) {}
+        StructInfo(int compare_idx) : index(-1), compare_idx(compare_idx), empty_addr(0) {}
 
         static bool compare_fieldcnt(const StructInfo::Ptr &a, const StructInfo::Ptr &b) { return a->num_fields > b->num_fields; }
     };
