@@ -316,7 +316,9 @@ private:
     bool IsCallableAddress(FlowPtr address) const;
 
     bool HasOperands(unsigned count) const {
-        return LocalEnd <= DataStack.size() && count <= DataStack.size() - LocalEnd;
+        // One comparison on the hot path. The 64-bit sum cannot wrap, so a count from a
+        // negative operand fails, and so does a frame whose LocalEnd is above the stack top.
+        return uint64_t(LocalEnd) + count <= DataStack.size();
     }
 
     bool HasLocal(unsigned index) const {

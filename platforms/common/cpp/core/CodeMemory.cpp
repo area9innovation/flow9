@@ -109,8 +109,12 @@ bool CodeMemory::ParseOpcode(FlowInstruction *out, bool reparse)
     FlowPtr old_pos = GetPosition();
 
     try {
-        if (!reparse)
-            out->op = ReadOpcode();
+        if (!reparse) {
+            // Keep the byte even when it is not an opcode, so diagnostics show what was read.
+            out->op = static_cast<OpCode>(static_cast<uint8_t>(ReadByte()));
+            if (out->op > CCodeCoverageTrap)
+                throw DecodeError("Invalid bytecode opcode");
+        }
         if (DecodeOperands<false>(*out, NULL))
             return true;
         if (out->op == CBreakpoint || out->op == CCodeCoverageTrap)

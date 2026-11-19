@@ -1564,8 +1564,10 @@ bool ByteCodeRunner::IsCallableAddress(FlowPtr address) const
 // interpreted entry or trap installation, never on JIT/native constant data.
 bool ByteCodeRunner::PrepareInterpreter()
 {
-    if (!has_interpreter_code || Code.GetSize() == 0 || IsErrorReported()) return false;
+    if (!has_interpreter_code || Code.GetSize() == 0) return false;
+    // A built index stays valid after a runtime error; the debugger still needs it then.
     if (!InstructionStarts.empty()) return true;
+    if (IsErrorReported()) return false;
     try {
         const int size = Code.GetSize() - 1;
         CodeMemory reader(Memory.GetRawPointer(CodeStartPtr(), size, true), 0, size);
@@ -2561,6 +2563,15 @@ void ByteCodeRunner::PushDataStackSlot(int offset)
     }
 }
 
+// An instruction that takes a fixed number of values must find them above the
+// frame's locals, so malformed bytecode cannot read or overwrite below them.
+// Used directly in a case of the opcode switch: break leaves the switch.
+#define RUNNER_NeedOperands(count) \
+    if (unlikely(!HasOperands(count))) { \
+        ReportError(StackCorruption, "Not enough operands for opcode %02Xh", unsigned(opcode)); \
+        break; \
+    }
+
 #if !COMPILED
 
 FlowPtr ByteCodeRunner::getLastCodeAddress() {
@@ -2699,6 +2710,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CArrayGet:
             {
+                RUNNER_NeedOperands(2);
                 DoArrayGet();
                 break;
             }
@@ -2742,6 +2754,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case COptionalNativeFn:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(curval);
                 int args = Code.ReadInt31();
                 std::string fn = Code.ReadString();
@@ -2764,6 +2777,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CPlus:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 DoPlus(val1, val2);
                 DiscardStackSlots(1);
@@ -2771,6 +2785,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CPlusInt:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TInt, val1, val2);
                 val1.SetIntValue(val1.GetInt() + val2.GetInt());
@@ -2779,6 +2794,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CPlusString:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TString, val1, val2);
                 DoPlusString(val1, val2);
@@ -2787,6 +2803,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CMinus:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 DoMinus(val1, val2);
                 DiscardStackSlots(1);
@@ -2794,6 +2811,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CMinusInt:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TInt, val1, val2);
                 val1.SetIntValue(val1.GetInt() - val2.GetInt());
@@ -2802,6 +2820,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CMultiply:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 DoMultiply(val1, val2);
                 DiscardStackSlots(1);
@@ -2809,6 +2828,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CMultiplyInt:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TInt, val1, val2);
                 val1.SetIntValue(val1.GetInt() * val2.GetInt());
@@ -2817,6 +2837,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CDivide:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 DoDivide(val1, val2);
                 DiscardStackSlots(1);
@@ -2824,6 +2845,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CDivideInt:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TInt, val1, val2);
                 if (unlikely(val2.GetInt() == 0)) {
@@ -2836,6 +2858,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CModulo:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 DoModulo(val1, val2);
                 DiscardStackSlots(1);
@@ -2843,6 +2866,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CModuloInt:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TInt, val1, val2);
                 if (unlikely(val2.GetInt() == 0)) {
@@ -2855,12 +2879,14 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CNegate:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(val);
                 DoNegate(val);
                 break;
             }
         case CNegateInt:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(val1);
                 RUNNER_CheckTag(TInt, val1);
                 val1.SetIntValue(-val1.GetInt());
@@ -2868,21 +2894,25 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CEqual:
             {
+                RUNNER_NeedOperands(2);
                 DoEqual();
                 break;
             }
         case CLessThan:
             {
+                RUNNER_NeedOperands(2);
                 DoLessThan();
                 break;
             }
         case CLessEqual:
             {
+                RUNNER_NeedOperands(2);
                 DoLessEqual();
                 break;
             }
         case CNot:
             {
+                RUNNER_NeedOperands(1);
                 DoNot();
                 break;
             }
@@ -2942,16 +2972,19 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CPop:
             {
+                RUNNER_NeedOperands(1);
                 DiscardStackSlots(1);
                 break;
             }
         case CRefTo:
             {
+                RUNNER_NeedOperands(1);
                 DoRefTo();
                 break;
             }
         case CDeref:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(ref);
                 RUNNER_CheckTag(TRefTo, ref);
                 ref = Memory.GetStackSlot(ref.GetRawRefPtr());
@@ -2959,27 +2992,32 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             }
         case CSetRef:
             {
+                RUNNER_NeedOperands(2);
                 DoSetRef();
                 break;
             }
         case CInt2Double:
             {
+                RUNNER_NeedOperands(1);
                 DoInt2Double();
                 break;
             }
         case CInt2String:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(value);
                 value = DoInt2String(this, value);
                 break;
             }
         case CDouble2Int:
             {
+                RUNNER_NeedOperands(1);
                 DoDouble2Int();
                 break;
             }
         case CDouble2String:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(value);
                 value = DoDouble2String(this, value);
                 break;
@@ -2987,6 +3025,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
         case CField:
             {
                 int i = Code.ReadInt31();
+                RUNNER_NeedOperands(1);
                 DoField(i);
                 break;
             }
@@ -2994,12 +3033,14 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             {
                 char *plen = Code.GetBytes(4);
                 int len = (unsigned char)plen[0];
+                RUNNER_NeedOperands(1);
                 DoFieldName(Code.GetBytes(len), len, plen+2);
                 break;
             }
         case CSetMutable:
             {
                 int i = Code.ReadInt31();
+                RUNNER_NeedOperands(2);
                 DoSetMutable(i);
                 break;
             }
@@ -3007,6 +3048,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
             {
                 char *plen = Code.GetBytes(4);
                 int len = (unsigned char)plen[0];
+                RUNNER_NeedOperands(2);
                 DoSetMutableName(Code.GetBytes(len), len, plen+2);
                 break;
             }
@@ -4060,7 +4102,7 @@ StackSlot ByteCodeRunner::EvalFunctionArr(const StackSlot &func, int args_num, S
 
 bool ByteCodeRunner::EvalFunctionStack(const StackSlot &func, int args_num)
 {
-    if (!PrepareInterpreter()) return false;
+    if (IsErrorReported() || !PrepareInterpreter()) return false;
 #ifdef FLOW_JIT
     assert(!JitProgram);
 #endif
@@ -4454,12 +4496,14 @@ void FlowDebuggerBase::onRunnerReset()
 FlowPtr FlowDebuggerBase::SetBreakpoint(FlowPtr addr, bool enable)
 {
     FlowInstruction::Map::iterator it = mapFindLE(insn_table, addr);
-    if (it == insn_table.end() || !runner->PrepareInterpreter()) return addr;
+    if (it == insn_table.end()) return addr;
     addr = it->first;
 
     if (enable)
     {
-        if (!breakpoints().count(addr))
+        // The index must be built from the original opcodes before a trap is installed.
+        // Removing a breakpoint only restores its saved opcode, so it does not need the index.
+        if (!breakpoints().count(addr) && runner->PrepareInterpreter())
         {
             OpCode op = (OpCode)runner->Memory.GetByte(addr);
             assert(op != CBreakpoint);

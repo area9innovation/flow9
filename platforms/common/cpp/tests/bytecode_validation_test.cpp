@@ -53,7 +53,59 @@ public:
     void onAsyncInterrupt(FlowPtr) override {}
     void onError(RuntimeError, FlowPtr) override { check(false, "Debugger reported a runner error"); }
 };
+
+// Keeps a breakpoint at the entry through a runtime error.
+class BreakpointAfterError : public FlowDebuggerBase {
+public:
+    int errors = 0;
+    explicit BreakpointAfterError(ByteCodeRunner *runner) : FlowDebuggerBase(runner) { set(true); }
+    void set(bool enable) { SetBreakpoint(MakeFlowPtr(0), enable); }
+    bool hasBreakpoints() { return !breakpoints().empty(); }
+    void onBreakpointTrap(FlowPtr) override {}
+    void onInsnTrap(FlowPtr) override {}
+    void onCallTrap(FlowPtr, bool) override {}
+    void onReturnTrap(FlowPtr) override {}
+    void onAsyncInterrupt(FlowPtr) override {}
+    void onError(RuntimeError, FlowPtr) override { ++errors; }
+};
 #endif
+
+// Bytecode that adds with one value on the stack.
+static std::string plusWithOneOperand()
+{
+    std::string image(1, CInt);
+    const int one = 1;
+    image.append(reinterpret_cast<const char*>(&one), sizeof(one));
+    image += char(CPlus);
+    image += char(CLast);
+    return image;
+}
+
+static void testMissingOperands()
+{
+    // Each instruction takes more values than the stack holds.
+    for (const std::string &image : {plusWithOneOperand(), std::string{char(CPop), char(CLast)},
+                                     std::string{char(CNot), char(CLast)}, std::string{char(CEqual), char(CLast)}}) {
+        ByteCodeRunner runner;
+        runner.Init(image.data(), image.size());
+        runner.RunMain();
+        check(runner.IsErrorReported(), "An instruction without its operands must be rejected");
+    }
+
+#ifdef FLOW_DEBUGGER
+    // A breakpoint can still be removed after the program stopped with an error.
+    const std::string image = plusWithOneOperand();
+    std::unique_ptr<BreakpointAfterError> debugger; // Outlives the attached runner.
+    ByteCodeRunner runner;
+    runner.Init(image.data(), image.size());
+    debugger.reset(new BreakpointAfterError(&runner));
+    check(debugger->hasBreakpoints(), "Entry breakpoint was not installed");
+    runner.RunMain();
+    check(runner.IsErrorReported() && debugger->errors == 1, "Expected the missing operand error");
+    debugger->set(false);
+    check(!debugger->hasBreakpoints(), "Breakpoint must be removable after a runtime error");
+#endif
+}
 
 class ConstantProgram : public NativeProgram {
 public:
@@ -125,6 +177,12 @@ int main(int argc, char **argv)
     FlowInstruction wide;
     check(code.ParseOpcode(&wide) && code.Eof() && wide.StrValue == encodeUtf8(text),
           "Unsigned UTF-16 instruction length");
+
+    char bad_opcode[] = {char(0x50)};
+    code.SetBuffer(bad_opcode, 0, sizeof(bad_opcode));
+    FlowInstruction bad;
+    check(!code.ParseOpcode(&bad) && bad.op == OpCode(0x50) && code.GetPosition() == 0,
+          "An invalid opcode keeps its byte and the cursor");
 
     char type[] = {FTMutable, FTTypedArray, FTTypedRefTo, FTInt};
     char is_mutable = false;
@@ -225,4 +283,5 @@ int main(int argc, char **argv)
         check(compiled.ran && !runner.IsErrorReported(), "Native constant buffer is not interpreter code");
     }
     testCompactClosure();
+    testMissingOperands();
 }
