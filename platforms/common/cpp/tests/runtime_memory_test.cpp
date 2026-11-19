@@ -4,6 +4,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <sstream>
+#ifndef _WIN32
+#include <sys/stat.h>
+#include <unistd.h>
+#endif
 
 static void require(bool ok, const char *message) {
     if (!ok) {
@@ -128,6 +132,19 @@ static void testCopyFile(ByteCodeRunner &runner) {
         require(retained.load_file("copy.dat") && retained.size() == n && (!n || !memcmp(retained.data(), bytes.data(), n)),
                 "failed copy preserves destination");
     }
+#ifndef _WIN32
+    FILE *f = fopen("source.dat", "wb");
+    require(f && fputs("self", f) >= 0 && !fclose(f) && !link("source.dat", "link.dat"), "write source and a hard link");
+    for (const char *dest : {"source.dat", "link.dat"}) {
+        paths[1] = runner.AllocateString(dest);
+        require(!ByteCodeRunner::copyFile(&runner, paths).GetBool(), "no copy onto the same file");
+    }
+    struct stat st;
+    StaticBuffer kept;
+    require(!stat("source.dat", &st) && st.st_nlink == 2 && kept.load_file("source.dat") && kept.size() == 4 &&
+            !memcmp(kept.data(), "self", 4), "the file and its hard link are unchanged");
+    require(!remove("link.dat") && !remove("source.dat"), "remove the same-file inputs");
+#endif
 }
 
 static void testLegacyFileValues() {
@@ -172,6 +189,15 @@ static void testLegacyFileValues() {
     roots[2] = ByteCodeRunner::readPackedFile(&runner, roots);
     write(2, large + '\0', true);
     write(4, large, true); // The original mapping still has its exact byte count.
+#ifdef FLOW_MMAP_HEAP
+    // Reads of one file through both readers each reuse their own mapping.
+    roots[0] = runner.AllocateString("legacy-large.dat");
+    roots[1] = ByteCodeRunner::getFileContentBinary(&runner, roots);
+    roots[0] = runner.AllocateString("legacy-large.dat");
+    roots[3] = ByteCodeRunner::readPackedFile(&runner, roots);
+    require(runner.GetStringAddr(roots[1]) == runner.GetStringAddr(roots[4]) &&
+            runner.GetStringAddr(roots[3]) == runner.GetStringAddr(roots[2]), "alternate readers reuse their mappings");
+#endif
 #ifndef _WIN32 // Windows cannot rename a mapped file
     roots[0] = runner.AllocateString("legacy-large.dat");
     roots[4] = ByteCodeRunner::getFileContentBinary(&runner, roots);

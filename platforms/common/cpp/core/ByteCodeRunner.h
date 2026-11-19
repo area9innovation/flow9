@@ -678,6 +678,8 @@ private:
     FlowPtr MapStringPtr;
     FlowPtr MapAreaBase;
     std::map<std::string, StackSlot> MappedFiles;
+    // Legacy reads carry their byte count, so they are cached apart from current reads.
+    std::map<std::string, StackSlot> LegacyMappedFiles;
 #endif
 
     FlowPtr AllocateInner(unsigned size); // called if out of heap

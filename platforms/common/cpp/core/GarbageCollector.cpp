@@ -722,6 +722,7 @@ void GarbageCollector::ProcessRoots()
 #ifdef FLOW_MMAP_HEAP
     // Memory mapped files
     fn << Runner->MappedFiles;
+    fn << Runner->LegacyMappedFiles;
 #endif
 
     // Local root stack

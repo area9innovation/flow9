@@ -1687,6 +1687,13 @@ StackSlot ByteCodeRunner::copyFile(RUNNER_ARGS)
     std::string src = encodeUtf8(RUNNER->GetString(from));
     FILE *in = fopen(src.c_str(), "rb");
     if (!in) return StackSlot::MakeBool(false);
+    // As in cpp3 and Nim, a file is not copied onto itself or onto a hard link to it.
+    struct stat src_st, dest_st;
+    if (fstat(fileno(in), &src_st) != 0 || (stat(dest.c_str(), &dest_st) == 0 &&
+            src_st.st_dev == dest_st.st_dev && src_st.st_ino == dest_st.st_ino)) {
+        fclose(in);
+        return StackSlot::MakeBool(false);
+    }
 
     bool ok = replaceCopy(dest, [&in](FILE *out) {
         char buf[16384];

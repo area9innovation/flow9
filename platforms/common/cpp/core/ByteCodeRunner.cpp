@@ -586,6 +586,7 @@ void ByteCodeRunner::Reset(bool inDestructor)
 #ifdef FLOW_MMAP_HEAP
     MappedAreas.clear();
     MappedFiles.clear();
+    LegacyMappedFiles.clear();
 #endif
 
     // Reset hosts. This is done last, so that stuff
@@ -1286,13 +1287,12 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
     StackSlot rv = StackSlot::MakeVoid();
 
 #ifdef FLOW_MMAP_HEAP
-    auto cached = MappedFiles.find(filename);
-    if (!temporary && !legacy_file && cached != MappedFiles.end()) {
-        // Do not attach legacy write semantics to an existing ordinary string
-        // (or expose a legacy value through the current packed reader).
-        if (!LegacyFileBytes.count(GetStringAddr(cached->second)))
-            return cached->second;
-    }
+    // Separate caches keep legacy write semantics off ordinary strings, and
+    // let reads of one file through both readers each reuse their mapping.
+    auto &cache = legacy_file ? LegacyMappedFiles : MappedFiles;
+    auto cached = cache.find(filename);
+    if (!temporary && !legacy_file && cached != cache.end())
+        return cached->second;
 #endif
 
     FILE *file = fopen(filename.c_str(), "rb");
@@ -1315,7 +1315,7 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
         // same path was mapped earlier. Old string values retain the old mapping.
         struct stat st;
         bool have_id = legacy_file && bytes >= MIN_MMAP_SIZE && fstat(fileno(file), &st) == 0;
-        if (have_id && !temporary && cached != MappedFiles.end()) {
+        if (have_id && !temporary && cached != cache.end()) {
             FlowPtr addr = GetStringAddr(cached->second);
             auto old = LegacyFileBytes.find(addr);
             const auto &area = MappedAreas.at(addr);
@@ -1343,7 +1343,7 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
                     MapStringPtr = map_ptr;
 
                     if (!temporary) {
-                        MappedFiles[filename] = rv;
+                        cache[filename] = rv;
                         area->filename = filename;
                     }
                 } else {
@@ -1379,6 +1379,7 @@ void ByteCodeRunner::InvalidateFileCache(std::string filename)
 {
 #ifdef FLOW_MMAP_HEAP
     MappedFiles.erase(filename);
+    LegacyMappedFiles.erase(filename);
 #endif
 }
 
