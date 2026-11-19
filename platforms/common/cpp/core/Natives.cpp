@@ -608,9 +608,7 @@ int ByteCodeRunner::strRangeIndexOf(const unicode_char *pstr, const unicode_char
 
     if (l2 == 0) {
         return 0;
-	} else if (!pstr) {
-		return -1;
-    } else if (l2 > end - start) {
+    } else if (!pstr || start > end || l2 > end - start) {
         return -1;
     } else if (l2 == 1) {
         unicode_char key = *psub;
@@ -651,20 +649,19 @@ StackSlot ByteCodeRunner::strContainsAt(RUNNER_ARGS)
     RUNNER_CheckTag2(TString, str, sub);
     RUNNER_CheckTag1(TInt, pos);
 
-    unsigned ppos = pos.GetInt();
-
+    const int ppos = pos.GetInt();
     unsigned lstr, lsub;
     const unicode_char *pstr = RUNNER->GetStringPtrSize(str, &lstr);
     const unicode_char *psub = RUNNER->GetStringPtrSize(sub, &lsub);
 
-    if (ppos + lsub > lstr) {
+    if (ppos < 0 || unsigned(ppos) > lstr || lsub > lstr - unsigned(ppos)) {
         return StackSlot::MakeBool(false);
     }
+    if (lsub == 0) {
+        return StackSlot::MakeBool(true);
+    }
 
-    const unicode_char *pstrpos = pstr + ppos;
-    unsigned size               = lsub * FLOW_CHAR_SIZE;
-
-    return StackSlot::MakeBool(memcmp(pstrpos, psub, size) == 0);
+    return StackSlot::MakeBool(memcmp(pstr + ppos, psub, lsub * sizeof(*psub)) == 0);
 }
 
 StackSlot ByteCodeRunner::strRangeIndexOf(RUNNER_ARGS)
