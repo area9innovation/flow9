@@ -82,4 +82,14 @@ typedef enum
     CCodeCoverageTrap                   // Code coverage trap. Like breakpoint, but records a profiling sample.
 } OpCode;
 
+// Producer limits for integer operands (lib/lingo/flow/bytecode.flow).
+// Each occupies four bytes on the wire. These are independent of the data
+// stack capacity; the frame argument limit does not apply to CTailCall.
+enum {
+    FLOW_MAX_SLOT_INDEX = 0xffff,
+    FLOW_MAX_STRUCT_ID = 0xffff,
+    FLOW_MAX_FRAME_LOCALS = 0xffff,
+    FLOW_MAX_FRAME_ARGS = 0xff
+};
+
 #endif
