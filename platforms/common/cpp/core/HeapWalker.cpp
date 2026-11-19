@@ -58,7 +58,7 @@ void HeapWalker::ProcessStackRoots()
     if (Runner->closurepointer != 0)
     {
         FlowPtr ptr = Runner->closurepointer;
-        StackSlot tmp = StackSlot::InternalMakeClosurePointer(ptr, Runner->Memory.GetUInt16(ptr-4));
+        StackSlot tmp = StackSlot::InternalMakeClosurePointer(ptr-4, Runner->ClosureSlotCount(ptr));
 
         Process(tmp);
     }
@@ -67,7 +67,8 @@ void HeapWalker::ProcessStackRoots()
     for (unsigned i = 0; i < Runner->CallStack.size(); i++)
     {
         FlowPtr ptr = Runner->CallStack[i].last_closure;
-        StackSlot tmp = StackSlot::InternalMakeClosurePointer(ptr, Runner->Memory.GetUInt16(ptr-4));
+        if (ptr == 0) continue;
+        StackSlot tmp = StackSlot::InternalMakeClosurePointer(ptr-4, Runner->ClosureSlotCount(ptr));
 
         Process(tmp);
     }
@@ -129,6 +130,13 @@ void HeapWalker::ProcessRefs(FlowNativeObject *obj)
     obj->flowGCObject(fn);
 }
 
+StructDef *HeapWalker::LookupStructDef(unsigned id)
+{
+    if (unlikely(id >= NumStructDefs || StructDefs[id].FieldsCount < 0))
+        abort();
+    return &StructDefs[id];
+}
+
 void HeapWalker::Process(StackSlot &value)
 {
     switch (value.GetType()) {
@@ -159,10 +167,7 @@ void HeapWalker::Process(StackSlot &value)
 
     case TStruct:
         {
-            StructDef *def = StructDefs + value.GetStructId();
-            if (unlikely(unsigned(value.GetStructId()) >= NumStructDefs ||
-                         def->FieldsCount < 0))
-                abort();
+            StructDef *def = LookupStructDef(value.GetStructId());
 #ifdef FLOW_COMPACT_STRUCTS
             VisitStruct(value, (FlowStructHeader*)MEMORY_PTR(value.GetRawStructPtr(),4,true), def->FieldsCount, def);
 #else
@@ -174,7 +179,7 @@ void HeapWalker::Process(StackSlot &value)
     case TClosurePointer:
         {
             FlowPtr ptr = value.GetClosureDataPtr();
-            int size = FlowPtrToInt(ptr) ? *(int*)MEMORY_PTR(ptr-4,4,false) : 0;
+            int size = Runner->GetClosureSize(value);
             VisitClosure(value, size ? SLOT_PTR(ptr, size) : 0, size);
         }
         break;
@@ -203,12 +208,21 @@ void HeapWalker::Process(StackSlot &value)
 
     case TNativeFn:
         {
-            NativeFunction *fun = Runner->lookupNativeFn(Runner->GetNativeFnId(value));
+            int id = Runner->GetNativeFnId(value);
+            NativeFunction *fun = Runner->lookupNativeFn(id);
 
             if (fun)
             {
-                FlowPtr ptr = value.GetNativeFnDataPtr();
-                int size = FlowPtrToInt(ptr) ? *(int*)MEMORY_PTR(ptr-4,4,false) : 0;
+#ifdef FLOW_COMPACT_STRUCTS
+                if (value.IsNativeClosure() && Runner->UsesCompactClosureLayout(id)) {
+                    FlowStructHeader *data = Runner->GetClosureStructPtr(value);
+                    VisitNative(value, fun);
+                    VisitCompactFields(data, LookupStructDef(data->StructId));
+                    break;
+                }
+#endif
+                int size = value.IsNativeClosure() ? Runner->GetClosureSize(value) : 0;
+                FlowPtr ptr = size ? value.GetClosureDataPtr() : MakeFlowPtr(0);
                 VisitNativeFun(value, fun, size ? SLOT_PTR(ptr, size) : 0, size);
             }
             else

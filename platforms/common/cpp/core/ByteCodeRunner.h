@@ -229,6 +229,7 @@ public:
         FlowPtr last_pc;
         FlowPtr last_closure;
         int last_frame;
+        unsigned last_local_end;
 #ifdef FLOW_DEBUGGER
         FlowPtr impersonate_pc;
         bool is_closure;
@@ -308,7 +309,27 @@ private:
 
     // Stacks
     unsigned                   FramePointer;
+    unsigned                   LocalEnd; // Exclusive end of arguments and locals, below temporaries.
     TCallStack                 CallStack;
+    std::vector<bool>          InstructionStarts;
+    bool PrepareInterpreter();
+    bool IsInstructionStart(FlowPtr address) const;
+    bool IsCallableAddress(FlowPtr address) const;
+
+    bool HasOperands(unsigned count) const {
+        // One comparison on the hot path. The 64-bit sum cannot wrap, so a count from a
+        // negative operand fails, and so does a frame whose LocalEnd is above the stack top.
+        return uint64_t(LocalEnd) + count <= DataStack.size();
+    }
+
+    bool HasLocal(unsigned index) const {
+        // Calls and frame reservation maintain FramePointer <= LocalEnd.
+        return index < LocalEnd - FramePointer && LocalEnd <= DataStack.size();
+    }
+
+    unsigned short ClosureSlotCount(FlowPtr data) {
+        return Memory.GetObjectPointer(data - 4, false)->DataValue;
+    }
 
     // The overall memory layout
     FlowPtr HeapStart;
@@ -443,7 +464,6 @@ private:
 #undef STRUCT
 
     // For optimization of opcodes that access fields by name
-    std::vector<std::string> FieldRefNames;
     std::map<std::string,int> FieldRefIds;
 
     // Debugger data
@@ -474,6 +494,7 @@ private:
 #ifdef FLOW_INSTRUCTION_PROFILING
     bool ProfileCodeCoverage;
     std::vector<char> CoverageCodeBackup;
+    void SetCoverageOpcode(FlowPtr address, OpCode opcode);
 
     unsigned ProfileMemStep, ProfileICStep;
 
@@ -539,9 +560,9 @@ private:
     _INLINE_FORCE(void DoDouble2Int());
     _INLINE_FORCE(void DoField(int i));
     _INLINE_FORCE(void DoSetMutable(int i));
-    int LookupFieldName(const StackSlot &struct_ref, char const * n, int length, short *idx, StructDef **pdef);
-    void DoFieldName(char const * n, int length, short *idx);
-    void DoSetMutableName(char const * n, int length, short *idx);
+    int LookupFieldName(const StackSlot &struct_ref, char const * n, int length, void *idx, StructDef **pdef);
+    void DoFieldName(char const * n, int length, void *idx);
+    void DoSetMutableName(char const * n, int length, void *idx);
 
 public:
     void DoPlus(StackSlot &inout, const StackSlot &in2);
@@ -567,6 +588,7 @@ public:
 
 private:
     bool is_raw_bytecode;
+    bool has_interpreter_code = false; // Excludes JIT and native constant buffers.
     std::string BytecodeFilename;
 
     std::string LastErrorDescr;
@@ -864,8 +886,7 @@ public:
 
     // These are type-specific:
     inline int GetClosureSize(const StackSlot &arr) {
-        FlowPtr ptr = arr.GetClosureDataPtr();
-        return ptr != MakeFlowPtr(0) ? Memory.GetInt32(ptr - 4) : 0;
+        return ClosureSlotCount(arr.GetClosureDataPtr());
     }
     inline unsigned GetArraySize(const StackSlot &arr) {
         assert(arr.IsArray());
@@ -1112,6 +1133,7 @@ private:
 #ifdef FLOW_COMPACT_STRUCTS
     // Native functions at the start of the list that use struct-like layouts
     unsigned NumCompactNativeFNs;
+    bool UsesCompactClosureLayout(unsigned func_id) const { return func_id < NumCompactNativeFNs; }
 #endif
     // Number of data stack entries that are made read-only to protect globals
     unsigned NumFrozenDataStack;

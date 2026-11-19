@@ -565,7 +565,7 @@ struct StructDef
 #endif
     std::vector<std::string> FieldNames; // array of char * pointers to zerro strings
     std::vector< std::vector<FieldType> > FieldTypes;
-    std::vector<short> FieldIds;
+    std::vector<int> FieldIds; // Field offsets, independent of the 16-bit name cache key.
     std::vector<char> IsMutable;
 #ifdef FLOW_COMPACT_STRUCTS
     const FlowStructFieldDef *FieldDefs;
@@ -788,6 +788,7 @@ public:
     }
 
     void clear() {
+        // Allocate first: if that throws, the stack keeps its buffer and frees it once.
         T *new_buf = new T[MinSize];
         delete[] buf;
         buf = new_buf;
