@@ -1795,14 +1795,17 @@ StackSlot ByteCodeRunner::setFileContentHelper(RUNNER_ARGS, void (*processor)(in
         return StackSlot::MakeBool(ok);
     }
 #else
+    // Windows writes the original bytes through the ordinary temporary file below.
     if (whole_file) {
-        RUNNER->ReportError(InvalidArgument, "Legacy packed file copy: rebuild with Native.copyFile.");
-        return StackSlot::MakeBool(false);
+        processor = NULL;
+        nbytes = unsigned(file->second);
     }
 #endif
 
     uint8_t * bytes;
-    if (processor != NULL) {
+    if (whole_file) {
+        bytes = (uint8_t*)pdata;
+    } else if (processor != NULL) {
         bytes = new uint8_t[nbytes];
         processor(nbytes, pdata, bytes);
     } else {

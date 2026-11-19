@@ -155,12 +155,6 @@ static void testLegacyFileValues() {
     read("legacy-odd.dat", odd, 2);
     read("legacy-even.dat", even, 3);
     read("legacy-large.dat", large, 4);
-#ifdef _WIN32
-    roots[0] = runner.AllocateString("legacy-out.dat");
-    roots[1] = roots[2];
-    require(!ByteCodeRunner::setFileContentBytes(&runner, roots).GetBool() && runner.IsErrorReported(),
-            "legacy packed copy is explicitly rejected on Windows");
-#else
     runner.ForceGC(0, false);
     runner.ForceGC(0, true);
     require(runner.GetString(roots[2]) == runner.GetString(roots[3]), "old strings have equal packed values");
@@ -178,6 +172,7 @@ static void testLegacyFileValues() {
     roots[2] = ByteCodeRunner::readPackedFile(&runner, roots);
     write(2, large + '\0', true);
     write(4, large, true); // The original mapping still has its exact byte count.
+#ifndef _WIN32 // Windows cannot rename a mapped file
     roots[0] = runner.AllocateString("legacy-large.dat");
     roots[4] = ByteCodeRunner::getFileContentBinary(&runner, roots);
     require(!rename("legacy-large.dat", "previous-large.dat"), "remove cached source name");
