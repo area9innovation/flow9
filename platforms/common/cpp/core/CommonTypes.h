@@ -759,18 +759,17 @@ class FlowStack
         while (new_sz > limit) {
             limit *= 2;
         }
-        T* new_buf = new T[sizeof(T) * limit];
+        T* new_buf = new T[limit];
         for (unsigned i = 0; i < pos; ++ i) {
         	new_buf[i] = buf[i];
         }
-        delete buf;
+        delete[] buf;
         buf = new_buf;
-        //buf = (T*)realloc(buf, sizeof(T)*limit);
     }
 
 public:
     FlowStack() : buf(nullptr) { clear(); }
-    ~FlowStack() { free(buf); }
+    ~FlowStack() { delete[] buf; }
 
     void swap(FlowStack<T,MinSize> &other) {
         std::swap(buf, other.buf);
@@ -779,8 +778,10 @@ public:
     }
 
     void clear() {
-    	delete buf;
-        buf = new T[sizeof(T) * MinSize];
+        // Allocate first: if that throws, the stack keeps its buffer and frees it once.
+        T *new_buf = new T[MinSize];
+        delete[] buf;
+        buf = new_buf;
         pos = 0; limit = MinSize;
     }
 
