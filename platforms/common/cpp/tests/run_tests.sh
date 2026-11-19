@@ -13,7 +13,8 @@ trap 'rm -rf "$WORK_DIR"' EXIT
 # char_traits_fix.h uses memcpy without including <cstring>
 "${CXX:-g++}" -std=c++11 -g -O1 -Wall -fsanitize=address,undefined -include cstring \
     -I"$CPP_DIR" -I"$CPP_DIR/core" \
-    "$CPP_DIR/core/Utf8.cpp" "$CPP_DIR/font/TextFont.cpp" "$SCRIPT_DIR/utf8_test.cpp" \
+    "$CPP_DIR/core/Utf8.cpp" "$CPP_DIR/core/Utf32.cpp" \
+    "$CPP_DIR/font/TextFont.cpp" "$SCRIPT_DIR/utf8_test.cpp" \
     -o "$WORK_DIR/utf8_test"
 
 cd "$WORK_DIR"

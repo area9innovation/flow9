@@ -1,4 +1,4 @@
-// Tests of the runner's UTF-8 decoder, file reads, stl_sprintf and font-name parsing.
+// Tests of the runner's Unicode decoders, file reads, stl_sprintf and font-name parsing.
 // Run with run_tests.sh, which builds it with the sanitizers in a temporary folder.
 
 #include <cstring>
@@ -89,6 +89,76 @@ static void testChunkedDecoder() {
     }
 }
 
+static void testUtf16Validator() {
+    const uint16_t input[] = {'A', 0xD83D};
+    uint32_t output[2] = {};
+    size_t outputSize;
+    const size_t consumed = decodeCharsUtf16toUtf32(input, sizeof input / sizeof input[0], output, &outputSize);
+    if (consumed != 1 || outputSize != 1 || output[0] != 'A')
+        fail("UTF-16 validator should report the incomplete character and preserve the decoded prefix");
+}
+
+static void testUtf16Conversion() {
+    const unicode_string text = {'A', 0xD800, 'B', 0xDC00, 0, 0xD83D, 0xDE00};
+    if (decodeUtf16toUtf32(text) != utf32_string{'A', 0xFFFE, 'B', 0xFFFE, 0, 0x1F600})
+        fail("UTF-16 string conversion should preserve text around unpaired surrogates");
+    if (decodeUtf16toUtf32(text.data() + 4, 2) != utf32_string{0, 0xFFFE})
+        fail("UTF-16 substring conversion should use only the supplied code units");
+    if (!decodeUtf16toUtf32(unicode_string()).empty() || !decodeUtf16toUtf32(text.data(), 0).empty())
+        fail("UTF-16 conversion of an empty string or range should be empty");
+}
+
+static void checkTraversal(const std::string &name, Utf32InputIterator &it, Utf32InputIterator &end,
+                           size_t size, const std::vector<ucs4_char_tracer> &path) {
+    auto unread = it.clone();
+    for (const auto &ch : path) {
+        const size_t pos = std::get<0>(ch);
+        if (unread->position() != pos)
+            fail(name + ": increment without dereference missed position " + std::to_string(pos));
+        if (it.position() != pos || *it != std::get<2>(ch) || it.traceCurrent() != ch)
+            fail(name + ": unexpected character or span at position " + std::to_string(pos));
+        ++*unread;
+        ++it;
+    }
+    if (end.position() != size || it != end || *unread != end || *it != 0 || *end != 0)
+        fail(name + ": traversal should finish at the zero-valued end sentinel");
+
+    const size_t first = path.empty() ? size : std::get<0>(path.front());
+    ++it;
+    if (it.position() != first)
+        fail(name + ": incrementing end should cycle back to the beginning");
+    it.seekEnd();
+    if (it != end || *it != 0)
+        fail(name + ": seekEnd should select the end sentinel");
+    it.seekBegin();
+    if (it.position() != first || (!path.empty() && it.traceCurrent() != path.front()))
+        fail(name + ": seekBegin should restore the first character and its span");
+}
+
+static void checkUtf16Iterators(DecodeUtf16toUtf32 &decoder, size_t size,
+                                const std::vector<ucs4_char_tracer> &path) {
+    auto forward = decoder.begin(), end = decoder.end();
+    auto reverse = decoder.rbegin(), rend = decoder.rend();
+    checkTraversal("forward UTF-16", forward, end, size, path);
+    checkTraversal("reverse UTF-16", reverse, rend, size, {path.rbegin(), path.rend()});
+}
+
+static void testUtf16Iteration() {
+    unicode_string text = {0xD83D, 0xDE00, 0xD800, 'A', 0xDC00, 0, 0xE000, 0xDBFF, 0xDFFF};
+    DecodeUtf16toUtf32 decoder(text);
+    checkUtf16Iterators(decoder, text.size(), {
+        {0, 2, 0x1F600}, {2, 3, 0xFFFE}, {3, 4, 'A'}, {4, 5, 0xFFFE},
+        {5, 6, 0}, {6, 7, 0xE000}, {7, 9, 0x10FFFF}
+    });
+
+    DecodeUtf16toUtf32 prefix(&text[0], 1);
+    checkUtf16Iterators(prefix, 1, {{0, 1, 0xFFFE}});
+    unicode_string empty;
+    DecodeUtf16toUtf32 emptyString(empty), emptyRange(&text[0], 0);
+    checkUtf16Iterators(emptyString, 0, {});
+    checkUtf16Iterators(emptyRange, 0, {});
+}
+
 static void testFileReads() {
     bool ok = true;
     if (!readFileAsUnicodeString(".", &ok).empty() || ok)
@@ -146,6 +216,9 @@ static void testFontNames() {
 int main() {
     testDecoder();
     testChunkedDecoder();
+    testUtf16Validator();
+    testUtf16Conversion();
+    testUtf16Iteration();
     testFileReads();
     testSprintf();
     testFontNames();
