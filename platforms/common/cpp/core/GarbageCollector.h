@@ -72,9 +72,10 @@ class GarbageCollector : private GarbageCollectorFnCallback
     bool inEnumPhase, inFastGC;
 
     // Statistics
-    int NumRefs, NumSlots, NumClosures, NumLongStrings, NumObjects;
+    int NumRefs, NumClosures, NumLongStrings, NumObjects;
+    int64_t NumSlots;
 #ifdef FLOW_COMPACT_STRUCTS
-    int NumStructBytes;
+    int64_t NumStructBytes;
 #endif
 
     // GC tag tracking
@@ -110,6 +111,8 @@ class GarbageCollector : private GarbageCollectorFnCallback
     T_LiveTable NativeFunctionsAlive;
 
     void ReportTagError(int tag);
+    void CheckStructId(unsigned id);
+    void CheckArrayBytes(FlowPtr ptr, unsigned count, bool closure);
 
 public:
     GarbageCollector(ByteCodeRunner *rnr);
@@ -117,7 +120,7 @@ public:
     static const int MAX_SPECIAL_TAG = 2;
 
     bool CollectFast();
-    bool Collect(unsigned ensure_space);
+    bool Collect(unsigned ensure_old_space);
 
     int ComputeNativeBudget();
 
@@ -139,8 +142,9 @@ private:
     void EnumPhaseTag(T_GC_Tag tag);
     void NextTag();
 
-    int ComputeLiveBytes();
-    bool DoubleHeap();
+    int64_t ComputeLiveBytes();
+    void GrowHeap(unsigned size);
+    void RelocateLegacyFileBytes();
 
     void UpdateRunnerHeap();
 
@@ -211,7 +215,8 @@ private:
     FlowPtr AllocFailure(int bytes);
 
     FlowPtr Allocate(int bytes) {
-        if (unlikely(bytes < 0))
+        if (unlikely(bytes < 0 || hp_big_pos < hp_ref_end ||
+                     unsigned(bytes) > FlowPtrToInt(hp_big_pos) - FlowPtrToInt(hp_ref_end)))
             return AllocFailure(bytes);
         hp_big_pos = FlowPtrAlignDown(hp_big_pos - bytes, 4);
         if (unlikely(hp_big_pos < hp_ref_end))

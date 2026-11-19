@@ -178,9 +178,12 @@ QString QMediaStreamSupport::getPropertyValue(GstElement *element, GParamSpec **
 void QMediaStreamSupport::getAudioInputDevices(int onDeviceInfoReadyRoot)
 {
     RUNNER_VAR = owner;
-    StackSlot devicesArray = RUNNER->AllocateArray(audioDevices.size());
+    RUNNER_DefSlots2(devicesArray, device);
+    devicesArray = RUNNER->AllocateArray(audioDevices.size());
+    if (RUNNER->IsErrorReported()) return;
     for (int i = 0; i < audioDevices.size(); i++) {
-        StackSlot device = RUNNER->AllocateArray(2);
+        device = RUNNER->AllocateArray(2);
+        if (RUNNER->IsErrorReported()) return;
         RUNNER->SetArraySlot(device, 0, RUNNER->AllocateString(audioDevices[i].first));
         RUNNER->SetArraySlot(device, 1, RUNNER->AllocateString(audioDevices[i].second));
 
@@ -192,9 +195,12 @@ void QMediaStreamSupport::getAudioInputDevices(int onDeviceInfoReadyRoot)
 void QMediaStreamSupport::getVideoInputDevices(int onDeviceInfoReadyRoot)
 {
     RUNNER_VAR = owner;
-    StackSlot devicesArray = RUNNER->AllocateArray(videoDevices.size());
+    RUNNER_DefSlots2(devicesArray, device);
+    devicesArray = RUNNER->AllocateArray(videoDevices.size());
+    if (RUNNER->IsErrorReported()) return;
     for (int i = 0; i < videoDevices.size(); i++) {
-        StackSlot device = RUNNER->AllocateArray(2);
+        device = RUNNER->AllocateArray(2);
+        if (RUNNER->IsErrorReported()) return;
         RUNNER->SetArraySlot(device, 0, RUNNER->AllocateString(videoDevices[i].id));
         RUNNER->SetArraySlot(device, 1, RUNNER->AllocateString(videoDevices[i].name));
 

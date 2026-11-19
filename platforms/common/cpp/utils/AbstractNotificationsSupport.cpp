@@ -186,9 +186,11 @@ void AbstractNotificationsSupport::deliverFBMessage(
 
     int i = 0;
     _data = RUNNER->AllocateArray(data.size());
+    if (RUNNER->IsErrorReported()) return;
     for (T_MessageData::iterator it = data.begin(); it != data.end(); ++it) {
         RUNNER_DefSlots1(_keyvalue);
         _keyvalue = RUNNER->AllocateArray(2);
+        if (RUNNER->IsErrorReported()) return;
 
         RUNNER->SetArraySlot(_keyvalue, 0, RUNNER->AllocateString(it->first.c_str()));
         RUNNER->SetArraySlot(_keyvalue, 1, RUNNER->AllocateString(it->second.c_str()));

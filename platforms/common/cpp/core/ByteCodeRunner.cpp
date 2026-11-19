@@ -15,6 +15,7 @@
 #include <string.h>
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #if !defined(_MSC_VER) && !defined(__MINGW32__)
 #include <alloca.h>
 #endif
@@ -27,6 +28,7 @@
 #include "win_mman.h"
 #else
 #include <sys/mman.h>
+#include <sys/stat.h>
 #endif
 #endif
 
@@ -116,6 +118,7 @@ struct tm ByteCodeRunner::tzOffsetInfo;
  * Initialization of fields upon object construction.
  */
 void ByteCodeRunner::initStructures() {
+    initializationComplete = false;
     ProfileStream = NULL;
 #ifdef FLOW_TIME_PROFILING
 #ifdef FLOW_PTHREAD
@@ -203,7 +206,7 @@ void ByteCodeRunner::Init(std::string bytecode_file) {
         DoInit(NULL, FlowPtrToInt(getLastCodeAddress()), false);
 
     BytecodeFilename = bytecode_file;
-    initializationComplete = true;
+    initializationComplete = !IsErrorReported();
 }
 
 void ByteCodeRunner::Init(const char *bytecode_buffer, int bytecode_length)
@@ -211,6 +214,8 @@ void ByteCodeRunner::Init(const char *bytecode_buffer, int bytecode_length)
     has_interpreter_code = true;
     initializationComplete = false;
     DoInit(bytecode_buffer, bytecode_length, false);
+    if (IsErrorReported())
+        return;
     is_raw_bytecode = true;
     initializationComplete = true;
 }
@@ -225,6 +230,8 @@ void ByteCodeRunner::Init(NativeProgram *program)
     const char *bytecode = program->getByteCode(&length);
 
     DoInit(bytecode, length, false);
+    if (IsErrorReported())
+        return;
 
     program->owner = this;
     Program = program;
@@ -238,6 +245,8 @@ void ByteCodeRunner::Init(FlowJitProgram *program)
     has_interpreter_code = false;
     initializationComplete = false;
     program->InitRunner(this);
+    if (IsErrorReported())
+        return;
 
     JitProgram = program;
     initializationComplete = true;
@@ -278,6 +287,62 @@ void ByteCodeRunner::ReloadBytecode()
     }
 }
 
+// Prepare space for the code and CLast; load file input before installing any runner state.
+int ByteCodeRunner::PrepareBytecode(const char *filename, int64_t length, bool &mapped)
+{
+    auto fail = [&](const char *message, int error) {
+        // No executable bytecode is installed yet; don't disassemble an opcode.
+        LastError = InvalidArgument;
+        LastErrorDescr = message;
+        LastErrorInfo = filename ? filename : "";
+        if (error)
+            LastErrorInfo += std::string(": ") + strerror(error);
+        flow_err << LastErrorDescr << " " << LastErrorInfo << endl;
+        return 0;
+    };
+
+    auto close_file = [](FILE *f) { fclose(f); };
+    std::unique_ptr<FILE, decltype(close_file)> file(NULL, close_file);
+    if (filename)
+    {
+        file.reset(fopen(filename, "rb"));
+        if (!file)
+            return fail("Could not open bytecode file:", errno);
+        length = ReadFileLength(file.get());
+        if (length < 0)
+            return fail("Could not determine bytecode file size:", errno);
+    }
+
+    // Leave space for CLast, alignment, and the maximum heap before narrowing.
+    const uint64_t limit = align_down(MAX_MEMORY_SIZE, Memory.PageSize());
+    const uint64_t heap = MAX_HEAP_SIZE;
+    const unsigned initial_heap = std::min(MIN_HEAP_SIZE, MAX_HEAP_SIZE);
+    if (!initial_heap || initial_heap / 2 < EPHEMERAL_HEAP_SIZE ||
+        initial_heap % 8 || MAX_HEAP_SIZE % 8) {
+        return fail("Heap limits must allow two aligned semispaces:", 0);
+    }
+    if (length < 0 || length >= INT_MAX || heap > limit ||
+        uint64_t(length) + 1 > align_down(limit - heap, Memory.PageSize())) {
+        return fail("Bytecode size exceeds the runner limit:", 0);
+    }
+
+    const int bytecode_length = int(length) + 1;
+    mapped = false;
+    if (file && length > 0) {
+        Memory.SetSize(bytecode_length);
+        mapped = Memory.MapFile(MakeFlowPtr(0), length, file.get(), 0, true);
+        if (!mapped) {
+            char *p = Memory.GetRawPointer(MakeFlowPtr(0), length, true);
+            if (fread(p, 1, length, file.get()) != size_t(length)) {
+                Memory.SetSize(0);
+                return fail("Could not read complete bytecode file:", ferror(file.get()) ? errno : 0);
+            }
+        }
+    }
+
+    return bytecode_length;
+}
+
 /*
  * Initializes runner for executing given bytecode.
  *
@@ -286,61 +351,16 @@ void ByteCodeRunner::ReloadBytecode()
  */
 void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_length, bool from_file)
 {
-    static StackSlot dummy_ss[2];
-    static FlowPtr dummy_fp[2];
-
-    if (sizeof(int) != 4 || sizeof(FlowPtr) != 4 || sizeof(StackSlot) != STACK_SLOT_SIZE ||
-        sizeof(dummy_fp) != 8 || sizeof(dummy_ss) != 2*STACK_SLOT_SIZE)
-    {
-        flow_err << "Platform violates data type size assumptions.\n";
-        abort();
-    }
-
+    static_assert(sizeof(int) == 4 && sizeof(FlowPtr) == 4 && sizeof(StackSlot) == STACK_SLOT_SIZE,
+                  "Platform violates data type size assumptions");
     Reset(false);
 
-    // Set up the different memory segments
     int CodePosition = 0;
     FlowPtr CodeStart = MakeFlowPtr(CodePosition);
-
-    bool code_mapped = false;
-    if (from_file)
-    {
-        if (FILE *file = fopen(bytecode_buffer_or_fn, "rb"))
-        {
-            if(fseek(file, 0, SEEK_END) < 0)  // May be bad filename
-            {
-                cerr << "Bad/no bytecode file: <<" << bytecode_buffer_or_fn << ">>, error " << errno << ": " << strerror(errno) << endl;
-            }
-
-            bytecode_length = ftell(file);
-            rewind(file);
-
-            Memory.SetSize(bytecode_length + 1);
-
-            if (!Memory.MapFile(CodeStart, bytecode_length, bytecode_buffer_or_fn, 0, true))
-            {
-                char *p = Memory.GetRawPointer(CodeStart, bytecode_length, true);
-                int have_read = int(fread(p, 1, bytecode_length, file));
-                if (have_read < bytecode_length) {
-                	// We have read less elements, then required.
-                	cerr << "Error loading bytecode file: <<" << bytecode_buffer_or_fn << ">>, have read " << have_read << " bytes while acquired " << bytecode_length << " bytes" << endl;
-                }
-            }
-            else
-                code_mapped = true;
-
-            fclose(file);
-        }
-        else
-        {
-            cerr << "Can't open bytecode file: <<" << bytecode_buffer_or_fn << ">>, error " << errno << ": " << strerror(errno) << endl;
-        }
-
-        bytecode_buffer_or_fn = NULL;
-    }
-
-    // space for CLast artificial instruction
-    bytecode_length++;
+    bool code_mapped;
+    bytecode_length = PrepareBytecode(from_file ? bytecode_buffer_or_fn : NULL, bytecode_length, code_mapped);
+    if (!bytecode_length)
+        return;
 
     // Call stack: starts right after the code, aligned up to 4 bytes
     HeapStart = MakeFlowPtr(bytecode_length);
@@ -349,15 +369,16 @@ void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_leng
     else
         HeapStart = FlowPtrAlignUp(HeapStart, 4);
 
-    HeapEnd = HeapStart + MIN_HEAP_SIZE; // The highest address
+    const unsigned initial_heap = std::min(MIN_HEAP_SIZE, MAX_HEAP_SIZE);
+    HeapEnd = MakeFlowPtr(FlowPtrToInt(HeapStart) + initial_heap);
 
 #ifdef FLOW_MMAP_HEAP
     MapStringPtr = MakeFlowPtr(align_down(MAX_MEMORY_SIZE, MemoryArea::page_size()));
-    MapAreaBase = HeapStart + MAX_HEAP_SIZE;
+    MapAreaBase = FlowPtrAlignUp(MakeFlowPtr(FlowPtrToInt(HeapStart) + MAX_HEAP_SIZE), Memory.PageSize());
 #endif
 
     Memory.SetSize(FlowPtrToInt(HeapEnd));
-    if (bytecode_buffer_or_fn != NULL)
+    if (!from_file && bytecode_buffer_or_fn != NULL)
         Memory.SetBytes(CodeStart, bytecode_buffer_or_fn, bytecode_length-1);
 
     // putting an artificial instruction in place
@@ -368,7 +389,8 @@ void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_leng
 
     NativeReturnInsn = getLastCodeAddress() - 1;
 
-    UpdateHeapLimits(true);
+    // A first growth smaller than a doubling can copy safely from the low half.
+    UpdateHeapLimits(initial_heap <= MAX_HEAP_SIZE / 2 || initial_heap == MAX_HEAP_SIZE);
     RefWriteMask.clear();
     SlotWriteSet.clear();
 #ifdef FLOW_COMPACT_STRUCTS
@@ -546,6 +568,7 @@ void ByteCodeRunner::Reset(bool inDestructor)
 
     // Empty other tables
     NativeRoots.clear();
+    LegacyFileBytes.clear();
     nNativeRoots = 0;
 
     Toplevel.clear();
@@ -563,6 +586,7 @@ void ByteCodeRunner::Reset(bool inDestructor)
 #ifdef FLOW_MMAP_HEAP
     MappedAreas.clear();
     MappedFiles.clear();
+    LegacyMappedFiles.clear();
 #endif
 
     // Reset hosts. This is done last, so that stuff
@@ -575,6 +599,7 @@ void ByteCodeRunner::Reset(bool inDestructor)
     Memory.DecommitRange(MakeFlowPtr(0), MakeFlowPtr(MAX_MEMORY_SIZE));
     Code.SetPosition(MakeFlowPtr(0));
     Code.SetBuffer(NULL,0,0);
+    NativeReturnInsn = CodeStartPtr();
 }
 
 ByteCodeRunner::~ByteCodeRunner()
@@ -611,7 +636,7 @@ void ByteCodeRunner::SetExtendedDebugInfo(ExtendedDebugInfo *dinfo)
 
 HeapLimits ByteCodeRunner::GetHeapLimits(bool high)
 {
-    unsigned size = HeapEnd - HeapStart;
+    unsigned size = FlowPtrToInt(HeapEnd) - FlowPtrToInt(HeapStart);
     FlowPtr m = HeapStart + size / 2;
     HeapLimits ret;
     ret.Start = high ? HeapEnd : m;
@@ -1032,6 +1057,7 @@ StackSlot ByteCodeRunner::AllocNativeFn(NativeFunction *fn, FlowPtr cp)
         // Trying to call this native will overrun a stack buffer.
         // Increase the constant and recompile if this becomes a problem.
         ReportError(UnknownNativeName, "Too many args for native \"%s\": %d", fn->name(), fn->num_args());
+        delete fn;
         return StackSlot::MakeVoid();
     }
 
@@ -1079,7 +1105,7 @@ bool NativeProgram::InitFunctionTable(StackSlot *out, const FunctionSpec *in, un
 
 StackSlot ByteCodeRunner::AllocateNativeClosure(NativeClosurePtr ptr, const char *name, int num_args, void *data, int num_slots, ...)
 {
-    StackSlot *buf = new StackSlot[num_slots+1];
+    std::vector<StackSlot> buf(num_slots+1);
     StackSlot &base = buf[0];
 
     va_list vl;
@@ -1089,13 +1115,9 @@ StackSlot ByteCodeRunner::AllocateNativeClosure(NativeClosurePtr ptr, const char
     va_end(vl);
 
     base = AllocNativeFn(new NativeClosure(name, num_args, ptr, data), NativeReturnInsn);
-    assert(base.IsNativeFn() && !base.GetSign());
-
-    LocalRootDefinition frame(this, num_slots+1, buf); (void)&frame;
-    FlowPtr arr = AllocateClosureBuffer(base.slot_private.IntValue, num_slots, buf+1); // ALLOC
-
-    delete[] buf;
-    return StackSlot::InternalMakeNativeClosure(arr, num_slots);
+    if (unlikely(base.IsVoid())) return base;
+    LocalRootDefinition frame(this, num_slots+1, buf.data()); (void)&frame;
+    return AllocateClosure(base, num_slots, buf.data()+1); // ALLOC
 }
 
 StackSlot ByteCodeRunner::AllocateConstClosure(int num_args, StackSlot value) {
@@ -1104,6 +1126,7 @@ StackSlot ByteCodeRunner::AllocateConstClosure(int num_args, StackSlot value) {
 
     if (!ConstClosureCache[num_args].IsNativeFn())
         ConstClosureCache[num_args] = AllocNativeFn(new SimpleNative("$const$", num_args, const_closure), NativeReturnInsn);
+    if (unlikely(ConstClosureCache[num_args].IsVoid())) return StackSlot::MakeVoid();
 
     LocalRootDefinition frame(this, 1, &value); (void)&frame;
 
@@ -1140,10 +1163,8 @@ FlowPtr ByteCodeRunner::AllocateInner(unsigned size) {
         }
     }
 
-    if (gcStressTestEnabled)
-        ForceGC(size, rand()%3==0);
-    else
-        ForceGC(size);
+    // Collection empties the young generation. Only promotion needs old space here.
+    ForceGC(0, gcStressTestEnabled && rand()%3==0);
 
     FlowPtr nhp = FlowPtrAlignDown(hp - size, 4);
     if (unlikely(nhp < hpbound || nhp > hp)) {
@@ -1173,12 +1194,20 @@ unicode_char *ByteCodeRunner::AllocateStringBuffer(StackSlot *out, unsigned leng
 {
     assert(length > 0);
 
+    const unsigned max_bytes = MAX_HEAP_SIZE / 2;
+    if (unlikely(length > FLOW_MAX_STRING_LENGTH || max_bytes < 8 ||
+                 length > (max_bytes - 8) / FLOW_CHAR_SIZE)) {
+        ReportError(HeapFull, "String is too large for the heap.");
+        return NULL;
+    }
+
     FlowPtr buf;
     unsigned bytes = length*FLOW_CHAR_SIZE;
 
     if (length & 0xffff0000u)
     {
         FlowPtr str = Allocate(4 + 4 + bytes); //ALLOC
+        if (unlikely(IsErrorReported())) return NULL;
         buf = str + 8;
         Memory.SetInt32(str, length & 0xffff);
         Memory.SetFlowPtr(str+4, buf);
@@ -1188,6 +1217,7 @@ unicode_char *ByteCodeRunner::AllocateStringBuffer(StackSlot *out, unsigned leng
     else
     {
         buf = Allocate(bytes); // ALLOC
+        if (unlikely(IsErrorReported())) return NULL;
 
         StackSlot::InternalSetString(*out, buf, length, false);
     }
@@ -1204,6 +1234,11 @@ FlowPtr *ByteCodeRunner::AllocateStringRef(StackSlot *out, unsigned length)
 {
     static FlowPtr dummy = MakeFlowPtr(0);
 
+    if (unlikely(length > FLOW_MAX_STRING_LENGTH)) {
+        ReportError(HeapFull, "String reference is too large.");
+        return NULL;
+    }
+
     if (length == 0)
     {
         *out = StackSlot::MakeEmptyString();
@@ -1213,6 +1248,7 @@ FlowPtr *ByteCodeRunner::AllocateStringRef(StackSlot *out, unsigned length)
     if (length & 0xffff0000u)
     {
         FlowPtr str = Allocate(4 + 4);
+        if (unlikely(IsErrorReported())) return NULL;
 
         Memory.SetInt32(str, length & 0xffff);
         StackSlot::InternalSetString(*out, str, length>>16, true);
@@ -1227,12 +1263,18 @@ FlowPtr *ByteCodeRunner::AllocateStringRef(StackSlot *out, unsigned length)
     }
 }
 
-StackSlot ByteCodeRunner::AllocateString(const unicode_char *str, int len) {
+StackSlot ByteCodeRunner::AllocateString(const unicode_char *str, size_t len) {
     if (len == 0)
         return StackSlot::MakeEmptyString();
+    if (unlikely(len > FLOW_MAX_STRING_LENGTH)) {
+        ReportError(HeapFull, "String is too large.");
+        return StackSlot::MakeVoid();
+    }
 
     StackSlot out;
     unicode_char *tmp = AllocateStringBuffer(&out, len); // ALLOC
+    if (!tmp)
+        return StackSlot::MakeVoid();
 
     if (str)
         memcpy(tmp, str, len * FLOW_CHAR_SIZE);
@@ -1240,64 +1282,93 @@ StackSlot ByteCodeRunner::AllocateString(const unicode_char *str, int len) {
     return out;
 }
 
-StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
+StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary, bool legacy_file)
 {
     StackSlot rv = StackSlot::MakeVoid();
 
 #ifdef FLOW_MMAP_HEAP
-    if (!temporary && MappedFiles.count(filename))
-        return MappedFiles[filename];
+    // Separate caches keep legacy write semantics off ordinary strings, and
+    // let reads of one file through both readers each reuse their mapping.
+    auto &cache = legacy_file ? LegacyMappedFiles : MappedFiles;
+    auto cached = cache.find(filename);
+    if (!temporary && !legacy_file && cached != cache.end())
+        return cached->second;
 #endif
 
     FILE *file = fopen(filename.c_str(), "rb");
     if (!file)
         return StackSlot::MakeVoid();
 
-    fseek(file, 0, SEEK_END);
-    size_t size = ftell(file);
-    rewind(file);
+    int64_t size = ReadFileLength(file);
 
     if (size == 0)
     {
         rv = StackSlot::MakeEmptyString();
     }
-    else
+    else if (size > 0 && uint64_t(size) <= uint64_t(FLOW_MAX_STRING_LENGTH) * FLOW_CHAR_SIZE)
     {
         size_t length = size/FLOW_CHAR_SIZE+size%FLOW_CHAR_SIZE;
         size_t bytes = length * FLOW_CHAR_SIZE;
 
 #ifdef FLOW_MMAP_HEAP
-        if (bytes >= MIN_MMAP_SIZE && MapStringPtr - bytes >= MapAreaBase)
+        // A legacy copy must read the current source, even when a file at the
+        // same path was mapped earlier. Old string values retain the old mapping.
+        struct stat st;
+        bool have_id = legacy_file && bytes >= MIN_MMAP_SIZE && fstat(fileno(file), &st) == 0;
+        if (have_id && !temporary && cached != cache.end()) {
+            FlowPtr addr = GetStringAddr(cached->second);
+            auto old = LegacyFileBytes.find(addr);
+            const auto &area = MappedAreas.at(addr);
+            if (old != LegacyFileBytes.end() && old->second == size_t(size) &&
+                area->file_device == uint64_t(st.st_dev) && area->file_inode == uint64_t(st.st_ino)) {
+                fclose(file);
+                return cached->second;
+            }
+        }
+        if (bytes >= MIN_MMAP_SIZE && MapStringPtr >= MapAreaBase &&
+            bytes <= FlowPtrToInt(MapStringPtr) - FlowPtrToInt(MapAreaBase))
         {
             FlowPtr map_ptr = FlowPtrAlignDown(MapStringPtr - bytes, Memory.PageSize());
 
-            if (Memory.MapFile(map_ptr, bytes, filename))
+            if (map_ptr >= MapAreaBase && Memory.MapFile(map_ptr, size, file))
             {
-                MappedAreaInfo::Ptr area(new MappedAreaInfo(map_ptr, bytes));
-                MappedAreas[map_ptr] = area;
-                MapStringPtr = map_ptr;
+                if (FlowPtr *ref = AllocateStringRef(&rv, length)) {
+                    *ref = map_ptr;
+                    MappedAreaInfo::Ptr area(new MappedAreaInfo(map_ptr, bytes));
+                    if (have_id) {
+                        area->file_device = st.st_dev;
+                        area->file_inode = st.st_ino;
+                    }
+                    MappedAreas[map_ptr] = area;
+                    MapStringPtr = map_ptr;
 
-                *AllocateStringRef(&rv, length) = map_ptr;
-
-                if (!temporary)
-                {
-                    MappedFiles[filename] = rv;
-                    area->filename = filename;
+                    if (!temporary) {
+                        cache[filename] = rv;
+                        area->filename = filename;
+                    }
+                } else {
+                    Memory.DecommitRange(map_ptr, MapStringPtr);
                 }
             }
         }
 #endif
 
-        if (rv.IsVoid())
+        if (rv.IsVoid() && !IsErrorReported())
         {
             StackSlot out;
             unicode_char *p = AllocateStringBuffer(&out, length);
 
-            if (fread(p, FLOW_CHAR_SIZE, length, file) == length)
-                rv = out;
+            if (p) {
+                // mmap zero-fills the partial page at EOF; match its trailing code unit.
+                p[length - 1] = 0;
+                if (fread(p, 1, size_t(size), file) == size_t(size))
+                    rv = out;
+            }
         }
     }
 
+    if (legacy_file && size > 0 && rv.IsString())
+        LegacyFileBytes[GetStringAddr(rv)] = size_t(size);
     fclose(file);
     if (temporary)
         remove(filename.c_str());
@@ -1308,13 +1379,18 @@ void ByteCodeRunner::InvalidateFileCache(std::string filename)
 {
 #ifdef FLOW_MMAP_HEAP
     MappedFiles.erase(filename);
+    LegacyMappedFiles.erase(filename);
 #endif
 }
 
-StackSlot ByteCodeRunner::AllocateUninitializedArray(unsigned len)
+StackSlot ByteCodeRunner::AllocateUninitializedArray(uint64_t len)
 {
     assert(len > 0);
 
+    if (unlikely(!FlowSlotsFit(len, 4, std::min(MAX_HEAP_SIZE / 2, unsigned(INT_MAX))))) {
+        ReportError(HeapFull, "Array is too large for the heap.");
+        return StackSlot::MakeEmptyArray();
+    }
     unsigned bytes = len * STACK_SLOT_SIZE;
 
     FlowPtr buf = Allocate(bytes + 4); // ALLOC
@@ -1335,6 +1411,7 @@ StackSlot ByteCodeRunner::AllocateRef(const StackSlot &value) {
     unsigned id = NextRefId++;
 
     FlowPtr buf = Allocate(STACK_SLOT_SIZE + 4); // ALLOC
+    if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
     Memory.SetInt32(buf, id & 0xffffu);
 
     SetMemorySlot(buf+4, 0, value);
@@ -1349,11 +1426,13 @@ StackSlot ByteCodeRunner::AllocateRef(const StackSlot &value) {
     return rv;
 }
 
-StackSlot ByteCodeRunner::AllocateArray(int length, StackSlot *data) { // data must be immovable
+StackSlot ByteCodeRunner::AllocateArray(int64_t length, StackSlot *data) { // data must be immovable
     if (length <= 0)
         return StackSlot::MakeEmptyArray();
 
     StackSlot rv = AllocateUninitializedArray(length);
+    if (unlikely(IsErrorReported()))
+        return rv;
     StackSlot *buf = GetArrayWritePtr(rv, length);
 
     if (data)
@@ -1364,11 +1443,25 @@ StackSlot ByteCodeRunner::AllocateArray(int length, StackSlot *data) { // data m
     return rv;
 }
 
+StackSlot ByteCodeRunner::AllocateStringArray(const std::vector<std::string> &utf8)
+{
+    StackSlot list = AllocateArray(utf8.size());
+    if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
+    LocalRootDefinition frame(this, 1, &list);
+    for (size_t i = 0; i < utf8.size(); ++i) {
+        StackSlot item = AllocateString(parseUtf8(utf8[i]));
+        if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
+        SetArraySlot(list, i, item);
+    }
+    return list;
+}
+
 StackSlot ByteCodeRunner::AllocateUninitializedClosure(unsigned short len, FlowPtr code)
 {
     int bytes = len * STACK_SLOT_SIZE;
     FlowPtr buf = Allocate(bytes + 4 + 4) + 4; // ALLOC
 
+    if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
     Memory.SetFlowPtr(buf-4, code);
     Memory.SetInt32(buf, len);
 
@@ -1378,6 +1471,8 @@ StackSlot ByteCodeRunner::AllocateUninitializedClosure(unsigned short len, FlowP
 FlowPtr ByteCodeRunner::AllocateClosureBuffer(int code, unsigned short len, StackSlot *data) {
     int bytes = len * STACK_SLOT_SIZE;
     FlowPtr buf = Allocate(bytes + 4 + 4) + 4; // ALLOC
+    if (unlikely(IsErrorReported()))
+        return MakeFlowPtr(0);
 
     Memory.SetInt32(buf-4, code);
     Memory.SetInt32(buf, len);
@@ -1522,19 +1617,23 @@ FlowPtr ByteCodeRunner::MoveStackToHeap(int num_slots, bool with_size)
         return MakeFlowPtr(0);
     }
 
-    int bytes = num_slots * STACK_SLOT_SIZE;
-
-    FlowPtr ptr;
-    if (with_size) {
-        ptr = Allocate(bytes + 4) + 4; // ALLOC
-        Memory.SetInt32(ptr-4, num_slots);
-    } else {
-        ptr = Allocate(bytes); // ALLOC
+    const unsigned header = with_size ? 4 : 0;
+    if (unlikely(!FlowSlotsFit(num_slots, header))) {
+        ReportError(HeapFull, "Stack slot buffer is too large.");
+        return MakeFlowPtr(0);
     }
+    int bytes = num_slots * STACK_SLOT_SIZE;
+    FlowPtr base = Allocate(bytes + header); // ALLOC
+    if (unlikely(IsErrorReported()))
+        return MakeFlowPtr(0);
+
+    if (with_size)
+        Memory.SetInt32(base, num_slots);
+    FlowPtr ptr = base + header;
 
     Memory.SetBytes(ptr, DataStack.pop_ptr(num_slots), bytes);
     if (ptr >= hp_big_pos)
-        SlotWriteSet.addInterval(ptr, ptr + num_slots*STACK_SLOT_SIZE);
+        SlotWriteSet.addInterval(ptr, ptr + bytes);
     return ptr;
 }
 
@@ -1883,14 +1982,21 @@ void ByteCodeRunner::DoPlusString(ByteCodeRunner *self, StackSlot &val1, const S
         return;
     }
 
-    int l1 = self->GetStringSize(val1);
-    int l2 = self->GetStringSize(val2);
+    const unsigned l1 = self->GetStringSize(val1);
+    const unsigned l2 = self->GetStringSize(val2);
+    if (unlikely(l1 > FLOW_MAX_STRING_LENGTH || l2 > FLOW_MAX_STRING_LENGTH - l1)) {
+        self->ReportError(HeapFull, "Concatenated string is too large.");
+        return;
+    }
+    const unsigned length = l1 + l2;
+    const unsigned bytes1 = l1 * FLOW_CHAR_SIZE, bytes2 = l2 * FLOW_CHAR_SIZE;
 
-    if (self->GetStringAddr(val1) + l1 * FLOW_CHAR_SIZE == self->GetStringAddr(val2))
+    if (uint64_t(FlowPtrToInt(self->GetStringAddr(val1))) + bytes1 == FlowPtrToInt(self->GetStringAddr(val2)))
     {
         // Merge the strings in-place
         StackSlot rv;
-        FlowPtr *rp = self->AllocateStringRef(&rv, l1 + l2); // ALLOC
+        FlowPtr *rp = self->AllocateStringRef(&rv, length); // ALLOC
+        if (!rp) return;
 
         *rp = self->GetStringAddr(val1);
         val1 = rv;
@@ -1898,15 +2004,13 @@ void ByteCodeRunner::DoPlusString(ByteCodeRunner *self, StackSlot &val1, const S
     else
     {
         StackSlot rv;
-        unicode_char *ptr = self->AllocateStringBuffer(&rv, l1 + l2); // ALLOC
+        if (!self->AllocateStringBuffer(&rv, length)) return; // ALLOC
 
-        {
-            // Assume val1 & val2 don't move, since gc
-            // doesn't reallocate the stack anymore
-            memcpy(ptr,    self->GetStringPtr(val1), l1 * FLOW_CHAR_SIZE);
-            memcpy(ptr+l1, self->GetStringPtr(val2), l2 * FLOW_CHAR_SIZE);
-            val1 = rv;
-        }
+        // Re-read the source addresses after allocation, which can run GC.
+        FlowPtr dest = self->GetStringAddr(rv);
+        self->Memory.Copy(self->GetStringAddr(val1), dest, bytes1);
+        self->Memory.Copy(self->GetStringAddr(val2), dest + bytes1, bytes2);
+        val1 = rv;
     }
 }
 
@@ -2660,7 +2764,9 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
                 if (len)
                 {
                     StackSlot str;
-                    *AllocateStringRef(&str, len) = Code.GetPosition();
+                    FlowPtr *ref = AllocateStringRef(&str, len);
+                    if (!ref) break;
+                    *ref = Code.GetPosition();
                     Push(str);
                     Code.GetWideBytes(len);
                 }
@@ -2681,6 +2787,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
                     }
 
                     StackSlot arr = AllocateUninitializedArray(len); // ALLOC
+                    if (unlikely(IsErrorReported())) break;
                     memcpy(GetArrayWritePtr(arr, len), DataStack.pop_ptr(len), len * STACK_SLOT_SIZE);
                     Push(arr);
                 }
@@ -3122,6 +3229,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) try {
                 }
 
                 StackSlot clos = AllocateUninitializedClosure(n, Code.GetPosition() + offset); // ALLOC
+                if (unlikely(IsErrorReported())) break;
                 memcpy(GetClosureWritePtr(clos, n), DataStack.pop_ptr(n), n * STACK_SLOT_SIZE);
                 Push(clos);
                 break;
@@ -3616,7 +3724,7 @@ void ByteCodeRunner::FreezeNativeFunctions(bool compact)
 #endif
 }
 
-void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
+void ByteCodeRunner::ForceGC(unsigned ensure_old_space, bool full)
 {
     if (NativeValueBudget < 0) {
 #ifdef DEBUG_FLOW
@@ -3644,7 +3752,7 @@ void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
 
     if (!fast_ok)
     {
-        if (!gc.Collect(ensure_space))
+        if (!gc.Collect(ensure_old_space))
             return;
 
         // Heuristically force full gc when too many new natives are allocated
@@ -3880,6 +3988,8 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getDataTagForValue, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getFileContent, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getFileContentBinary, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, readPackedFile, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, copyFile, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContent, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContentUTF16, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContentBinary, 2);

@@ -30,9 +30,17 @@ esac
     -I"$CPP_DIR" -I"$CPP_DIR/core" "$SCRIPT_DIR/flowstack_test.cpp" \
     -o "$WORK_DIR/flowstack_test" "${libs[@]}"
 
+# Verify runtime guards with assertions disabled, like the release runner.
+"${CXX:-g++}" -std=c++11 -g -O1 -DNDEBUG -fsanitize=address,undefined -include cstring \
+    -I"$CPP_DIR" -I"$CPP_DIR/core" -I"$CPP_DIR/include" -pthread \
+    "$CPP_DIR"/core/{ByteCodeRunner,ByteMemory,CodeMemory,GarbageCollector,HeapWalker,MemoryArea,Natives,Utf8}.cpp \
+    "$CPP_DIR/utils/md5.cpp" "$SCRIPT_DIR/runtime_memory_test.cpp" \
+    -o "$WORK_DIR/runtime_memory_test"
+
 cd "$WORK_DIR"
 ./flowstack_test
 export TMPDIR="$PWD/temp-雪"
 mkdir "$TMPDIR"
 ./utf8_test
+./runtime_memory_test
 rmdir "$TMPDIR" # Neither named nor unnamed streams should leave files behind.

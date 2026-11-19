@@ -221,7 +221,10 @@ bool FlowJitProgram::Load(const std::string &bytecode_file)
 void FlowJitProgram::InitRunner(ByteCodeRunner *runner)
 {
     // Copy flow strings and other things into flow memory area
-    runner->DoInit((char*)flow_constant_buffer.data(), flow_constant_buffer.size(), false);
+    const size_t size = flow_constant_buffer.size();
+    runner->DoInit((char*)flow_constant_buffer.data(), size < INT_MAX ? int(size) : -1, false);
+    if (runner->IsErrorReported())
+        return;
 
     runner->JitCallFrame = NULL;
 
@@ -3985,6 +3988,10 @@ void FlowJitProgram::FunctionAssembler::generate()
 
         case CArray:
         {
+            if (insn.IntValue < 0 || !FlowSlotsFit(insn.IntValue, 4, std::min(MAX_HEAP_SIZE / 2, unsigned(INT_MAX)))) {
+                owner->err << "Array is too large for the heap." << std::endl;
+                throw JitError();
+            }
             if (insn.IntValue == 0)
             {
                 // Empty array is a constant

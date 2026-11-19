@@ -32,8 +32,16 @@ class ByteMemory : protected MemoryArea
     
     char *Buffer;
     size_t BufferSize;
+    const size_t RangeLimit;
 
-    void ReportFailure(FlowPtr ptr, size_t size, bool write);
+    [[noreturn]] void ReportFailure(FlowPtr ptr, size_t size, bool write);
+    char *VerifyBulkAccess(FlowPtr ptr, size_t size, bool write) {
+        // Mapped files can live above BufferSize, within the same reservation.
+        const size_t pos = FlowPtrToInt(ptr);
+        if (unlikely(pos > RangeLimit || size > RangeLimit - pos))
+            ReportFailure(ptr, size, write);
+        return Buffer + pos;
+    }
 
 #if defined(DEBUG_FLOW) && !defined(__x86_64__)
     char *VerifyAccess(FlowPtr ptr, size_t size, bool write) {
@@ -63,15 +71,14 @@ public:
     size_t GetMemSize() { return BufferSize; }
     size_t PageSize() { return MemoryArea::page_size(); }
 
-    bool MapFile(FlowPtr start, size_t length, std::string filename, size_t offset = 0, bool writable = false);
+    bool MapFile(FlowPtr start, size_t length, FILE *file, size_t offset = 0, bool writable = false);
 
     void Clear();
 
     bool IsValid(FlowPtr ptr, size_t size)
     {
         unsigned iptr = FlowPtrToInt(ptr);
-        size_t end = iptr + size;
-        return !(end > BufferSize || end < iptr);
+        return iptr <= BufferSize && size <= BufferSize - iptr;
     }
 
     char *GetRawPointer(FlowPtr ptr, size_t size, bool for_write) {
@@ -108,22 +115,22 @@ public:
 
     void Copy(FlowPtr from, FlowPtr to, size_t size) {
         if (unlikely(size == 0)) return;
-        memmove(VerifyAccess(to,size,true), VerifyAccess(from,size,false), size);
+        memmove(VerifyBulkAccess(to,size,true), VerifyBulkAccess(from,size,false), size);
     }
 
     void FillBytes(FlowPtr addr, int val, size_t size) {
         if (unlikely(size == 0)) return;
-        memset(VerifyAccess(addr,size,true), val, size);
+        memset(VerifyBulkAccess(addr,size,true), val, size);
     }
 
     void SetBytes(FlowPtr addr, const void *buf, size_t size) {
         if (unlikely(size == 0)) return;
-        memcpy(VerifyAccess(addr,size,true), buf, size);
+        memcpy(VerifyBulkAccess(addr,size,true), buf, size);
     }
 
     void GetBytes(FlowPtr addr, void *buf, size_t size) {
         if (unlikely(size == 0)) return;
-        memcpy(buf, VerifyAccess(addr,size,false), size);
+        memcpy(buf, VerifyBulkAccess(addr,size,false), size);
     }
 
     const StackSlot &GetStackSlot(FlowPtr addr) {
