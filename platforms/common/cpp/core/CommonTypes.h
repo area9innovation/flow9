@@ -778,8 +778,10 @@ public:
     }
 
     void clear() {
+        // Allocate first: if that throws, the stack keeps its buffer and frees it once.
+        T *new_buf = new T[MinSize];
         delete[] buf;
-        buf = new T[MinSize];
+        buf = new_buf;
         pos = 0; limit = MinSize;
     }
 

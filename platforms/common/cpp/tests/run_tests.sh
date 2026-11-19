@@ -26,7 +26,12 @@ esac
     "$CPP_DIR/font/TextFont.cpp" "$SCRIPT_DIR/utf8_test.cpp" \
     -o "$WORK_DIR/utf8_test" "${libs[@]}"
 
+"${CXX:-g++}" "${cxxflags[@]}" -g -O1 -Wall -fsanitize=address,undefined -include cstring \
+    -I"$CPP_DIR" -I"$CPP_DIR/core" "$SCRIPT_DIR/flowstack_test.cpp" \
+    -o "$WORK_DIR/flowstack_test" "${libs[@]}"
+
 cd "$WORK_DIR"
+./flowstack_test
 export TMPDIR="$PWD/temp-雪"
 mkdir "$TMPDIR"
 ./utf8_test

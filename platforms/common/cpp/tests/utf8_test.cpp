@@ -1,8 +1,7 @@
-// Tests of the runner's Unicode decoders, file reads, stl_sprintf, font-name parsing and FlowStack.
+// Tests of the runner's Unicode decoders, file reads, stl_sprintf and font-name parsing.
 // Run with run_tests.sh, which builds it with the sanitizers in a temporary folder.
 
 #include <cstring>
-#include "core/CommonTypes.h"
 #include "core/STLHelpers.h"
 #include "font/TextFont.h"
 
@@ -274,36 +273,7 @@ static void testFontNames() {
     }
 }
 
-// The address sanitizer checks that buffers are allocated and released as arrays.
-static void testFlowStack() {
-    FlowStack<int, 4> stack;
-    for (int i = 0; i < 1000; ++i)
-        stack.push_back(i);
-    bool kept = stack.size() == 1000 && stack.capacity() == 1024;
-    for (int i = 0; i < 1000; ++i)
-        kept = kept && stack[i] == i;
-    if (!kept)
-        fail("FlowStack should keep its values while it grows");
-    if (stack.top() != 999 || stack.pop() != 999 || *stack.pop_ptr(2) != 997 || stack.size() != 997)
-        fail("FlowStack should pop from the top");
-
-    FlowStack<int, 4> other;
-    other.push_back(-1);
-    other.push_all(stack, 990); // All but the top 990 values, as stack snapshots skip frames
-    if (other.size() != 8 || other[0] != -1 || other[1] != 0 || other.top() != 6)
-        fail("FlowStack::push_all should append all but the top skip values");
-    other.swap(stack);
-    if (stack.size() != 8 || other.size() != 997 || other[996] != 996)
-        fail("FlowStack::swap should exchange contents");
-
-    stack.clear();
-    stack.resize(5);
-    if (stack.size() != 5 || stack.capacity() != 8)
-        fail("FlowStack should start again from its minimum size after clear");
-}
-
 int main() {
-    testFlowStack();
     testDecoder();
     testChunkedDecoder();
     testUtf16Validator();
