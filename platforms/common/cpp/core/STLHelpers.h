@@ -331,6 +331,8 @@ bool readFileToVector(std::vector<uint8_t> *buffer, std::string name, bool auto_
 
 extern std::string temp_file_path;
 
+// The caller closes the stream. On POSIX, the caller also removes the file
+// if it requests the name; otherwise the open file is already unlinked.
 FILE *MakeTemporaryFile(std::string *pname = NULL);
 
 double GetCurrentTime();

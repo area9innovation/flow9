@@ -7,6 +7,11 @@
 
 #include <algorithm>
 #include <cstdio>
+#ifndef _WIN32
+#include <cstdlib>
+#include <fcntl.h>
+#include <sys/stat.h>
+#endif
 #include <string>
 #include <vector>
 
@@ -185,6 +190,61 @@ static void testSprintf() {
     stl_sprintf("%ls", unencodable);
 }
 
+#ifndef _WIN32
+static void testTemporaryFile() {
+    const char *dir = getenv("TMPDIR"); // run_tests.sh supplies a private Unicode directory
+    if (!dir) {
+        fail("temporary file test needs TMPDIR");
+        return;
+    }
+#ifndef QT_CORE_LIB
+    temp_file_path = dir; // Qt already gets TMPDIR from QDir::tempPath().
+#endif
+    std::string name;
+    FILE *file = MakeTemporaryFile(&name);
+    if (!file) {
+        fail("could not create named temporary file");
+        return;
+    }
+    if (name.substr(0, name.rfind('/')) != dir)
+        fail("temporary file is outside TMPDIR");
+    int flags = fcntl(fileno(file), F_GETFD);
+    if (flags == -1 || !(flags & FD_CLOEXEC))
+        fail("temporary stream should be close-on-exec");
+
+    const std::vector<uint8_t> bytes = {0, 0xff, '\n', 'x'};
+    if (fwrite(bytes.data(), 1, bytes.size(), file) != bytes.size())
+        fail("could not write to returned temporary stream");
+    if (fclose(file) != 0)
+        fail("could not close temporary stream");
+    std::vector<uint8_t> actual;
+    if (!readFileToVector(&actual, name) || actual != bytes)
+        fail("could not read back temporary data by name after close");
+    if (remove(name.c_str()) != 0)
+        fail("could not remove temporary file by name");
+
+    file = MakeTemporaryFile();
+    if (!file) {
+        fail("could not create unnamed temporary stream");
+        return;
+    }
+    struct stat st;
+    if (fstat(fileno(file), &st) != 0)
+        fail("could not stat unnamed temporary stream");
+    else if (st.st_nlink != 0)
+        fail("unnamed temporary file should already be unlinked on return");
+
+    if (fwrite(bytes.data(), 1, bytes.size(), file) != bytes.size())
+        fail("could not write to unnamed temporary stream");
+    rewind(file);
+    std::vector<uint8_t> readback(bytes.size());
+    if (fread(readback.data(), 1, readback.size(), file) != readback.size() || readback != bytes)
+        fail("could not read back data from unnamed temporary stream");
+    if (fclose(file) != 0)
+        fail("could not close unnamed temporary stream");
+}
+#endif
+
 static void testFontNames() {
     struct { const char *name; TextWeight weight; const char *family; TextStyle style; } cases[] = {
         { "Roboto", TextWeight::Regular, "Roboto", Normal },
@@ -220,6 +280,9 @@ int main() {
     testUtf16Conversion();
     testUtf16Iteration();
     testFileReads();
+#ifndef _WIN32
+    testTemporaryFile();
+#endif
     testSprintf();
     testFontNames();
     printf(failures ? "%d tests FAILED\n" : "All tests passed\n", failures);
