@@ -22,7 +22,8 @@ esac
 # char_traits_fix.h uses memcpy without including <cstring>
 "${CXX:-g++}" "${cxxflags[@]}" -g -O1 -Wall -fsanitize=address,undefined -include cstring \
     -I"$CPP_DIR" -I"$CPP_DIR/core" \
-    "$CPP_DIR/core/Utf8.cpp" "$CPP_DIR/font/TextFont.cpp" "$SCRIPT_DIR/utf8_test.cpp" \
+    "$CPP_DIR/core/Utf8.cpp" "$CPP_DIR/core/Utf32.cpp" \
+    "$CPP_DIR/font/TextFont.cpp" "$SCRIPT_DIR/utf8_test.cpp" \
     -o "$WORK_DIR/utf8_test" "${libs[@]}"
 
 cd "$WORK_DIR"

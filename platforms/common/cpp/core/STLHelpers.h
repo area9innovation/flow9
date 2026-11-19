@@ -240,6 +240,8 @@ unicode_string encodeUtf8u(const unicode_string &str);
 size_t encodeCharUtf32toUtf16(uint32_t c, uint16_t *out);
 size_t decodeCharsUtf16toUtf32(const uint16_t *input, size_t input_size, uint32_t *output, size_t *output_size);
 size_t encodeCharsUtf32toUtf16(const uint32_t *input, size_t input_size, uint16_t *output, size_t *output_size);
+utf32_string decodeUtf16toUtf32(const unicode_char *str, size_t size);
+utf32_string decodeUtf16toUtf32(const unicode_string &str);
 
 class Utf32InputIterator: public std::iterator<std::input_iterator_tag, ucs4_char> {
 public:
@@ -280,13 +282,9 @@ public:
     protected:
         DecodeUtf16toUtf32 *parent;
         size_t pos;
-        ucs4_char outbuf;
-        char currentCharLen;
 
         Iterator(DecodeUtf16toUtf32 *parent, size_t pos);
-        void refreshState();
-        void decodeChar();
-        char charNativeLen();
+        size_t charNativeLen() const;
         Utf32InputIterator &forward();
         Utf32InputIterator &backward();
     public:
@@ -305,7 +303,6 @@ public:
         // Cycle through all characters and one extra «ending» position.
         virtual Utf32InputIterator &operator ++() {return forward();}
         virtual Utf32InputIterator &operator ++(int) {return forward();}
-        virtual void seekBegin() { pos = 0; };
 
         virtual shared_ptr<Utf32InputIterator> clone();
         virtual shared_ptr<Utf32InputIterator> cloneReversed();
@@ -318,7 +315,6 @@ public:
         // Cycle through all characters and one extra «ending» position.
         virtual Utf32InputIterator &operator ++() {return backward();}
         virtual Utf32InputIterator &operator ++(int)  {return backward();}
-        virtual void seekBegin() { pos = parent->size? parent->size-1 : 0; };
 
         virtual shared_ptr<Utf32InputIterator> clone();
         virtual shared_ptr<Utf32InputIterator> cloneReversed();
