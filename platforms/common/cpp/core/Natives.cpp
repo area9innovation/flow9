@@ -96,7 +96,7 @@ NativeMethodHost::~NativeMethodHost() {
 /* Utilities */
 
 static void ClipLenToRange(int pidx, unsigned *plen, unsigned size) {
-    *plen = std::min(*plen, size - unsigned(pidx));
+    *plen = (std::min)(*plen, size - unsigned(pidx));
 }
 
 static void checkProperSubstringArguments(int *idx, int *len, int strLen)
