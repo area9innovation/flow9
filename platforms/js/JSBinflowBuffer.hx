@@ -65,6 +65,10 @@ class JSBinflowBuffer {
 	private static inline var arrayFrame = 0;
 	private static inline var structFrame = 1;
 	private static inline var refFrame = 2;
+	// The default nesting limit; keep in sync with lib/text/binary.flow and the C++ BinaryDeserializer.
+	// Arrays, structs (even empty ones) and refs count; scalar leaves and the footer do not.
+	public static inline var defaultMaxNestingDepth = 2048;
+	private var maxNestingDepth : Int = defaultMaxNestingDepth;
 
 	// A result index below zero marks damaged input: the whole value becomes the default
 	private static inline var damagedBinaryIndex = -1;
@@ -209,6 +213,7 @@ class JSBinflowBuffer {
 				value = word;
 				i++;
 			} else if (word == 0xFFF4) {
+				if (frames.length >= maxNestingDepth) return damaged();
 				var structIndex = readWord(i + 1);
 				if (isDamaged(structIndex) || structIndex[0] >= StructDefs.length) return damaged();
 				var def : Array<Dynamic> = StructDefs[structIndex[0]];
@@ -222,10 +227,12 @@ class JSBinflowBuffer {
 				}
 				value = makeStruct(def[1], []);
 			} else if (word == 0xFFF6) {
+				if (frames.length >= maxNestingDepth) return damaged();
 				frames.push({ kind: refFrame, count: 1, elements: null, name: null });
 				i++;
 				continue;
 			} else if (word == 0xFFF7 || word == 0xFFF8 || word == 0xFFF9) {
+				if (frames.length >= maxNestingDepth) return damaged();
 				var count = readCount(i);
 				if (isDamaged(count)) return damaged();
 				i = count[1];
@@ -260,11 +267,12 @@ class JSBinflowBuffer {
 	private var DefValue : Dynamic;
 	private var Fixups : Dynamic;
 	private var endIndex : Int;
-	public function deserialise(defvalue : Dynamic, fixups : Dynamic) : Dynamic {
+	public function deserialise(defvalue : Dynamic, fixups : Dynamic, maxDepth : Int = defaultMaxNestingDepth) : Dynamic {
 		if (FlowIllegalStruct == null) FlowIllegalStruct = Native.makeStructValue("IllegalStruct", [], null);
 
 		DefValue = defvalue;
 		Fixups = fixups;
+		maxNestingDepth = maxDepth;
 		// Another call may bring other fixups and another footer
 		StructDefs = [];
 		StructFixupCache = new Map();

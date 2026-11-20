@@ -2,6 +2,7 @@
 #include <QtCore/QProcessEnvironment>
 
 #include "core/ByteCodeRunner.h"
+#include "HeapSize.h"
 #include "qt-backend/DatabaseSupport.h"
 #include "qt-backend/HttpSupport.h"
 #include "qt-backend/QtTimerSupport.h"
@@ -119,8 +120,8 @@ int main(int argc, char *argv[])
     QProcessEnvironment penv = QProcessEnvironment::systemEnvironment();
     const char* MAX_HEAP_KEY = "FLOWCGI_MAX_HEAP";
     const char* MIN_HEAP_KEY = "FLOWCGI_MIN_HEAP";
-    MAX_HEAP_SIZE = 1048576 * penv.value(MAX_HEAP_KEY, "512").toInt();
-    MIN_HEAP_SIZE = 1048576 * penv.value(MIN_HEAP_KEY, "256").toInt();
+    MAX_HEAP_SIZE = heapSizeInBytes(penv.value(MAX_HEAP_KEY, "512"));
+    MIN_HEAP_SIZE = heapSizeInBytes(penv.value(MIN_HEAP_KEY, "256"));
 
     FCGX_Init();
     FCGX_Stream *in, *out, *err;

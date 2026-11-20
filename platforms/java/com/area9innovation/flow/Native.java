@@ -8,9 +8,10 @@ import java.io.*;
 import java.lang.*;
 import java.lang.reflect.*;
 import java.math.BigInteger;
-import java.net.URLDecoder;
 import java.nio.charset.*;
 import java.nio.file.*;
+import java.nio.file.attribute.PosixFilePermission;
+import java.nio.file.attribute.PosixFilePermissions;
 import java.security.*;
 import java.time.*;
 import java.time.format.*;
@@ -816,7 +817,7 @@ public class Native extends NativeHost {
 				return test_result;
 			}
 		}
-		return FlowRuntime.makeStructValue(some_struct_id, new Object[] { res }, null);
+		return FlowRuntime.makeStructValueUnchecked(some_struct_id, new Object[] { res }, null);
 	}
 
 	@SuppressWarnings("unchecked")
@@ -1278,7 +1279,7 @@ public class Native extends NativeHost {
 
 	public static final Struct getCurrentDate() {
 		GregorianCalendar date = new GregorianCalendar();
-		return FlowRuntime.makeStructValue(
+		return FlowRuntime.makeStructValueUnchecked(
 				"Date",
 				new Object[] {
 					date.get(Calendar.YEAR),
@@ -1392,6 +1393,42 @@ public class Native extends NativeHost {
 			return new String(bytes, StandardCharsets.ISO_8859_1);
 		} catch (IOException e) {
 			return "";
+		}
+	}
+
+	public static final boolean copyFile(String from, String to) {
+		Path dir = null, tmp = null;
+		try {
+			Path src = Paths.get(from), dst = Paths.get(to).toAbsolutePath();
+			if (!Files.isRegularFile(src) || dst.getParent() == null || Files.isDirectory(dst)) return false;
+			boolean posix = dst.getFileSystem().supportedFileAttributeViews().contains("posix");
+			try (InputStream in = Files.newInputStream(src)) {
+				if (posix) {
+					Set<PosixFilePermission> ownerOnly = PosixFilePermissions.fromString("rwx------");
+					dir = Files.createTempDirectory(dst.getParent(), ".flowcopy", PosixFilePermissions.asFileAttribute(ownerOnly));
+					Files.setPosixFilePermissions(dir, ownerOnly);
+					if (!Files.getPosixFilePermissions(dir).equals(ownerOnly)) return false;
+				} else {
+					dir = Files.createTempDirectory(dst.getParent(), ".flowcopy");
+				}
+				tmp = dir.resolve("data");
+				try (OutputStream out = Files.newOutputStream(tmp, StandardOpenOption.CREATE_NEW, StandardOpenOption.WRITE)) {
+					in.transferTo(out);
+				}
+				if (posix) {
+					Set<PosixFilePermission> mode = null;
+					try { mode = Files.getPosixFilePermissions(dst); }
+					catch (NoSuchFileException absent) { /* new file: retain the creation mode */ }
+					if (mode != null) Files.setPosixFilePermissions(tmp, mode);
+				}
+			}
+			Files.move(tmp, dst, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+			return true;
+		} catch (IOException | InvalidPathException | SecurityException | UnsupportedOperationException ex) {
+			return false;
+		} finally {
+			if (tmp != null) try { Files.deleteIfExists(tmp); } catch (IOException | SecurityException ignored) { }
+			if (dir != null) try { Files.deleteIfExists(dir); } catch (IOException | SecurityException ignored) { }
 		}
 	}
 
@@ -2307,14 +2344,87 @@ public class Native extends NativeHost {
 		};
 	}
 
+	// The same as the flow urlDecode2 in lib/formats/html/html.flow: '+' is a space, a '%' that
+	// does not start an escape stays as it is, and bytes that are not UTF-8 give U+FFFD.
 	public static final String urlDecode(String s) {
-		try {
-			return URLDecoder.decode(s, "UTF-8");
-		} catch (UnsupportedEncodingException | IllegalArgumentException e) {
-			System.out.println(e.toString());
-			e.printStackTrace();
-			return "";
+		int n = s.length();
+		StringBuilder sb = new StringBuilder(n);
+		int i = 0;
+		while (i < n) {
+			char c = s.charAt(i);
+			int b = urlPercentByte(s, i);
+			if (c == '+') {
+				sb.append(' ');
+				i++;
+			} else if (b == -1) {
+				sb.append(c);
+				i++;
+			} else if (b < 0x80) {
+				sb.append((char) b);
+				i += 3;
+			} else {
+				i = urlDecodeUtf8(s, i + 3, b, sb);
+			}
 		}
+		return sb.toString();
+	}
+
+	// The byte of the escape %XX at 'at', or -1 if there is none
+	private static final int urlPercentByte(String s, int at) {
+		if (at + 2 < s.length() && s.charAt(at) == '%') {
+			int hi = hexDigitValue(s.charAt(at + 1));
+			int lo = hexDigitValue(s.charAt(at + 2));
+			return (hi == -1 || lo == -1) ? -1 : hi * 16 + lo;
+		} else {
+			return -1;
+		}
+	}
+
+	private static final int hexDigitValue(char c) {
+		if ('0' <= c && c <= '9') return c - '0';
+		if ('A' <= c && c <= 'F') return c - 'A' + 10;
+		if ('a' <= c && c <= 'f') return c - 'a' + 10;
+		return -1;
+	}
+
+	// Appends the character from the lead byte and the escapes from 'at' on, and returns where
+	// to go on. A byte that does not fit gives U+FFFD and is read again.
+	private static final int urlDecodeUtf8(String s, int at, int lead, StringBuilder sb) {
+		int count = 0;
+		int code = 0;
+		int lower = 0x80;
+		int upper = 0xBF;
+		if (0xC2 <= lead && lead <= 0xDF) {
+			count = 1;
+			code = lead - 0xC0;
+		} else if (0xE0 <= lead && lead <= 0xEF) {
+			count = 2;
+			code = lead - 0xE0;
+			if (lead == 0xE0) lower = 0xA0;
+			if (lead == 0xED) upper = 0x9F;
+		} else if (0xF0 <= lead && lead <= 0xF4) {
+			count = 3;
+			code = lead - 0xF0;
+			if (lead == 0xF0) lower = 0x90;
+			if (lead == 0xF4) upper = 0x8F;
+		} else {
+			sb.append((char) 0xFFFD);
+			return at;
+		}
+		while (count > 0) {
+			int b = urlPercentByte(s, at);
+			if (b < lower || b > upper) {
+				sb.append((char) 0xFFFD);
+				return at;
+			}
+			code = code * 64 + (b - 0x80);
+			at += 3;
+			count--;
+			lower = 0x80;
+			upper = 0xBF;
+		}
+		sb.appendCodePoint(code);
+		return at;
 	}
 
 	private static ConcurrentHashMap<String, Object> host_call_funcs = new ConcurrentHashMap<String, Object>();
@@ -2750,11 +2860,11 @@ public class Native extends NativeHost {
 		if (json instanceof JsonPrimitive) {
 			JsonPrimitive prim = json.getAsJsonPrimitive();
 			if (prim.isBoolean()) {
-				return FlowRuntime.makeStructValue(jsonBool_struct_id, new Object[] {prim.getAsBoolean()}, null);
+				return FlowRuntime.makeStructValueUnchecked(jsonBool_struct_id, new Object[] {prim.getAsBoolean()}, null);
 			} else if (prim.isNumber()) {
-				return FlowRuntime.makeStructValue(jsonDouble_struct_id, new Object[] {prim.getAsDouble()}, null);
+				return FlowRuntime.makeStructValueUnchecked(jsonDouble_struct_id, new Object[] {prim.getAsDouble()}, null);
 			} else {
-				return FlowRuntime.makeStructValue(jsonString_struct_id, new Object[] {prim.getAsString()}, null);
+				return FlowRuntime.makeStructValueUnchecked(jsonString_struct_id, new Object[] {prim.getAsString()}, null);
 			}
 		} else if (json instanceof JsonNull) {
 			return jsonNull_struct;
@@ -2764,7 +2874,7 @@ public class Native extends NativeHost {
 			for (int i = 0; i < arr.size(); i++) {
 				elements[i] = json2Struct(arr.get(i));
 			}
-			return FlowRuntime.makeStructValue(jsonArray_struct_id, new Object[] {elements}, null);
+			return FlowRuntime.makeStructValueUnchecked(jsonArray_struct_id, new Object[] {elements}, null);
 		} else {
 			JsonObject obj = json.getAsJsonObject();
 			Struct[] members =  new Struct[obj.size()];
@@ -2772,10 +2882,10 @@ public class Native extends NativeHost {
 			for (Map.Entry<String,JsonElement> entry : obj.entrySet()) {
 				String key = entry.getKey();
 				JsonElement value = entry.getValue();
-				members[i] = FlowRuntime.makeStructValue(pair_struct_id, new Object[] {key, json2Struct(value)}, null);
+				members[i] = FlowRuntime.makeStructValueUnchecked(pair_struct_id, new Object[] {key, json2Struct(value)}, null);
 				i++;
 			}
-			return FlowRuntime.makeStructValue(jsonObject_struct_id, new Object[] {members}, null);
+			return FlowRuntime.makeStructValueUnchecked(jsonObject_struct_id, new Object[] {members}, null);
 		}
 	}
 
@@ -2787,13 +2897,13 @@ public class Native extends NativeHost {
 			jsonDouble_struct_id = FlowRuntime.struct_ids.get("JsonDouble");
 			jsonBool_struct_id = FlowRuntime.struct_ids.get("JsonBool");
 			pair_struct_id = FlowRuntime.struct_ids.get("Pair");
-			jsonNull_struct = FlowRuntime.makeStructValue("JsonNull", new Object[0], null);
+			jsonNull_struct = FlowRuntime.makeStructValueUnchecked("JsonNull", new Object[0], null);
 		}
 		try {
 			JsonElement json = JsonParser.parseString(string);
 			return json2Struct(json);
 		} catch (Exception e) {
-			return FlowRuntime.makeStructValue("JsonDouble", new Object[] {0.0}, null);
+			return FlowRuntime.makeStructValueUnchecked("JsonDouble", new Object[] {0.0}, null);
 		}
 	}
 }

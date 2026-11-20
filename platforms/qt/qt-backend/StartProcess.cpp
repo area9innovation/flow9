@@ -421,6 +421,7 @@ StackSlot StartProcess::getApplicationArguments(RUNNER_ARGS) {
 
     RUNNER_DefSlots1(array);
     array = RUNNER->AllocateArray(args.size());
+    RUNNER_CheckError();
     for (QStringList::iterator it = args.begin(); it != args.end(); ++it) {
         RUNNER_DefSlots1(value);
         value = RUNNER->AllocateString(qt2unicode(*it));

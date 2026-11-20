@@ -3346,8 +3346,17 @@ Native.memoryLeakReset();
 
 	public static function fromBinary(string : Dynamic, defvalue : Dynamic, fixups : Dynamic) : Dynamic {
 		#if js
+		return fromBinaryWithDepth(string, defvalue, fixups, JSBinflowBuffer.defaultMaxNestingDepth);
+		#else
+		return string;
+		#end
+	}
+
+	// A string comes back unchanged, for the flow decoder to read
+	public static function fromBinaryWithDepth(string : Dynamic, defvalue : Dynamic, fixups : Dynamic, maxDepth : Int) : Dynamic {
+		#if js
 		if (Type.getClass(string) == JSBinflowBuffer) {
-			return string.deserialise(defvalue, fixups);
+			return string.deserialise(defvalue, fixups, maxDepth);
 		} else
 		#end
 		{

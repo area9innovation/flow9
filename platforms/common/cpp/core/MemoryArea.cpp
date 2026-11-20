@@ -3,6 +3,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <errno.h>
+#include <limits>
 #include <sys/types.h>
 
 using std::min;
@@ -173,14 +174,18 @@ static void UnmapFile(void *ptr, size_t size)
 /* Map file to memory */
 static void *MapFileToMemory(FILE *file, size_t size, bool writable)
 {
+    if (!file || !size)
+        return MAP_FAILURE_RETVAL;
     int fd = fileno(file);
+    if (fd < 0)
+        return MAP_FAILURE_RETVAL;
 
 #ifdef _WIN32
     HANDLE hMapFile = CreateFileMapping(writable ? INVALID_HANDLE_VALUE : (HANDLE)_get_osfhandle(fd),
                                         NULL,
                                         writable ? PAGE_READWRITE : PAGE_READONLY,
-                                        0,
-                                        size,
+                                        DWORD(uint64_t(size) >> 32),
+                                        DWORD(size),
                                         NULL);
 
     if (hMapFile == NULL) {
@@ -206,41 +211,48 @@ static void *MapFileToMemory(FILE *file, size_t size, bool writable)
     int perms = PROT_READ;
     if (writable) perms |= PROT_WRITE;
 
+    struct stat info;
+    if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0 ||
+        uintmax_t(size) > uintmax_t(info.st_size))
+        return MAP_FAILURE_RETVAL;
+
     return mmap(NULL, size, perms, MAP_SHARED, fd, 0);
 #endif
 }
 
 /* Map at a specific address */
-static bool MapFileToMemory(void *where, size_t length, std::string filename, size_t offset, bool writable)
+static bool MapFileToMemory(void *where, size_t length, FILE *file, size_t offset, bool writable)
 {
 #ifdef _WIN32
     // can't be done
     return false;
 #else
-    FILE *file = fopen(filename.c_str(), "rb");
+    if (!file || uintmax_t(offset) > uintmax_t(std::numeric_limits<off_t>::max()))
+        return false;
     int fd = fileno(file);
     if (fd < 0)
+        return false;
+
+    struct stat info;
+    if (fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0 ||
+        uintmax_t(offset) > uintmax_t(info.st_size) ||
+        uintmax_t(length) > uintmax_t(info.st_size) - offset)
         return false;
 
     int perms = writable ? (PROT_READ | PROT_WRITE) : PROT_READ;
     int mode = writable ? MAP_PRIVATE : MAP_SHARED;
 
-    void *rv = mmap(where, length, perms, mode | MAP_FIXED, fd, offset);
+    void *rv = mmap(where, length, perms, mode | MAP_FIXED, fd, static_cast<off_t>(offset));
 
     if (rv != where)
     {
         cerr << "Could not map file (" << std::hex << uintptr_t(where) << ".." << (uintptr_t(where)+length) << std::dec << "): error " << errno << endl;
-        fclose(file);
         return false;
     }
-    else
-    {
 #ifdef DEBUG_FLOW
-        cerr << "MapFile(" << std::hex << where << "," << length << std::dec << ",\"" << filename << "\")" << endl;
+    cerr << "MapFile(" << std::hex << where << "," << length << std::dec << ")" << endl;
 #endif
-        fclose(file);
-        return true;
-    }
+    return true;
 #endif
 }
 
@@ -271,7 +283,11 @@ bool MemoryArea::reserve(size_t newsz)
     if (buf)
         return newsz <= length;
 
-    newsz = align_up(newsz, AllocStepSize());
+    const size_t step = AllocStepSize();
+    if (!newsz || newsz > align_down(SIZE_MAX, step))
+        return false;
+
+    newsz = align_up(newsz, step);
     void *rv = ReserveVirtualMemory(newsz);
 
     if (rv == MAP_FAILURE_RETVAL || rv == NULL)
@@ -288,41 +304,63 @@ void MemoryArea::unmap()
         UnmapMemory(buf, length);
 
     buf = NULL;
+    length = 0;
+}
+
+void MemoryArea::check_range(size_t soff, size_t eoff) const
+{
+    if (!buf || soff > eoff || eoff > length) {
+        cerr << "Invalid MemoryArea range: " << soff << ".." << eoff << endl;
+        abort();
+    }
 }
 
 void MemoryArea::commit(size_t soff, size_t eoff)
 {
-    assert(buf && soff < length && eoff <= length);
-
-    CommitMemory(buf + soff, buf + eoff);
+    check_range(soff, eoff);
+    if (soff != eoff)
+        CommitMemory(buf + soff, buf + eoff);
 }
 
 void MemoryArea::decommit(size_t soff, size_t eoff)
 {
-    assert(buf && soff < length && eoff <= length);
-
-    DecommitMemory(buf + soff, buf + eoff);
+    check_range(soff, eoff);
+    if (soff != eoff)
+        DecommitMemory(buf + soff, buf + eoff);
 }
 
 void MemoryArea::executable(size_t soff, size_t eoff, bool enable)
 {
-    assert(buf && soff < length && eoff <= length);
-
-    MakeExecutable(buf + soff, buf + eoff, enable);
+    check_range(soff, eoff);
+    if (soff != eoff)
+        MakeExecutable(buf + soff, buf + eoff, enable);
 }
 
 void MemoryArea::readonly(size_t soff, size_t eoff, bool enable)
 {
-    assert(buf && soff < length && eoff <= length);
-
-    MakeReadonly(buf + soff, buf + eoff, enable);
+    check_range(soff, eoff);
+    if (soff != eoff)
+        MakeReadonly(buf + soff, buf + eoff, enable);
 }
 
 bool MemoryArea::map_file(size_t off, size_t len, std::string filename, size_t offset, bool writable)
 {
-    assert(buf && off < length && off+len <= length);
+    FILE *file = fopen(filename.c_str(), "rb");
+    if (!file)
+        return false;
 
-    return MapFileToMemory(buf + off, len, filename, offset, writable);
+    bool ok = map_file(off, len, file, offset, writable);
+    fclose(file);
+    return ok;
+}
+
+bool MemoryArea::map_file(size_t off, size_t len, FILE *file, size_t offset, bool writable)
+{
+    // length is page-aligned, so rounding a valid end up stays in the reservation.
+    if (!buf || !len || off > length || len > length - off ||
+        off % PageSize() || offset % PageSize())
+        return false;
+    return MapFileToMemory(buf + off, len, file, offset, writable);
 }
 
 size_t StaticBuffer::total_maps = 0;
@@ -367,6 +405,17 @@ bool StaticBuffer::map_file(FILE *file, size_t size, bool writable)
 }
 
 
+int64_t ReadFileLength(FILE *file)
+{
+#ifdef _WIN32
+    int64_t length = _fseeki64(file, 0, SEEK_END) == 0 ? _ftelli64(file) : -1;
+    return length >= 0 && _fseeki64(file, 0, SEEK_SET) == 0 ? length : -1;
+#else
+    int64_t length = fseeko(file, 0, SEEK_END) == 0 ? ftello(file) : -1;
+    return length >= 0 && fseeko(file, 0, SEEK_SET) == 0 ? length : -1;
+#endif
+}
+
 bool StaticBuffer::load_file(const std::string &fname, size_t size)
 {
     FILE *file = fopen(fname.c_str(), "rb");
@@ -377,16 +426,14 @@ bool StaticBuffer::load_file(const std::string &fname, size_t size)
 
     if (auto_size)
     {
-        fseek(file, 0, SEEK_END);
-        long pos = ftell(file);
+        int64_t pos = ReadFileLength(file);
 
-        if (pos < 0) {
+        if (pos < 0 || uint64_t(pos) > SIZE_MAX) {
             fclose(file);
             return false;
         }
 
         size = pos;
-        rewind(file);
     }
 
     bool ok;
@@ -398,11 +445,15 @@ bool StaticBuffer::load_file(const std::string &fname, size_t size)
     {
         ok = true;
         uint8_t *ptr = (uint8_t*)malloc(size);
+        if (!ptr && size) {
+            fclose(file);
+            return false;
+        }
 
         for (size_t pos = 0; pos < size; ) {
             size_t delta = fread(ptr+pos, 1, size-pos, file);
             if (!delta) {
-                if (auto_size)
+                if (auto_size || ferror(file))
                     ok = false;
                 else
                     memset(ptr+pos, 0, size-pos);
@@ -454,8 +505,7 @@ bool StaticBuffer::allocate(size_t size, bool use_tmpfile)
             // Map it
             if (ok)
             {
-                fflush(file);
-                ok = map_file(file, size, true);
+                ok = fflush(file) == 0 && map_file(file, size, true);
             }
 
             // And delete it - assuming POSIX deletion semantics

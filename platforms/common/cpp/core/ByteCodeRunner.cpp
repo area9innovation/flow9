@@ -15,6 +15,7 @@
 #include <string.h>
 #include <assert.h>
 #include <errno.h>
+#include <limits.h>
 #if !defined(_MSC_VER) && !defined(__MINGW32__)
 #include <alloca.h>
 #endif
@@ -27,6 +28,7 @@
 #include "win_mman.h"
 #else
 #include <sys/mman.h>
+#include <sys/stat.h>
 #endif
 #endif
 
@@ -116,6 +118,7 @@ struct tm ByteCodeRunner::tzOffsetInfo;
  * Initialization of fields upon object construction.
  */
 void ByteCodeRunner::initStructures() {
+    initializationComplete = false;
     ProfileStream = NULL;
 #ifdef FLOW_TIME_PROFILING
 #ifdef FLOW_PTHREAD
@@ -164,7 +167,7 @@ void ByteCodeRunner::initStructures() {
     DeferredQueueTimeout = -1.0;
 
     NumFullGCs = 0;
-    FramePointer = 0;
+    FramePointer = LocalEnd = 0;
     closurepointer = MakeFlowPtr(0);
     NativeCallDepth = 0;
 
@@ -195,6 +198,7 @@ void ByteCodeRunner::initStructures() {
 }
 
 void ByteCodeRunner::Init(std::string bytecode_file) {
+    has_interpreter_code = true;
     initializationComplete = false;
     if (!bytecode_file.empty())
         DoInit(bytecode_file.c_str(), 0, true);
@@ -202,19 +206,23 @@ void ByteCodeRunner::Init(std::string bytecode_file) {
         DoInit(NULL, FlowPtrToInt(getLastCodeAddress()), false);
 
     BytecodeFilename = bytecode_file;
-    initializationComplete = true;
+    initializationComplete = !IsErrorReported();
 }
 
 void ByteCodeRunner::Init(const char *bytecode_buffer, int bytecode_length)
 {
+    has_interpreter_code = true;
     initializationComplete = false;
     DoInit(bytecode_buffer, bytecode_length, false);
+    if (IsErrorReported())
+        return;
     is_raw_bytecode = true;
     initializationComplete = true;
 }
 
 void ByteCodeRunner::Init(NativeProgram *program)
 {
+    has_interpreter_code = false;
     initializationComplete = false;
     assert(program->owner == NULL || program->owner == this);
 
@@ -222,6 +230,8 @@ void ByteCodeRunner::Init(NativeProgram *program)
     const char *bytecode = program->getByteCode(&length);
 
     DoInit(bytecode, length, false);
+    if (IsErrorReported())
+        return;
 
     program->owner = this;
     Program = program;
@@ -232,8 +242,11 @@ void ByteCodeRunner::Init(NativeProgram *program)
 #ifdef FLOW_JIT
 void ByteCodeRunner::Init(FlowJitProgram *program)
 {
+    has_interpreter_code = false;
     initializationComplete = false;
     program->InitRunner(this);
+    if (IsErrorReported())
+        return;
 
     JitProgram = program;
     initializationComplete = true;
@@ -257,30 +270,77 @@ void ByteCodeRunner::ReloadBytecode()
 #endif
     else if (is_raw)
     {
-        std::vector<std::string> SaveFieldRefNames = FieldRefNames;
-        std::map<std::string,int> SaveFieldRefIds = FieldRefIds;
-
+        StopProfiling(); // Remove pending coverage traps before copying the image.
 #ifdef FLOW_DEBUGGER
         for (std::map<FlowPtr, OpCode>::iterator it = BreakpointOpcodeBackup.begin();
              it != BreakpointOpcodeBackup.end(); ++it)
             Memory.SetByte(it->first, it->second);
-
         BreakpointOpcodeBackup.clear();
 #endif
-
         unsigned size = Code.GetSize() - 1;
-        std::string buffer(size, '\0');
-        memcpy(&buffer[0], Memory.GetRawPointer(MakeFlowPtr(0), size, false), size);
-
+        std::string buffer(Memory.GetRawPointer(MakeFlowPtr(0), size, false), size);
         Init(buffer.data(), buffer.size());
-
-        FieldRefNames = SaveFieldRefNames;
-        FieldRefIds = SaveFieldRefIds;
     }
     else
     {
         Init(filename);
     }
+}
+
+// Prepare space for the code and CLast; load file input before installing any runner state.
+int ByteCodeRunner::PrepareBytecode(const char *filename, int64_t length, bool &mapped)
+{
+    auto fail = [&](const char *message, int error) {
+        // No executable bytecode is installed yet; don't disassemble an opcode.
+        LastError = InvalidArgument;
+        LastErrorDescr = message;
+        LastErrorInfo = filename ? filename : "";
+        if (error)
+            LastErrorInfo += std::string(": ") + strerror(error);
+        flow_err << LastErrorDescr << " " << LastErrorInfo << endl;
+        return 0;
+    };
+
+    auto close_file = [](FILE *f) { fclose(f); };
+    std::unique_ptr<FILE, decltype(close_file)> file(NULL, close_file);
+    if (filename)
+    {
+        file.reset(fopen(filename, "rb"));
+        if (!file)
+            return fail("Could not open bytecode file:", errno);
+        length = ReadFileLength(file.get());
+        if (length < 0)
+            return fail("Could not determine bytecode file size:", errno);
+    }
+
+    // Leave space for CLast, alignment, and the maximum heap before narrowing.
+    const uint64_t limit = align_down(MAX_MEMORY_SIZE, Memory.PageSize());
+    const uint64_t heap = MAX_HEAP_SIZE;
+    const unsigned initial_heap = std::min(MIN_HEAP_SIZE, MAX_HEAP_SIZE);
+    if (!initial_heap || initial_heap / 2 < EPHEMERAL_HEAP_SIZE ||
+        initial_heap % 8 || MAX_HEAP_SIZE % 8) {
+        return fail("Heap limits must allow two aligned semispaces:", 0);
+    }
+    if (length < 0 || length >= INT_MAX || heap > limit ||
+        uint64_t(length) + 1 > align_down(limit - heap, Memory.PageSize())) {
+        return fail("Bytecode size exceeds the runner limit:", 0);
+    }
+
+    const int bytecode_length = int(length) + 1;
+    mapped = false;
+    if (file && length > 0) {
+        Memory.SetSize(bytecode_length);
+        mapped = Memory.MapFile(MakeFlowPtr(0), length, file.get(), 0, true);
+        if (!mapped) {
+            char *p = Memory.GetRawPointer(MakeFlowPtr(0), length, true);
+            if (fread(p, 1, length, file.get()) != size_t(length)) {
+                Memory.SetSize(0);
+                return fail("Could not read complete bytecode file:", ferror(file.get()) ? errno : 0);
+            }
+        }
+    }
+
+    return bytecode_length;
 }
 
 /*
@@ -291,61 +351,16 @@ void ByteCodeRunner::ReloadBytecode()
  */
 void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_length, bool from_file)
 {
-    static StackSlot dummy_ss[2];
-    static FlowPtr dummy_fp[2];
-
-    if (sizeof(int) != 4 || sizeof(FlowPtr) != 4 || sizeof(StackSlot) != STACK_SLOT_SIZE ||
-        sizeof(dummy_fp) != 8 || sizeof(dummy_ss) != 2*STACK_SLOT_SIZE)
-    {
-        flow_err << "Platform violates data type size assumptions.\n";
-        abort();
-    }
-
+    static_assert(sizeof(int) == 4 && sizeof(FlowPtr) == 4 && sizeof(StackSlot) == STACK_SLOT_SIZE,
+                  "Platform violates data type size assumptions");
     Reset(false);
 
-    // Set up the different memory segments
     int CodePosition = 0;
     FlowPtr CodeStart = MakeFlowPtr(CodePosition);
-
-    bool code_mapped = false;
-    if (from_file)
-    {
-        if (FILE *file = fopen(bytecode_buffer_or_fn, "rb"))
-        {
-            if(fseek(file, 0, SEEK_END) < 0)  // May be bad filename
-            {
-                cerr << "Bad/no bytecode file: <<" << bytecode_buffer_or_fn << ">>, error " << errno << ": " << strerror(errno) << endl;
-            }
-
-            bytecode_length = ftell(file);
-            rewind(file);
-
-            Memory.SetSize(bytecode_length + 1);
-
-            if (!Memory.MapFile(CodeStart, bytecode_length, bytecode_buffer_or_fn, 0, true))
-            {
-                char *p = Memory.GetRawPointer(CodeStart, bytecode_length, true);
-                int have_read = int(fread(p, 1, bytecode_length, file));
-                if (have_read < bytecode_length) {
-                	// We have read less elements, then required.
-                	cerr << "Error loading bytecode file: <<" << bytecode_buffer_or_fn << ">>, have read " << have_read << " bytes while acquired " << bytecode_length << " bytes" << endl;
-                }
-            }
-            else
-                code_mapped = true;
-
-            fclose(file);
-        }
-        else
-        {
-            cerr << "Can't open bytecode file: <<" << bytecode_buffer_or_fn << ">>, error " << errno << ": " << strerror(errno) << endl;
-        }
-
-        bytecode_buffer_or_fn = NULL;
-    }
-
-    // space for CLast artificial instruction
-    bytecode_length++;
+    bool code_mapped;
+    bytecode_length = PrepareBytecode(from_file ? bytecode_buffer_or_fn : NULL, bytecode_length, code_mapped);
+    if (!bytecode_length)
+        return;
 
     // Call stack: starts right after the code, aligned up to 4 bytes
     HeapStart = MakeFlowPtr(bytecode_length);
@@ -354,15 +369,16 @@ void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_leng
     else
         HeapStart = FlowPtrAlignUp(HeapStart, 4);
 
-    HeapEnd = HeapStart + MIN_HEAP_SIZE; // The highest address
+    const unsigned initial_heap = std::min(MIN_HEAP_SIZE, MAX_HEAP_SIZE);
+    HeapEnd = MakeFlowPtr(FlowPtrToInt(HeapStart) + initial_heap);
 
 #ifdef FLOW_MMAP_HEAP
     MapStringPtr = MakeFlowPtr(align_down(MAX_MEMORY_SIZE, MemoryArea::page_size()));
-    MapAreaBase = HeapStart + MAX_HEAP_SIZE;
+    MapAreaBase = FlowPtrAlignUp(MakeFlowPtr(FlowPtrToInt(HeapStart) + MAX_HEAP_SIZE), Memory.PageSize());
 #endif
 
     Memory.SetSize(FlowPtrToInt(HeapEnd));
-    if (bytecode_buffer_or_fn != NULL)
+    if (!from_file && bytecode_buffer_or_fn != NULL)
         Memory.SetBytes(CodeStart, bytecode_buffer_or_fn, bytecode_length-1);
 
     // putting an artificial instruction in place
@@ -373,7 +389,8 @@ void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_leng
 
     NativeReturnInsn = getLastCodeAddress() - 1;
 
-    UpdateHeapLimits(true);
+    // A first growth smaller than a doubling can copy safely from the low half.
+    UpdateHeapLimits(initial_heap <= MAX_HEAP_SIZE / 2 || initial_heap == MAX_HEAP_SIZE);
     RefWriteMask.clear();
     SlotWriteSet.clear();
 #ifdef FLOW_COMPACT_STRUCTS
@@ -383,7 +400,7 @@ void ByteCodeRunner::DoInit(const char *bytecode_buffer_or_fn, int bytecode_leng
     NextRefId = 0;
     NextGCTag = GarbageCollector::MAX_SPECIAL_TAG+1;
 
-    FramePointer = 0;
+    FramePointer = LocalEnd = 0;
     closurepointer = MakeFlowPtr(0);
 
 #ifdef FLOW_INSTRUCTION_PROFILING
@@ -452,6 +469,9 @@ void ByteCodeRunner::StopProfiling()
     InstructionCount = 0;
     ProfileICBarrier = 0;
     ProfileICStep = 0;
+    // Unvisited instructions may still carry a trap when profiling stops.
+    for (size_t i = 0; i < CoverageCodeBackup.size(); ++i)
+        if (InstructionStarts[i]) SetCoverageOpcode(MakeFlowPtr(i), OpCode(CoverageCodeBackup[i]));
     ProfileCodeCoverage = false;
     CoverageCodeBackup.clear();
     ProfileMemBarrier = MakeFlowPtr(0);
@@ -528,8 +548,6 @@ void ByteCodeRunner::Reset(bool inDestructor)
     StructSizes.clear();
     StructNameIds.clear();
     FieldRefIds.clear();
-    FieldRefNames.clear();
-    FieldRefIds["structname"] = -1;
 
 #ifdef FLOW_COMPACT_STRUCTS
     for (size_t i = 0; i < AutoStructFields.size(); i++)
@@ -550,6 +568,7 @@ void ByteCodeRunner::Reset(bool inDestructor)
 
     // Empty other tables
     NativeRoots.clear();
+    LegacyFileBytes.clear();
     nNativeRoots = 0;
 
     Toplevel.clear();
@@ -560,12 +579,14 @@ void ByteCodeRunner::Reset(bool inDestructor)
     DeferredActionQueue.clear();
 
     NumFullGCs = 0;
-    FramePointer = 0;
+    FramePointer = LocalEnd = 0;
+    std::vector<bool>().swap(InstructionStarts);
     closurepointer = MakeFlowPtr(0);
 
 #ifdef FLOW_MMAP_HEAP
     MappedAreas.clear();
     MappedFiles.clear();
+    LegacyMappedFiles.clear();
 #endif
 
     // Reset hosts. This is done last, so that stuff
@@ -578,6 +599,7 @@ void ByteCodeRunner::Reset(bool inDestructor)
     Memory.DecommitRange(MakeFlowPtr(0), MakeFlowPtr(MAX_MEMORY_SIZE));
     Code.SetPosition(MakeFlowPtr(0));
     Code.SetBuffer(NULL,0,0);
+    NativeReturnInsn = CodeStartPtr();
 }
 
 ByteCodeRunner::~ByteCodeRunner()
@@ -614,7 +636,7 @@ void ByteCodeRunner::SetExtendedDebugInfo(ExtendedDebugInfo *dinfo)
 
 HeapLimits ByteCodeRunner::GetHeapLimits(bool high)
 {
-    unsigned size = HeapEnd - HeapStart;
+    unsigned size = FlowPtrToInt(HeapEnd) - FlowPtrToInt(HeapStart);
     FlowPtr m = HeapStart + size / 2;
     HeapLimits ret;
     ret.Start = high ? HeapEnd : m;
@@ -873,6 +895,10 @@ void ByteCodeRunner::RegisterStructDef(unsigned id, const StructDef &sd)
 
             fdefs[i].offset = offset;
             gcdef.offset = offset;
+            if (unlikely(size > unsigned(INT32_MAX - offset))) {
+                ReportError(InvalidArgument, "Struct layout exceeds the runtime offset range");
+                return;
+            }
             offset += size;
 
             if (has_gc)
@@ -1026,11 +1052,12 @@ bool ByteCodeRunner::DeleteNative(const StackSlot &slot)
 
 StackSlot ByteCodeRunner::AllocNativeFn(NativeFunction *fn, FlowPtr cp)
 {
-    if (fn->num_args() > MAX_NATIVE_ARGS)
+    if (unsigned(fn->num_args()) > MAX_NATIVE_ARGS)
     {
         // Trying to call this native will overrun a stack buffer.
         // Increase the constant and recompile if this becomes a problem.
         ReportError(UnknownNativeName, "Too many args for native \"%s\": %d", fn->name(), fn->num_args());
+        delete fn;
         return StackSlot::MakeVoid();
     }
 
@@ -1078,7 +1105,7 @@ bool NativeProgram::InitFunctionTable(StackSlot *out, const FunctionSpec *in, un
 
 StackSlot ByteCodeRunner::AllocateNativeClosure(NativeClosurePtr ptr, const char *name, int num_args, void *data, int num_slots, ...)
 {
-    StackSlot *buf = new StackSlot[num_slots+1];
+    std::vector<StackSlot> buf(num_slots+1);
     StackSlot &base = buf[0];
 
     va_list vl;
@@ -1088,13 +1115,9 @@ StackSlot ByteCodeRunner::AllocateNativeClosure(NativeClosurePtr ptr, const char
     va_end(vl);
 
     base = AllocNativeFn(new NativeClosure(name, num_args, ptr, data), NativeReturnInsn);
-    assert(base.IsNativeFn() && !base.GetSign());
-
-    LocalRootDefinition frame(this, num_slots+1, buf); (void)&frame;
-    FlowPtr arr = AllocateClosureBuffer(base.slot_private.IntValue, num_slots, buf+1); // ALLOC
-
-    delete[] buf;
-    return StackSlot::InternalMakeNativeClosure(arr, num_slots);
+    if (unlikely(base.IsVoid())) return base;
+    LocalRootDefinition frame(this, num_slots+1, buf.data()); (void)&frame;
+    return AllocateClosure(base, num_slots, buf.data()+1); // ALLOC
 }
 
 StackSlot ByteCodeRunner::AllocateConstClosure(int num_args, StackSlot value) {
@@ -1103,6 +1126,7 @@ StackSlot ByteCodeRunner::AllocateConstClosure(int num_args, StackSlot value) {
 
     if (!ConstClosureCache[num_args].IsNativeFn())
         ConstClosureCache[num_args] = AllocNativeFn(new SimpleNative("$const$", num_args, const_closure), NativeReturnInsn);
+    if (unlikely(ConstClosureCache[num_args].IsVoid())) return StackSlot::MakeVoid();
 
     LocalRootDefinition frame(this, 1, &value); (void)&frame;
 
@@ -1139,10 +1163,8 @@ FlowPtr ByteCodeRunner::AllocateInner(unsigned size) {
         }
     }
 
-    if (gcStressTestEnabled)
-        ForceGC(size, rand()%3==0);
-    else
-        ForceGC(size);
+    // Collection empties the young generation. Only promotion needs old space here.
+    ForceGC(0, gcStressTestEnabled && rand()%3==0);
 
     FlowPtr nhp = FlowPtrAlignDown(hp - size, 4);
     if (unlikely(nhp < hpbound || nhp > hp)) {
@@ -1172,12 +1194,20 @@ unicode_char *ByteCodeRunner::AllocateStringBuffer(StackSlot *out, unsigned leng
 {
     assert(length > 0);
 
+    const unsigned max_bytes = MAX_HEAP_SIZE / 2;
+    if (unlikely(length > FLOW_MAX_STRING_LENGTH || max_bytes < 8 ||
+                 length > (max_bytes - 8) / FLOW_CHAR_SIZE)) {
+        ReportError(HeapFull, "String is too large for the heap.");
+        return NULL;
+    }
+
     FlowPtr buf;
     unsigned bytes = length*FLOW_CHAR_SIZE;
 
     if (length & 0xffff0000u)
     {
         FlowPtr str = Allocate(4 + 4 + bytes); //ALLOC
+        if (unlikely(IsErrorReported())) return NULL;
         buf = str + 8;
         Memory.SetInt32(str, length & 0xffff);
         Memory.SetFlowPtr(str+4, buf);
@@ -1187,6 +1217,7 @@ unicode_char *ByteCodeRunner::AllocateStringBuffer(StackSlot *out, unsigned leng
     else
     {
         buf = Allocate(bytes); // ALLOC
+        if (unlikely(IsErrorReported())) return NULL;
 
         StackSlot::InternalSetString(*out, buf, length, false);
     }
@@ -1203,6 +1234,11 @@ FlowPtr *ByteCodeRunner::AllocateStringRef(StackSlot *out, unsigned length)
 {
     static FlowPtr dummy = MakeFlowPtr(0);
 
+    if (unlikely(length > FLOW_MAX_STRING_LENGTH)) {
+        ReportError(HeapFull, "String reference is too large.");
+        return NULL;
+    }
+
     if (length == 0)
     {
         *out = StackSlot::MakeEmptyString();
@@ -1212,6 +1248,7 @@ FlowPtr *ByteCodeRunner::AllocateStringRef(StackSlot *out, unsigned length)
     if (length & 0xffff0000u)
     {
         FlowPtr str = Allocate(4 + 4);
+        if (unlikely(IsErrorReported())) return NULL;
 
         Memory.SetInt32(str, length & 0xffff);
         StackSlot::InternalSetString(*out, str, length>>16, true);
@@ -1226,12 +1263,18 @@ FlowPtr *ByteCodeRunner::AllocateStringRef(StackSlot *out, unsigned length)
     }
 }
 
-StackSlot ByteCodeRunner::AllocateString(const unicode_char *str, int len) {
+StackSlot ByteCodeRunner::AllocateString(const unicode_char *str, size_t len) {
     if (len == 0)
         return StackSlot::MakeEmptyString();
+    if (unlikely(len > FLOW_MAX_STRING_LENGTH)) {
+        ReportError(HeapFull, "String is too large.");
+        return StackSlot::MakeVoid();
+    }
 
     StackSlot out;
     unicode_char *tmp = AllocateStringBuffer(&out, len); // ALLOC
+    if (!tmp)
+        return StackSlot::MakeVoid();
 
     if (str)
         memcpy(tmp, str, len * FLOW_CHAR_SIZE);
@@ -1239,64 +1282,93 @@ StackSlot ByteCodeRunner::AllocateString(const unicode_char *str, int len) {
     return out;
 }
 
-StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary)
+StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary, bool legacy_file)
 {
     StackSlot rv = StackSlot::MakeVoid();
 
 #ifdef FLOW_MMAP_HEAP
-    if (!temporary && MappedFiles.count(filename))
-        return MappedFiles[filename];
+    // Separate caches keep legacy write semantics off ordinary strings, and
+    // let reads of one file through both readers each reuse their mapping.
+    auto &cache = legacy_file ? LegacyMappedFiles : MappedFiles;
+    auto cached = cache.find(filename);
+    if (!temporary && !legacy_file && cached != cache.end())
+        return cached->second;
 #endif
 
     FILE *file = fopen(filename.c_str(), "rb");
     if (!file)
         return StackSlot::MakeVoid();
 
-    fseek(file, 0, SEEK_END);
-    size_t size = ftell(file);
-    rewind(file);
+    int64_t size = ReadFileLength(file);
 
     if (size == 0)
     {
         rv = StackSlot::MakeEmptyString();
     }
-    else
+    else if (size > 0 && uint64_t(size) <= uint64_t(FLOW_MAX_STRING_LENGTH) * FLOW_CHAR_SIZE)
     {
         size_t length = size/FLOW_CHAR_SIZE+size%FLOW_CHAR_SIZE;
         size_t bytes = length * FLOW_CHAR_SIZE;
 
 #ifdef FLOW_MMAP_HEAP
-        if (bytes >= MIN_MMAP_SIZE && MapStringPtr - bytes >= MapAreaBase)
+        // A legacy copy must read the current source, even when a file at the
+        // same path was mapped earlier. Old string values retain the old mapping.
+        struct stat st;
+        bool have_id = legacy_file && bytes >= MIN_MMAP_SIZE && fstat(fileno(file), &st) == 0;
+        if (have_id && !temporary && cached != cache.end()) {
+            FlowPtr addr = GetStringAddr(cached->second);
+            auto old = LegacyFileBytes.find(addr);
+            const auto &area = MappedAreas.at(addr);
+            if (old != LegacyFileBytes.end() && old->second == size_t(size) &&
+                area->file_device == uint64_t(st.st_dev) && area->file_inode == uint64_t(st.st_ino)) {
+                fclose(file);
+                return cached->second;
+            }
+        }
+        if (bytes >= MIN_MMAP_SIZE && MapStringPtr >= MapAreaBase &&
+            bytes <= FlowPtrToInt(MapStringPtr) - FlowPtrToInt(MapAreaBase))
         {
             FlowPtr map_ptr = FlowPtrAlignDown(MapStringPtr - bytes, Memory.PageSize());
 
-            if (Memory.MapFile(map_ptr, bytes, filename))
+            if (map_ptr >= MapAreaBase && Memory.MapFile(map_ptr, size, file))
             {
-                MappedAreaInfo::Ptr area(new MappedAreaInfo(map_ptr, bytes));
-                MappedAreas[map_ptr] = area;
-                MapStringPtr = map_ptr;
+                if (FlowPtr *ref = AllocateStringRef(&rv, length)) {
+                    *ref = map_ptr;
+                    MappedAreaInfo::Ptr area(new MappedAreaInfo(map_ptr, bytes));
+                    if (have_id) {
+                        area->file_device = st.st_dev;
+                        area->file_inode = st.st_ino;
+                    }
+                    MappedAreas[map_ptr] = area;
+                    MapStringPtr = map_ptr;
 
-                *AllocateStringRef(&rv, length) = map_ptr;
-
-                if (!temporary)
-                {
-                    MappedFiles[filename] = rv;
-                    area->filename = filename;
+                    if (!temporary) {
+                        cache[filename] = rv;
+                        area->filename = filename;
+                    }
+                } else {
+                    Memory.DecommitRange(map_ptr, MapStringPtr);
                 }
             }
         }
 #endif
 
-        if (rv.IsVoid())
+        if (rv.IsVoid() && !IsErrorReported())
         {
             StackSlot out;
             unicode_char *p = AllocateStringBuffer(&out, length);
 
-            if (fread(p, FLOW_CHAR_SIZE, length, file) == length)
-                rv = out;
+            if (p) {
+                // mmap zero-fills the partial page at EOF; match its trailing code unit.
+                p[length - 1] = 0;
+                if (fread(p, 1, size_t(size), file) == size_t(size))
+                    rv = out;
+            }
         }
     }
 
+    if (legacy_file && size > 0 && rv.IsString())
+        LegacyFileBytes[GetStringAddr(rv)] = size_t(size);
     fclose(file);
     if (temporary)
         remove(filename.c_str());
@@ -1307,13 +1379,18 @@ void ByteCodeRunner::InvalidateFileCache(std::string filename)
 {
 #ifdef FLOW_MMAP_HEAP
     MappedFiles.erase(filename);
+    LegacyMappedFiles.erase(filename);
 #endif
 }
 
-StackSlot ByteCodeRunner::AllocateUninitializedArray(unsigned len)
+StackSlot ByteCodeRunner::AllocateUninitializedArray(uint64_t len)
 {
     assert(len > 0);
 
+    if (unlikely(!FlowSlotsFit(len, 4, std::min(MAX_HEAP_SIZE / 2, unsigned(INT_MAX))))) {
+        ReportError(HeapFull, "Array is too large for the heap.");
+        return StackSlot::MakeEmptyArray();
+    }
     unsigned bytes = len * STACK_SLOT_SIZE;
 
     FlowPtr buf = Allocate(bytes + 4); // ALLOC
@@ -1334,6 +1411,7 @@ StackSlot ByteCodeRunner::AllocateRef(const StackSlot &value) {
     unsigned id = NextRefId++;
 
     FlowPtr buf = Allocate(STACK_SLOT_SIZE + 4); // ALLOC
+    if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
     Memory.SetInt32(buf, id & 0xffffu);
 
     SetMemorySlot(buf+4, 0, value);
@@ -1348,11 +1426,13 @@ StackSlot ByteCodeRunner::AllocateRef(const StackSlot &value) {
     return rv;
 }
 
-StackSlot ByteCodeRunner::AllocateArray(int length, StackSlot *data) { // data must be immovable
+StackSlot ByteCodeRunner::AllocateArray(int64_t length, StackSlot *data) { // data must be immovable
     if (length <= 0)
         return StackSlot::MakeEmptyArray();
 
     StackSlot rv = AllocateUninitializedArray(length);
+    if (unlikely(IsErrorReported()))
+        return rv;
     StackSlot *buf = GetArrayWritePtr(rv, length);
 
     if (data)
@@ -1363,11 +1443,25 @@ StackSlot ByteCodeRunner::AllocateArray(int length, StackSlot *data) { // data m
     return rv;
 }
 
+StackSlot ByteCodeRunner::AllocateStringArray(const std::vector<std::string> &utf8)
+{
+    StackSlot list = AllocateArray(utf8.size());
+    if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
+    LocalRootDefinition frame(this, 1, &list);
+    for (size_t i = 0; i < utf8.size(); ++i) {
+        StackSlot item = AllocateString(parseUtf8(utf8[i]));
+        if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
+        SetArraySlot(list, i, item);
+    }
+    return list;
+}
+
 StackSlot ByteCodeRunner::AllocateUninitializedClosure(unsigned short len, FlowPtr code)
 {
     int bytes = len * STACK_SLOT_SIZE;
     FlowPtr buf = Allocate(bytes + 4 + 4) + 4; // ALLOC
 
+    if (unlikely(IsErrorReported())) return StackSlot::MakeVoid();
     Memory.SetFlowPtr(buf-4, code);
     Memory.SetInt32(buf, len);
 
@@ -1377,6 +1471,8 @@ StackSlot ByteCodeRunner::AllocateUninitializedClosure(unsigned short len, FlowP
 FlowPtr ByteCodeRunner::AllocateClosureBuffer(int code, unsigned short len, StackSlot *data) {
     int bytes = len * STACK_SLOT_SIZE;
     FlowPtr buf = Allocate(bytes + 4 + 4) + 4; // ALLOC
+    if (unlikely(IsErrorReported()))
+        return MakeFlowPtr(0);
 
     Memory.SetInt32(buf-4, code);
     Memory.SetInt32(buf, len);
@@ -1521,19 +1617,23 @@ FlowPtr ByteCodeRunner::MoveStackToHeap(int num_slots, bool with_size)
         return MakeFlowPtr(0);
     }
 
-    int bytes = num_slots * STACK_SLOT_SIZE;
-
-    FlowPtr ptr;
-    if (with_size) {
-        ptr = Allocate(bytes + 4) + 4; // ALLOC
-        Memory.SetInt32(ptr-4, num_slots);
-    } else {
-        ptr = Allocate(bytes); // ALLOC
+    const unsigned header = with_size ? 4 : 0;
+    if (unlikely(!FlowSlotsFit(num_slots, header))) {
+        ReportError(HeapFull, "Stack slot buffer is too large.");
+        return MakeFlowPtr(0);
     }
+    int bytes = num_slots * STACK_SLOT_SIZE;
+    FlowPtr base = Allocate(bytes + header); // ALLOC
+    if (unlikely(IsErrorReported()))
+        return MakeFlowPtr(0);
+
+    if (with_size)
+        Memory.SetInt32(base, num_slots);
+    FlowPtr ptr = base + header;
 
     Memory.SetBytes(ptr, DataStack.pop_ptr(num_slots), bytes);
     if (ptr >= hp_big_pos)
-        SlotWriteSet.addInterval(ptr, ptr + num_slots*STACK_SLOT_SIZE);
+        SlotWriteSet.addInterval(ptr, ptr + bytes);
     return ptr;
 }
 
@@ -1548,6 +1648,35 @@ void ByteCodeRunner::MoveStructToStack(StackSlot str, unsigned count)
 }
 
 // Disassembly
+
+bool ByteCodeRunner::IsInstructionStart(FlowPtr address) const
+{
+    return address <= NativeReturnInsn && InstructionStarts[FlowPtrToInt(address)];
+}
+
+bool ByteCodeRunner::IsCallableAddress(FlowPtr address) const
+{
+    return address < NativeReturnInsn && InstructionStarts[FlowPtrToInt(address)];
+}
+
+// File and buffer Init can leave an mmap untouched. Prepare before the first
+// interpreted entry or trap installation, never on JIT/native constant data.
+bool ByteCodeRunner::PrepareInterpreter()
+{
+    if (!has_interpreter_code || Code.GetSize() == 0) return false;
+    // A built index stays valid after a runtime error; the debugger still needs it then.
+    if (!InstructionStarts.empty()) return true;
+    if (IsErrorReported()) return false;
+    try {
+        const int size = Code.GetSize() - 1;
+        CodeMemory reader(Memory.GetRawPointer(CodeStartPtr(), size, true), 0, size);
+        reader.BuildInstructionIndex(InstructionStarts);
+        return true;
+    } catch (const CodeMemory::DecodeError &error) {
+        ReportError(InvalidOpCode, "%s", error.what());
+        return false;
+    }
+}
 
 bool ByteCodeRunner::Disassemble(std::map<FlowPtr,FlowInstruction> *pmap, FlowPtr start_position, unsigned size)
 {
@@ -1580,6 +1709,11 @@ bool ByteCodeRunner::Disassemble(std::map<FlowPtr,FlowInstruction> *pmap, FlowPt
                     if (it != BreakpointOpcodeBackup.end())
                     {
                         insn.op = it->second;
+                        // A breakpoint can sit on top of a pending coverage trap.
+#ifdef FLOW_INSTRUCTION_PROFILING
+                        if (insn.op == CCodeCoverageTrap && FlowPtrToInt(pos) < CoverageCodeBackup.size())
+                            insn.op = OpCode(CoverageCodeBackup[FlowPtrToInt(pos)]);
+#endif
                         ok = Code.ParseOpcode(&insn, true);
                     }
         #endif
@@ -1783,9 +1917,18 @@ void ByteCodeRunner::ReportStructError(const StackSlot &slot, int expected_id, c
 
 inline void ByteCodeRunner::DoReturn(bool closure)
 {
+    if (unlikely(!HasOperands(1))) {
+        ReportError(StackCorruption, "Missing return value in the current frame");
+        return;
+    }
+
     CallFrame *frame = CallStackPop();
     if (unlikely(!frame))
         return;
+    if (unlikely(!IsInstructionStart(frame->last_pc))) {
+        ReportError(InvalidCall, "Invalid return instruction address");
+        return;
+    }
 
 #ifdef FLOW_DEBUGGER
     if (unlikely(frame->is_closure != closure))
@@ -1801,6 +1944,7 @@ inline void ByteCodeRunner::DoReturn(bool closure)
 
     Code.SetPosition(LastInstructionPtr = frame->last_pc);
     FramePointer = frame->last_frame;
+    LocalEnd = frame->last_local_end;
     closurepointer = frame->last_closure;
 
 #ifdef FLOW_DEBUGGER
@@ -1838,14 +1982,21 @@ void ByteCodeRunner::DoPlusString(ByteCodeRunner *self, StackSlot &val1, const S
         return;
     }
 
-    int l1 = self->GetStringSize(val1);
-    int l2 = self->GetStringSize(val2);
+    const unsigned l1 = self->GetStringSize(val1);
+    const unsigned l2 = self->GetStringSize(val2);
+    if (unlikely(l1 > FLOW_MAX_STRING_LENGTH || l2 > FLOW_MAX_STRING_LENGTH - l1)) {
+        self->ReportError(HeapFull, "Concatenated string is too large.");
+        return;
+    }
+    const unsigned length = l1 + l2;
+    const unsigned bytes1 = l1 * FLOW_CHAR_SIZE, bytes2 = l2 * FLOW_CHAR_SIZE;
 
-    if (self->GetStringAddr(val1) + l1 * FLOW_CHAR_SIZE == self->GetStringAddr(val2))
+    if (uint64_t(FlowPtrToInt(self->GetStringAddr(val1))) + bytes1 == FlowPtrToInt(self->GetStringAddr(val2)))
     {
         // Merge the strings in-place
         StackSlot rv;
-        FlowPtr *rp = self->AllocateStringRef(&rv, l1 + l2); // ALLOC
+        FlowPtr *rp = self->AllocateStringRef(&rv, length); // ALLOC
+        if (!rp) return;
 
         *rp = self->GetStringAddr(val1);
         val1 = rv;
@@ -1853,15 +2004,13 @@ void ByteCodeRunner::DoPlusString(ByteCodeRunner *self, StackSlot &val1, const S
     else
     {
         StackSlot rv;
-        unicode_char *ptr = self->AllocateStringBuffer(&rv, l1 + l2); // ALLOC
+        if (!self->AllocateStringBuffer(&rv, length)) return; // ALLOC
 
-        {
-            // Assume val1 & val2 don't move, since gc
-            // doesn't reallocate the stack anymore
-            memcpy(ptr,    self->GetStringPtr(val1), l1 * FLOW_CHAR_SIZE);
-            memcpy(ptr+l1, self->GetStringPtr(val2), l2 * FLOW_CHAR_SIZE);
-            val1 = rv;
-        }
+        // Re-read the source addresses after allocation, which can run GC.
+        FlowPtr dest = self->GetStringAddr(rv);
+        self->Memory.Copy(self->GetStringAddr(val1), dest, bytes1);
+        self->Memory.Copy(self->GetStringAddr(val2), dest + bytes1, bytes2);
+        val1 = rv;
     }
 }
 
@@ -2091,16 +2240,16 @@ inline void ByteCodeRunner::DoSetMutable(int i) {
 
 int StructDef::findField(const char *name, int length)
 {
-    for (int i = 0; i < FieldsCount; ++i)
+    for (int i = 0; i < FieldsCount && size_t(i) < FieldNames.size(); ++i)
     {
-        if (strncmp(FieldNames[i].c_str(), name, length) == 0)
+        if (FieldNames[i].compare(0, std::string::npos, name, length) == 0)
             return i;
     }
 
     return -1;
 }
 
-int ByteCodeRunner::LookupFieldName(const StackSlot &struct_ref, char const * n, int length, short *idx, StructDef **pdef)
+int ByteCodeRunner::LookupFieldName(const StackSlot &struct_ref, char const * n, int length, void *idx, StructDef **pdef)
 {
     StructDef *def = safeVectorPtrAt(StructDefs, struct_ref.GetStructId());
 
@@ -2111,29 +2260,38 @@ int ByteCodeRunner::LookupFieldName(const StackSlot &struct_ref, char const * n,
 
     *pdef = def;
 
-    int field_id;
+    int field_id = -1;
 
     if (idx)
     {
-        int id = *idx;
+        int16_t cached_id;
+        memcpy(&cached_id, idx, sizeof(cached_id));
+        int id = cached_id;
 
         // Initially the bytes are zero, so look up or allocate an id for this field name
         if (id == 0)
         {
             std::string name(n, length);
-            id = safeMapAt(FieldRefIds, name, 0);
+            id = name == "structname" ? -1 : safeMapAt(FieldRefIds, name, 0);
 
-            if (id == 0)
-            {
-                FieldRefNames.push_back(name);
-                FieldRefIds[name] = id = FieldRefNames.size();
+            if (id == 0 && FieldRefIds.size() < INT16_MAX) {
+                id = int(FieldRefIds.size()) + 1;
+                FieldRefIds[name] = id;
             }
 
-            *idx = (short)id;
+            cached_id = int16_t(id);
+            memcpy(idx, &cached_id, sizeof(cached_id));
         }
 
-        if (id < 0)
+        if (id == -1)
             return -2;
+        if (unlikely(size_t(id) > FieldRefIds.size())) {
+            ReportError(InvalidFieldName, "Invalid field name cache ID");
+            return -1;
+        }
+
+        if (id == 0) // Cache capacity reached; use the uncached lookup.
+            field_id = def->findField(n, length);
         else if (def->FieldsCount == 0)
             field_id = -1;
         else
@@ -2141,12 +2299,12 @@ int ByteCodeRunner::LookupFieldName(const StackSlot &struct_ref, char const * n,
             // Initialize lookup table for this struct definition if necessary
             if (def->FieldIds.size() < unsigned(id))
             {
-                def->FieldIds.resize(FieldRefNames.size(), -1);
+                def->FieldIds.resize(FieldRefIds.size(), -1);
 
-                for (size_t i = 0; i < def->FieldNames.size(); i++)
+                for (int i = 0; i < def->FieldsCount && size_t(i) < def->FieldNames.size(); i++)
                 {
                     int idx = safeMapAt(FieldRefIds, def->FieldNames[i], 0);
-                    if (idx > 0)
+                    if (idx > 0 && size_t(idx) <= def->FieldIds.size())
                         def->FieldIds[idx-1] = i;
                 }
             }
@@ -2156,19 +2314,21 @@ int ByteCodeRunner::LookupFieldName(const StackSlot &struct_ref, char const * n,
     }
     else
     {
-        if (strncmp(n, "structname", length) == 0)
+        if (length == 10 && memcmp(n, "structname", 10) == 0)
             return -2;
         else
             field_id = def->findField(n, length);
     }
 
-    if (field_id < 0)
+    if (field_id < 0 || field_id >= def->FieldsCount) {
         ReportFieldNameError(struct_ref, std::string(n, length).c_str(), "CFieldName");
+        return -1;
+    }
 
     return field_id;
 }
 
-void ByteCodeRunner::DoFieldName(char const *n, int length, short *idx) {
+void ByteCodeRunner::DoFieldName(char const *n, int length, void *idx) {
     RUNNER_RefArgsRet1(struct_ref);
     RUNNER_CheckTag(TStruct, struct_ref);
 
@@ -2184,7 +2344,7 @@ void ByteCodeRunner::DoFieldName(char const *n, int length, short *idx) {
     }
 }
 
-void ByteCodeRunner::DoSetMutableName(char const *n, int length, short *idx) {
+void ByteCodeRunner::DoSetMutableName(char const *n, int length, void *idx) {
     RUNNER_RefArgsRet2(struct_ref, val_ref);
     RUNNER_CheckTag(TStruct, struct_ref);
 
@@ -2198,7 +2358,7 @@ void ByteCodeRunner::DoSetMutableName(char const *n, int length, short *idx) {
         if (likely(def->IsMutable[field_id]))
             SetStructSlot(struct_ref, field_id, val_ref);
         else
-            ReportError(InvalidArgument, "Field %s is not mutable in %s", n, def->Name.c_str());
+            ReportError(InvalidArgument, "Field %.*s is not mutable in %s", length, n, def->Name.c_str());
     }
 
     DiscardStackSlots(1);
@@ -2225,6 +2385,7 @@ ByteCodeRunner::CallFrame *ByteCodeRunner::CallStackPush(FlowPtr addr)
         CallFrame *pf = CallStack.push_ptr();
         pf->last_pc = addr;
         pf->last_frame = FramePointer;
+        pf->last_local_end = LocalEnd;
         pf->last_closure = closurepointer;
 #ifdef FLOW_DEBUGGER
         pf->impersonate_pc = ImpersonateInsn;
@@ -2272,7 +2433,9 @@ void ByteCodeRunner::DoNativeCall(const StackSlot &arg_in)
 #endif
 
     // Move the arguments to the buffer above
-    if (unlikely((unsigned)num_args > DataStack.size()))
+    unsigned caller_end = CallStack.top().last_local_end;
+    if (unlikely(caller_end > DataStack.size()
+                 || unsigned(num_args) > DataStack.size() - caller_end))
     {
         StackError(DatastackFull, false);
         return;
@@ -2285,6 +2448,7 @@ void ByteCodeRunner::DoNativeCall(const StackSlot &arg_in)
     }
 
     FramePointer -= num_args;
+    LocalEnd = FramePointer;
     memcpy(arg_buffer+1, DataStack.pop_ptr(num_args), sizeof(StackSlot)*num_args);
 
     // Register a local root for the arg buffer (and the function reference)
@@ -2342,8 +2506,14 @@ void ByteCodeRunner::DoNativeCall(const StackSlot &arg_in)
 
     // Return immediately
     CallFrame *frame = CallStack.pop_ptr(2);
+    if (unlikely(!IsInstructionStart(frame->last_pc))) {
+        ReportError(InvalidCall, "Invalid native return instruction address");
+        return;
+    }
     Code.SetPosition(frame->last_pc);
     FramePointer = frame->last_frame;
+    LocalEnd = frame->last_local_end;
+    closurepointer = frame->last_closure;
 
 #ifdef FLOW_DEBUGGER
     ImpersonateInsn = frame->impersonate_pc;
@@ -2358,6 +2528,11 @@ void ByteCodeRunner::DoNativeCall(const StackSlot &arg_in)
 
 inline void ByteCodeRunner::DoCall()
 {
+    if (unlikely(!HasOperands(1))) {
+        StackError(DatastackFull, false);
+        return;
+    }
+
 #ifdef FLOW_DEBUGGER
     if (unlikely(DbgCallTrap))
     {
@@ -2366,14 +2541,22 @@ inline void ByteCodeRunner::DoCall()
     }
 #endif
 
-    RUNNER_RefArgs1(arg);
+    const StackSlot arg = DataStack.top();
+    FlowPtr target = MakeFlowPtr(0);
+    if (arg.IsFlowCode()) {
+        target = GetCodePointer(arg);
+        if (unlikely(!IsCallableAddress(target))) {
+            ReportError(InvalidCall, "Invalid callable address: %08x", FlowPtrToInt(target));
+            return;
+        }
+    }
 
     CallFrame *frame = CallStackPush(Code.GetPosition());
     if (unlikely(!frame))
         return;
 
     DiscardStackSlots(1);
-    FramePointer = DataStack.size();
+    FramePointer = LocalEnd = DataStack.size();
 #ifdef FLOW_DEBUGGER
     ImpersonateInsn = MakeFlowPtr(0);
 #endif
@@ -2382,14 +2565,15 @@ inline void ByteCodeRunner::DoCall()
     switch (arg.slot_private.Tag)
     {
     case (StackSlot::TAG_FLOWCODE):
-        Code.SetPosition(LastInstructionPtr = arg.GetCodePtr());
+        closurepointer = MakeFlowPtr(0);
+        Code.SetPosition(LastInstructionPtr = target);
         break;
     case (StackSlot::TAG_FLOWCODE|StackSlot::TAG_SIGN):
 #ifdef FLOW_DEBUGGER
         frame->is_closure = true;
 #endif
         closurepointer = arg.GetClosureDataPtr();
-        Code.SetPosition(LastInstructionPtr = Memory.GetFlowPtr(closurepointer-8));
+        Code.SetPosition(LastInstructionPtr = target);
         break;
     case (StackSlot::TAG_NATIVEFN):
     case (StackSlot::TAG_NATIVEFN|StackSlot::TAG_SIGN):
@@ -2397,6 +2581,8 @@ inline void ByteCodeRunner::DoCall()
         break;
     default:
         // Undo stack changes:
+        FramePointer = frame->last_frame;
+        LocalEnd = frame->last_local_end;
         CallStackPop();
         DataStack.push_ptr(1);
         ReportError(InvalidCall, "Not callable tag: %02x", arg.GetType());
@@ -2405,11 +2591,19 @@ inline void ByteCodeRunner::DoCall()
 
 inline bool ByteCodeRunner::DoTailCall(int locals)
 {
+    if (unlikely(CallStack.empty() || !HasOperands(1))) {
+        ReportError(StackCorruption, "Missing tail call frame or callable");
+        return true;
+    }
     // Peek without popping the closure type
     StackSlot &arg = DataStack.top();
 
     if (arg.IsCodePointer())
     {
+        if (unlikely(unsigned(locals) >= DataStack.size() - LocalEnd)) {
+            ReportError(StackCorruption, "Invalid tail call argument count");
+            return true;
+        }
         // This is our guy! We can do tail calls of this stuff
 #ifdef FLOW_DEBUGGER
         if (unlikely(DbgCallTrap))
@@ -2429,14 +2623,21 @@ inline bool ByteCodeRunner::DoTailCall(int locals)
 
         // Get rid of the code address
         FlowPtr code_addr = arg.GetCodePtr();
+        if (unlikely(!IsCallableAddress(code_addr))) {
+            ReportError(InvalidCall, "Invalid callable address: %08x", FlowPtrToInt(code_addr));
+            return true;
+        }
         DiscardStackSlots(1);
 
         // OK, move the arguments down to the previous frame, which we are going to reuse
-        memmove(&DataStack[FramePointer], &DataStack[DataStack.size()-locals], locals * STACK_SLOT_SIZE);
+        if (locals)
+            memmove(&DataStack[FramePointer], &DataStack[DataStack.size()-locals], locals * STACK_SLOT_SIZE);
 
         // Fix the frame up so that Treservelocals in the function itself will make this the reuse
         FramePointer += locals;
         DataStack.resize(FramePointer);
+        LocalEnd = FramePointer;
+        closurepointer = MakeFlowPtr(0);
 
         // And then go!
         Code.SetPosition(code_addr);
@@ -2466,13 +2667,22 @@ void ByteCodeRunner::PushDataStackSlot(int offset)
     }
 }
 
+// An instruction that takes a fixed number of values must find them above the
+// frame's locals, so malformed bytecode cannot read or overwrite below them.
+// Used directly in a case of the opcode switch: break leaves the switch.
+#define RUNNER_NeedOperands(count) \
+    if (unlikely(!HasOperands(count))) { \
+        ReportError(StackCorruption, "Not enough operands for opcode %02Xh", unsigned(opcode)); \
+        break; \
+    }
+
 #if !COMPILED
 
 FlowPtr ByteCodeRunner::getLastCodeAddress() {
     return Code.GetLastAddr();
 }
 
-void ByteCodeRunner::run()
+void ByteCodeRunner::run() try
 {
     /* NOTE: Instruction implementations in this function
              use some low-level optimizations that may be
@@ -2492,13 +2702,7 @@ void ByteCodeRunner::run()
     {
         FlowPtr cur_insn = Code.GetPosition();
 
-        if (likely(cur_insn < Code.GetLastAddr()))
-            LastInstructionPtr = cur_insn;
-        else
-        {
-            ReportError(InvalidCall, "Invalid instruction address: %08x", FlowPtrToInt(cur_insn));
-            return;
-        }
+        LastInstructionPtr = cur_insn;
 
 #if defined(FLOW_INSTRUCTION_PROFILING) || defined(FLOW_DEBUGGER)
 #ifdef FLOW_INSTRUCTION_PROFILING
@@ -2509,16 +2713,15 @@ void ByteCodeRunner::run()
             ProfileICEvent(false);
 #endif
 
-        OpCode opcode = (OpCode) Code.ReadByte();
-
+        unsigned opcode = static_cast<uint8_t>(Code.ReadByte());
 #else
-void ByteCodeRunner::runOpcode(OpCode opcode) {
+void ByteCodeRunner::runOpcode(OpCode opcode) try {
 #endif
     reparse_breakpoint:
         switch (opcode)
         {
         case CTailCall:
-            if (!DoTailCall(Code.ReadInt31_16())) {
+            if (!DoTailCall(Code.ReadInt31())) {
             	DoCall();
             }
             break;
@@ -2544,16 +2747,6 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             break;
         case CString:
             {
-                /*int len = Code.ReadInt31();
-                FlowPtr ptr = len ? Code.GetPosition() : MakeFlowPtr(0);
-                Push(StackSlot::Make(TString, ptr, len));
-                // Skip string
-                Code.SetPosition(Code.GetPosition() + len);*/
-                /*unicode_string sv = ReadWideString();
-                if (sv.empty())
-                    Push(StackSlot::Make(TString, MakeFlowPtr(0), 0));
-                else
-                    Push(sv);*/
                 int len = Code.ReadInt31();
                 if (len)
                 {
@@ -2567,13 +2760,15 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CWString:
             {
-                int len = Code.ReadByte();
+                const uint8_t len = static_cast<uint8_t>(Code.ReadByte());
                 if (len)
                 {
                     StackSlot str;
-                    *AllocateStringRef(&str, len) = Code.GetPosition();
+                    FlowPtr *ref = AllocateStringRef(&str, len);
+                    if (!ref) break;
+                    *ref = Code.GetPosition();
                     Push(str);
-                    Code.SetPosition(Code.GetPosition() + len * 2); // Skip string
+                    Code.GetWideBytes(len);
                 }
                 else
                 {
@@ -2583,15 +2778,16 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CArray:
             {
-                int len = Code.ReadInt31_16();
+                int len = Code.ReadInt31();
                 if (len)
                 {
-                    if (unlikely(DataStack.size() < unsigned(len))) {
+                    if (unlikely(!HasOperands(unsigned(len)))) {
                         StackError(DatastackFull, false);
                         break;
                     }
 
                     StackSlot arr = AllocateUninitializedArray(len); // ALLOC
+                    if (unlikely(IsErrorReported())) break;
                     memcpy(GetArrayWritePtr(arr, len), DataStack.pop_ptr(len), len * STACK_SLOT_SIZE);
                     Push(arr);
                 }
@@ -2603,10 +2799,14 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CStruct:
             {
-                int id = Code.ReadInt31_16();
+                int id = Code.ReadInt31(); // The executable index already checked the encoded ID.
                 StructDef *def = safeVectorPtrAt(StructDefs, id);
                 if (unlikely(def == NULL || def->Name.empty())) {
                     ReportError(UnknownStructDefId, "Unknown struct kind: %d", id);
+                    break;
+                }
+                if (unlikely(def->FieldsCount < 0 || !HasOperands(unsigned(def->FieldsCount)))) {
+                    ReportError(StackCorruption, "Not enough operands for struct %d", id);
                     break;
                 }
                 // Now make an array out of all of this
@@ -2617,12 +2817,13 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CArrayGet:
             {
+                RUNNER_NeedOperands(2);
                 DoArrayGet();
                 break;
             }
         case CGoto:
             {
-                int offset = Code.ReadInt31(); // TO DO error
+                int offset = Code.ReadInt31();
                 Code.SetPosition(Code.GetPosition() + offset);
                 break;
             }
@@ -2660,6 +2861,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case COptionalNativeFn:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(curval);
                 int args = Code.ReadInt31();
                 std::string fn = Code.ReadString();
@@ -2671,13 +2873,18 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CSetLocal:
             {
-                int slot = Code.ReadInt31_16();
+                int slot = Code.ReadInt31();
+                if (unlikely(!HasLocal(unsigned(slot)) || !HasOperands(1))) {
+                    ReportError(StackCorruption, "Invalid local assignment to slot %d", slot);
+                    break;
+                }
                 DataStack[FramePointer + slot] = DataStack.top();
                 DiscardStackSlots(1);
                 break;
             }
         case CPlus:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 DoPlus(val1, val2);
                 DiscardStackSlots(1);
@@ -2685,6 +2892,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CPlusInt:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TInt, val1, val2);
                 val1.SetIntValue(val1.GetInt() + val2.GetInt());
@@ -2693,6 +2901,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CPlusString:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TString, val1, val2);
                 DoPlusString(val1, val2);
@@ -2701,6 +2910,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CMinus:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 DoMinus(val1, val2);
                 DiscardStackSlots(1);
@@ -2708,6 +2918,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CMinusInt:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TInt, val1, val2);
                 val1.SetIntValue(val1.GetInt() - val2.GetInt());
@@ -2716,6 +2927,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CMultiply:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 DoMultiply(val1, val2);
                 DiscardStackSlots(1);
@@ -2723,6 +2935,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CMultiplyInt:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TInt, val1, val2);
                 val1.SetIntValue(val1.GetInt() * val2.GetInt());
@@ -2731,6 +2944,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CDivide:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 DoDivide(val1, val2);
                 DiscardStackSlots(1);
@@ -2738,6 +2952,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CDivideInt:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TInt, val1, val2);
                 if (unlikely(val2.GetInt() == 0)) {
@@ -2750,6 +2965,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CModulo:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 DoModulo(val1, val2);
                 DiscardStackSlots(1);
@@ -2757,6 +2973,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CModuloInt:
             {
+                RUNNER_NeedOperands(2);
                 RUNNER_RefArgsRet2(val1, val2);
                 RUNNER_CheckTag2(TInt, val1, val2);
                 if (unlikely(val2.GetInt() == 0)) {
@@ -2769,12 +2986,14 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CNegate:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(val);
                 DoNegate(val);
                 break;
             }
         case CNegateInt:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(val1);
                 RUNNER_CheckTag(TInt, val1);
                 val1.SetIntValue(-val1.GetInt());
@@ -2782,52 +3001,69 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CEqual:
             {
+                RUNNER_NeedOperands(2);
                 DoEqual();
                 break;
             }
         case CLessThan:
             {
+                RUNNER_NeedOperands(2);
                 DoLessThan();
                 break;
             }
         case CLessEqual:
             {
+                RUNNER_NeedOperands(2);
                 DoLessEqual();
                 break;
             }
         case CNot:
             {
+                RUNNER_NeedOperands(1);
                 DoNot();
                 break;
             }
         case CIfFalse:
             {
+                int offset = Code.ReadInt31();
+                if (unlikely(!HasOperands(1))) {
+                    StackError(DatastackFull, false);
+                    break;
+                }
                 RUNNER_RefArgs1(flag);
                 RUNNER_CheckTag(TBool, flag);
-                if (!flag.GetBool()) {
-                    int offset = Code.ReadInt31();
+                if (!flag.GetBool())
                     Code.SetPosition(Code.GetPosition() + offset);
-                }
-                else
-                    Code.SkipInt();
                 DiscardStackSlots(1);
                 break;
             }
         case CGetGlobal:
             {
-                PushDataStackSlot(Code.ReadInt31_16());
+                PushDataStackSlot(Code.ReadInt31());
                 break;
             }
         case CGetLocal:
             {
-                PushDataStackSlot(FramePointer + Code.ReadInt31_16());
+                int slot = Code.ReadInt31();
+                if (unlikely(!HasLocal(unsigned(slot)))) {
+                    ReportError(StackCorruption, "Invalid local read from slot %d", slot);
+                    break;
+                }
+                const StackSlot value = DataStack[FramePointer + slot];
+                Push(value);
                 break;
             }
         case CReserveLocals:
             {
-                char *data = Code.GetBytes(8);
-                int ncnt = ((PackedVals*)data)->usv;
-                int v = *(unsigned char*)(data+4);
+                const PackedVals *counts = reinterpret_cast<const PackedVals*>(Code.GetBytes(8));
+                int ncnt = counts->pair[0], args = counts->pair[1];
+                unsigned caller_end = CallStack.empty() ? 0 : CallStack.top().last_local_end;
+                if (unlikely(ncnt < 0 || args < 0
+                             || FramePointer != DataStack.size() || FramePointer != LocalEnd
+                             || caller_end > FramePointer || unsigned(args) > FramePointer - caller_end)) {
+                    ReportError(StackCorruption, "Invalid local frame reservation");
+                    break;
+                }
                 // Allocate locals
                 if (ncnt > 0) {
                     if (unlikely(MAX_DATA_STACK - DataStack.size() < unsigned(ncnt))) {
@@ -2837,21 +3073,25 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
                     memset(DataStack.push_ptr(ncnt), -1, STACK_SLOT_SIZE*ncnt);
                 }
                 // Eat parameters
-                FramePointer -= v;
+                FramePointer -= args;
+                LocalEnd = DataStack.size();
                 break;
             }
         case CPop:
             {
+                RUNNER_NeedOperands(1);
                 DiscardStackSlots(1);
                 break;
             }
         case CRefTo:
             {
+                RUNNER_NeedOperands(1);
                 DoRefTo();
                 break;
             }
         case CDeref:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(ref);
                 RUNNER_CheckTag(TRefTo, ref);
                 ref = Memory.GetStackSlot(ref.GetRawRefPtr());
@@ -2859,34 +3099,40 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CSetRef:
             {
+                RUNNER_NeedOperands(2);
                 DoSetRef();
                 break;
             }
         case CInt2Double:
             {
+                RUNNER_NeedOperands(1);
                 DoInt2Double();
                 break;
             }
         case CInt2String:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(value);
                 value = DoInt2String(this, value);
                 break;
             }
         case CDouble2Int:
             {
+                RUNNER_NeedOperands(1);
                 DoDouble2Int();
                 break;
             }
         case CDouble2String:
             {
+                RUNNER_NeedOperands(1);
                 RUNNER_RefArgsRet1(value);
                 value = DoDouble2String(this, value);
                 break;
             }
         case CField:
             {
-                int i = Code.ReadInt31_16();
+                int i = Code.ReadInt31();
+                RUNNER_NeedOperands(1);
                 DoField(i);
                 break;
             }
@@ -2894,12 +3140,14 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             {
                 char *plen = Code.GetBytes(4);
                 int len = (unsigned char)plen[0];
-                DoFieldName(Code.GetBytes(len), len, (short*)(plen+2));
+                RUNNER_NeedOperands(1);
+                DoFieldName(Code.GetBytes(len), len, plen+2);
                 break;
             }
         case CSetMutable:
             {
-                int i = Code.ReadInt31_8();
+                int i = Code.ReadInt31();
+                RUNNER_NeedOperands(2);
                 DoSetMutable(i);
                 break;
             }
@@ -2907,17 +3155,18 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             {
                 char *plen = Code.GetBytes(4);
                 int len = (unsigned char)plen[0];
-                DoSetMutableName(Code.GetBytes(len), len, (short*)(plen+2));
+                RUNNER_NeedOperands(2);
+                DoSetMutableName(Code.GetBytes(len), len, plen+2);
                 break;
             }
         case CStructDef:
             {
-                int id = Code.ReadInt31();
+                int id = Code.ReadStructId();
                 std::string name = Code.ReadString();
+                int n = Code.ReadStructFieldCount();
                 StructDef sd;
                 sd.Name = name;
                 sd.NameU = parseUtf8(name);
-                int n = Code.ReadInt31();
                 sd.FieldsCount = n;
                 sd.CompareIdx = id;
                 sd.IsMutable.resize(n);
@@ -2939,12 +3188,18 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
             }
         case CGetFreeVar:
             {
-                int n = Code.ReadInt31_8();
+                int n = Code.ReadInt31();
+                if (unlikely(closurepointer == MakeFlowPtr(0) || n < 0
+                             || n >= ClosureSlotCount(closurepointer))) {
+                    ReportError(InvalidArgument, "Invalid closure variable index: %d", n);
+                    break;
+                }
                 PushFromMemory(closurepointer + n * STACK_SLOT_SIZE);
                 break;
             }
         case CDebugInfo:
             {
+                std::string name = Code.ReadString();
 #ifdef FLOW_NATIVE_OVERRIDES
                 // Replace certain top-level functions
                 if (!DebugFnList.empty() && !DataStack.empty() &&
@@ -2959,22 +3214,22 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
                 }
 #endif
 
-                std::string name = Code.ReadString();
                 DebugFnInfo[Code.GetPosition()] = name;
                 DebugFnList.push_back(name);
                 break;
             }
         case CClosurePointer:
             {
-                int n = Code.ReadInt31_8();
+                int n = Code.ReadInt31();
                 int offset = Code.ReadInt31();
 
-                if (unlikely(DataStack.size() < unsigned(n))) {
+                if (unlikely(unsigned(n) > UINT16_MAX || !HasOperands(unsigned(n)))) {
                     StackError(DatastackFull, false);
                     break;
                 }
 
                 StackSlot clos = AllocateUninitializedClosure(n, Code.GetPosition() + offset); // ALLOC
+                if (unlikely(IsErrorReported())) break;
                 memcpy(GetClosureWritePtr(clos, n), DataStack.pop_ptr(n), n * STACK_SLOT_SIZE);
                 Push(clos);
                 break;
@@ -2982,11 +3237,14 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
         case CSimpleSwitch:
         case CSwitch:
             {
-                RUNNER_RefArgsRet1(struct_ref);
+                int cases;
+                const PackedVals *table = Code.ReadSwitchTable(cases);
+                if (unlikely(!HasOperands(1))) {
+                    StackError(DatastackFull, false);
+                    break;
+                }
+                const StackSlot struct_ref = DataStack.top();
                 RUNNER_CheckTag(TStruct, struct_ref);
-
-                int cases = *(unsigned char*)Code.GetBytes(8);
-                char *data = Code.GetBytes(cases * 8);
 
                 int structId = struct_ref.GetStructId();
 
@@ -2995,11 +3253,11 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
 
                 for (int i = 0; i < cases; ++i)
                 {
-                    int cn = *(short*)(data + i*8);
+                    int cn = table[i].pair[0];
                     if (cn == structId)
                     {
                         // We have a hit. Let's unpack the struct on the stack.
-                        int offset = *(int*)(data + i*8 + 4);
+                        int offset = table[i].pair[1];
 
                         if (opcode != CSimpleSwitch) {
                             int len = GetStructSize(struct_ref);
@@ -3019,14 +3277,13 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
         case CBreakpoint:
             {
 #ifdef FLOW_DEBUGGER
-                std::map<FlowPtr,OpCode>::iterator it = BreakpointOpcodeBackup.find(cur_insn);
-                if (it != BreakpointOpcodeBackup.end())
+                if (BreakpointOpcodeBackup.count(cur_insn))
                 {
-                    opcode = it->second;
-
                     if (DebuggerPtr)
                         DebuggerPtr->onBreakpointTrap(cur_insn);
 
+                    // The debugger can change coverage or remove this breakpoint while paused.
+                    opcode = safeMapAt(BreakpointOpcodeBackup, cur_insn, OpCode(Memory.GetByte(cur_insn)));
                     goto reparse_breakpoint;
                 }
 #endif
@@ -3042,7 +3299,7 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
                 if (ProfileCodeCoverage && offset < CoverageCodeBackup.size())
                 {
                     opcode = (OpCode)CoverageCodeBackup[offset];
-                    Memory.SetByte(cur_insn, opcode);
+                    SetCoverageOpcode(cur_insn, OpCode(opcode));
 
                     ProfileDumpStack(1, CallStack, LastInstructionPtr);
 
@@ -3069,6 +3326,9 @@ void ByteCodeRunner::runOpcode(OpCode opcode) {
     }// while
 }
 #endif
+catch (const CodeMemory::DecodeError &error) {
+    ReportError(InvalidOpCode, "%s", error.what());
+}
 
 int ByteCodeRunner::Compare(FlowPtr a1, FlowPtr a2)
 {
@@ -3464,7 +3724,7 @@ void ByteCodeRunner::FreezeNativeFunctions(bool compact)
 #endif
 }
 
-void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
+void ByteCodeRunner::ForceGC(unsigned ensure_old_space, bool full)
 {
     if (NativeValueBudget < 0) {
 #ifdef DEBUG_FLOW
@@ -3492,7 +3752,7 @@ void ByteCodeRunner::ForceGC(unsigned ensure_space, bool full)
 
     if (!fast_ok)
     {
-        if (!gc.Collect(ensure_space))
+        if (!gc.Collect(ensure_old_space))
             return;
 
         // Heuristically force full gc when too many new natives are allocated
@@ -3728,6 +3988,8 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getDataTagForValue, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getFileContent, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getFileContentBinary, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, readPackedFile, 1);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, copyFile, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContent, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContentUTF16, 2);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, setFileContentBinary, 2);
@@ -3756,6 +4018,7 @@ NativeFunction *ByteCodeRunner::MakeNativeFunction(const char *name, int num_arg
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, toBinary, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, fromBinary, 3);
     TRY_USE_NATIVE_STATIC_NAME(ByteCodeRunner, fromBinary2, "fromBinary", 2);
+    TRY_USE_NATIVE_STATIC(ByteCodeRunner, fromBinaryWithDepth, 4);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, stringbytes2double, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, stringbytes2int, 1);
     TRY_USE_NATIVE_STATIC(ByteCodeRunner, getCurrentDate, 0);
@@ -3828,6 +4091,7 @@ void ByteCodeRunner::RunMain()
 #endif
     else
     {
+        if (!PrepareInterpreter()) return;
         run();
     }
 
@@ -3948,6 +4212,7 @@ StackSlot ByteCodeRunner::EvalFunctionArr(const StackSlot &func, int args_num, S
 
 bool ByteCodeRunner::EvalFunctionStack(const StackSlot &func, int args_num)
 {
+    if (IsErrorReported() || !PrepareInterpreter()) return false;
 #ifdef FLOW_JIT
     assert(!JitProgram);
 #endif
@@ -4292,7 +4557,8 @@ void FlowDebuggerBase::onRunnerInit()
     global_vars.clear();
     structs.clear();
 
-    runner->Disassemble(&insn_table, runner->CodeStartPtr(), runner->CodeSize());
+    if (runner->has_interpreter_code)
+        runner->Disassemble(&insn_table, runner->CodeStartPtr(), runner->CodeSize());
 
     FlowInstruction::Map::iterator it = insn_table.begin();
     for (; it != insn_table.end(); ++it)
@@ -4340,12 +4606,14 @@ void FlowDebuggerBase::onRunnerReset()
 FlowPtr FlowDebuggerBase::SetBreakpoint(FlowPtr addr, bool enable)
 {
     FlowInstruction::Map::iterator it = mapFindLE(insn_table, addr);
-    if (it != insn_table.end())
-        addr = it->first;
+    if (it == insn_table.end()) return addr;
+    addr = it->first;
 
     if (enable)
     {
-        if (!breakpoints().count(addr))
+        // The index must be built from the original opcodes before a trap is installed.
+        // Removing a breakpoint only restores its saved opcode, so it does not need the index.
+        if (!breakpoints().count(addr) && runner->PrepareInterpreter())
         {
             OpCode op = (OpCode)runner->Memory.GetByte(addr);
             assert(op != CBreakpoint);
@@ -4493,6 +4761,7 @@ void ByteCodeRunner::BeginMemoryProfile(const char *file, unsigned step)
 
 void ByteCodeRunner::BeginCoverageProfile(const char *file)
 {
+    if (!PrepareInterpreter()) return;
     ProfileOpenFile(file);
 
     if (!ProfileCodeCoverage)
@@ -4503,13 +4772,25 @@ void ByteCodeRunner::BeginCoverageProfile(const char *file)
         CoverageCodeBackup.resize(code_size);
         memcpy(CoverageCodeBackup.data(), Memory.GetRawPointer(CodeStartPtr(), code_size, false), code_size);
 
-        // Tag all instructions for a trap
-        FlowInstruction::Map table;
-        Disassemble(&table, CodeStartPtr(), CodeSize());
-
-        for (FlowInstruction::Map::iterator it = table.begin(); it != table.end(); ++it)
-            Memory.SetByte(it->first, CCodeCoverageTrap);
+        // Save real opcodes; breakpoints stay on top of coverage traps.
+#ifdef FLOW_DEBUGGER
+        for (const auto &bp : BreakpointOpcodeBackup)
+            CoverageCodeBackup[FlowPtrToInt(bp.first)] = char(bp.second);
+#endif
+        for (size_t i = 0; i < code_size; ++i)
+            if (InstructionStarts[i]) SetCoverageOpcode(MakeFlowPtr(i), CCodeCoverageTrap);
     }
+}
+
+void ByteCodeRunner::SetCoverageOpcode(FlowPtr address, OpCode opcode)
+{
+#ifdef FLOW_DEBUGGER
+    if (Memory.GetByte(address) == CBreakpoint) {
+        BreakpointOpcodeBackup.at(address) = opcode;
+        return;
+    }
+#endif
+    Memory.SetByte(address, opcode);
 }
 
 #ifdef FLOW_GARBAGE_PROFILING

@@ -2,6 +2,7 @@
 #include "NativeProgram.h"
 #include "GarbageCollector.h"
 #include "JitProgram.h"
+#include "JitMetadata.h"
 
 #include <iomanip>
 #include <sstream>
@@ -199,6 +200,12 @@ bool FlowJitProgram::handleError(Error, const char* message, CodeEmitter*)
     throw JitError();
 }
 
+void FlowJitProgram::bytecode_error(FlowPtr addr, const std::string &message)
+{
+    err << "JIT error at bytecode offset " << FlowPtrToInt(addr) << ": " << message << std::endl;
+    throw JitError();
+}
+
 bool FlowJitProgram::Load(const std::string &bytecode_file)
 {
     if (!flow_code.load_file(bytecode_file))
@@ -214,7 +221,10 @@ bool FlowJitProgram::Load(const std::string &bytecode_file)
 void FlowJitProgram::InitRunner(ByteCodeRunner *runner)
 {
     // Copy flow strings and other things into flow memory area
-    runner->DoInit((char*)flow_constant_buffer.data(), flow_constant_buffer.size(), false);
+    const size_t size = flow_constant_buffer.size();
+    runner->DoInit((char*)flow_constant_buffer.data(), size < INT_MAX ? int(size) : -1, false);
+    if (runner->IsErrorReported())
+        return;
 
     runner->JitCallFrame = NULL;
 
@@ -831,6 +841,14 @@ bool FlowJitProgram::find_structs()
     return true;
 }
 
+FlowJitProgram::StructInfo::Ptr FlowJitProgram::require_struct(int id, FlowPtr addr)
+{
+    StructInfo::Ptr info = jit_metadata::find_struct(id, struct_by_id);
+    if (!info)
+        bytecode_error(addr, stl_sprintf("Unknown struct id %d", id));
+    return info;
+}
+
 /*
  * Extract the code of a function into a linear bytecode list, skipping any nested functions.
  */
@@ -1410,6 +1428,11 @@ void FlowJitProgram::callback_uncaught_switch(ByteCodeRunner *runner)
     runner->ReportError(UncaughtSwitch, "Unexpected case in switch.");
 }
 
+void FlowJitProgram::callback_stack_full(ByteCodeRunner *runner)
+{
+    runner->ReportError(DatastackFull, "Cannot reserve JIT locals: stack overflow.");
+}
+
 void FlowJitProgram::callback_freeze_globals(ByteCodeRunner *runner)
 {
     // After all globals are initialized, make the memory read only to detect improper stack usage.
@@ -1437,6 +1460,7 @@ void FlowJitProgram::assemble_utilities()
     new_label_addr(&thunk_func_error, "$thunk_func_error");
     new_label_addr(&thunk_field_error, "$thunk_field_error");
     new_label_addr(&thunk_arridx_error, "$thunk_arridx_error");
+    new_label_addr(&thunk_stack_full, "$thunk_stack_full");
     new_label_addr(&thunk_register_slot_write, "$thunk_register_slot_write");
     new_label_addr(&thunk_register_ref_write, "$thunk_register_ref_write");
     new_label_addr(&thunk_compare, "$compare");
@@ -1477,6 +1501,9 @@ void FlowJitProgram::assemble_utilities()
 
     thunk_arridx_error.bind(as);
     assemble_cpp_call_thunk((void*)callback_arridx_error, rArg1, rArg2, rArg3, true);
+
+    thunk_stack_full.bind(as);
+    assemble_cpp_call_thunk((void*)callback_stack_full, rArg1, rArg2, rArg3, true);
 
     thunk_uncaught_switch.bind(as);
     assemble_cpp_call_thunk((void*)callback_uncaught_switch, rArg1, rArg2, rArg3, true);
@@ -2679,14 +2706,10 @@ void FlowJitProgram::assemble_functions()
 
             asm_enter_frame();
 
-            if (!function_code.empty() && function_code[0]->second.op == CReserveLocals)
-                fasm.enter_func(is_closure, function_code[0]->second.IntValue2, function_code[0]->second.IntValue);
-            else
-                fasm.enter_func(is_closure, 0, 0);
-
+            fasm.enter_func(is_closure);
             func->num_args = fasm.num_args;
 
-            fasm.preprocess();
+            fasm.preprocess(true);
             fasm.generate();
 
             fasm.checker.flush();
@@ -2732,7 +2755,7 @@ void FlowJitProgram::assemble_global_init()
 
         FunctionAssembler fasm(this, global->init_code, global->end);
 
-        fasm.preprocess();
+        fasm.preprocess(false);
         fasm.generate();
 
         if (fasm.checker.needs_flush())
@@ -2769,15 +2792,22 @@ FlowJitProgram::FunctionAssembler::FunctionAssembler(FlowJitProgram *owner, cons
 /*
  * Generate function prologue, properly initializing the stack frame.
  */
-void FlowJitProgram::FunctionAssembler::enter_func(bool is_closure, int num_args, int num_locals)
+void FlowJitProgram::FunctionAssembler::enter_func(bool is_closure)
 {
     this->is_closure = is_closure;
 
+    if (!code_in.empty() && code_in.front()->second.op == CReserveLocals)
+    {
+        const FlowInstruction &reserve = code_in.front()->second;
+        num_args = reserve.IntValue2;
+        num_locals = reserve.IntValue;
+
+        if (!jit_metadata::valid_frame(num_args, num_locals, ByteCodeRunner::MAX_DATA_STACK))
+            owner->bytecode_error(code_in.front()->first, "Invalid function frame size");
+    }
+
     if (is_closure)
         as.mov(rClosure.r32(), eax);
-
-    this->num_args = num_args;
-    this->num_locals = num_locals;
 
     if (num_args)
         as.lea(rDFrame, ptr(rDStack, -num_args*QWORD));
@@ -2786,6 +2816,13 @@ void FlowJitProgram::FunctionAssembler::enter_func(bool is_closure, int num_args
 
     if (num_locals)
     {
+        // The frame may fit on its own but not on top of the caller's stack.
+        Label available = as.newLabel();
+        as.mov(rcx, STATE(DataStack.buf));
+        jit_metadata::branch_if_locals_fit(as, rcx, rDStack, ByteCodeRunner::MAX_DATA_STACK, num_locals, available);
+        owner->thunk_stack_full.call(as);
+        as.bind(available);
+
         as.mov(rax, -1);
 
         if (num_locals < 5) {
@@ -2814,9 +2851,10 @@ void FlowJitProgram::FunctionAssembler::enter_func(bool is_closure, int num_args
  * copying data to the closure directly from the original locals without
  * going via the stack.
  */
-void FlowJitProgram::FunctionAssembler::preprocess()
+void FlowJitProgram::FunctionAssembler::preprocess(bool is_function)
 {
-    // Allocate labels for instructions jumped to
+    // Validate operands before any peepholes can skip or fold the instructions.
+    // Also allocate labels for instructions jumped to.
     for (size_t i = 0; i < code_in.size(); i++)
     {
         FlowInstruction::Pair *ipair = code_in[i];
@@ -2824,6 +2862,27 @@ void FlowJitProgram::FunctionAssembler::preprocess()
 
         switch (insn.op)
         {
+        case CGetGlobal:
+            if (!jit_metadata::valid_global(insn.IntValue, owner->globals, ByteCodeRunner::MAX_DATA_STACK))
+                owner->bytecode_error(ipair->first, stl_sprintf("Invalid global index %d", insn.IntValue));
+            break;
+
+        case CGetLocal:
+        case CSetLocal:
+            if (!jit_metadata::valid_slot(insn.IntValue, num_args + num_locals))
+                owner->bytecode_error(ipair->first, stl_sprintf("Invalid local slot %d", insn.IntValue));
+            break;
+
+        case CReserveLocals:
+            if (!jit_metadata::valid_reserve_position(is_function, i))
+                owner->bytecode_error(ipair->first, "ReserveLocals outside function entry");
+            break;
+
+        case CTailCall:
+            if (!jit_metadata::valid_tail_count(insn.IntValue, ByteCodeRunner::MAX_DATA_STACK))
+                owner->bytecode_error(ipair->first, "Invalid tail call argument count");
+            break;
+
         case CGoto:
             // don't count jump to next instruction - it's skipped at code generation
             if (i+1 < code_in.size() && insn.PtrValue == code_in[i+1]->first)
@@ -3078,7 +3137,7 @@ void FlowJitProgram::FunctionAssembler::asm_push_to_stack(CurPos *cpos, int bias
 
             case CStruct:
             {
-                StructInfo::Ptr info = owner->struct_by_id[pinsn->second.IntValue];
+                StructInfo::Ptr info = owner->require_struct(pinsn->second.IntValue, pinsn->first);
 
                 if (info->num_fields != 0)
                     abort();
@@ -3169,7 +3228,7 @@ void FlowJitProgram::FunctionAssembler::asm_push_to_stack(CurPos *cpos, int bias
                 break;
 
             case CStruct:
-                if (owner->struct_by_id[code[cpos->iidx]->second.IntValue]->num_fields == 0)
+                if (owner->require_struct(code[cpos->iidx]->second.IntValue, code[cpos->iidx]->first)->num_fields == 0)
                     pinsn = next_insn(cpos);
                 break;
 
@@ -3929,6 +3988,10 @@ void FlowJitProgram::FunctionAssembler::generate()
 
         case CArray:
         {
+            if (insn.IntValue < 0 || !FlowSlotsFit(insn.IntValue, 4, std::min(MAX_HEAP_SIZE / 2, unsigned(INT_MAX)))) {
+                owner->err << "Array is too large for the heap." << std::endl;
+                throw JitError();
+            }
             if (insn.IntValue == 0)
             {
                 // Empty array is a constant
@@ -4019,8 +4082,7 @@ void FlowJitProgram::FunctionAssembler::generate()
 
         case CStruct:
         {
-            StructInfo::Ptr info = owner->struct_by_id[insn.IntValue];
-            as.mov(rax, info->empty_addr | info->type_tag);
+            StructInfo::Ptr info = owner->require_struct(insn.IntValue, ipair->first);
 
             if (info->num_fields == 0)
             {
@@ -4144,7 +4206,7 @@ void FlowJitProgram::FunctionAssembler::generate()
             for (int k = 0; k < insn.IntValue; ++k)
             {
                 int id = insn.cases[k].id;
-                StructInfo::Ptr sinfo = owner->struct_by_id[id];
+                StructInfo::Ptr sinfo = owner->require_struct(id, ipair->first);
 
                 switch_table[sinfo->index] = jump_targets[insn.cases[k].target];
             }
@@ -4172,7 +4234,7 @@ void FlowJitProgram::FunctionAssembler::generate()
             for (int k = 0; k < insn.IntValue; ++k)
             {
                 int id = insn.cases[k].id;
-                StructInfo::Ptr sinfo = owner->struct_by_id[id];
+                StructInfo::Ptr sinfo = owner->require_struct(id, ipair->first);
 
                 switch_table[sinfo->index] = (sinfo->num_fields > 0) ? as.newLabel() : jump_targets[insn.cases[k].target];
             }
@@ -4184,7 +4246,7 @@ void FlowJitProgram::FunctionAssembler::generate()
             for (int k = 0; k < insn.IntValue; ++k)
             {
                 int id = insn.cases[k].id;
-                StructInfo::Ptr sinfo = owner->struct_by_id[id];
+                StructInfo::Ptr sinfo = owner->require_struct(id, ipair->first);
                 if (sinfo->num_fields == 0)
                     continue;
 

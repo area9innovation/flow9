@@ -1,19 +1,22 @@
 'use strict';
 
 const assert = require('node:assert/strict');
-const { createRequire } = require('node:module');
+const fs = require('node:fs');
+const Module = require('node:module');
+const path = require('node:path');
 const test = require('node:test');
 
-// Resolve the actual packaging-tool dependency tree, including nested overrides.
+const { createRequire } = Module;
+const root = path.join(__dirname, '..');
+
+// Resolve the actual dependency tree, including overrides.
 const requireVsce = createRequire(require.resolve('@vscode/vsce'));
 const requireIdentity = createRequire(requireVsce.resolve('@azure/identity'));
 const { ConfidentialClientApplication } = requireIdentity('@azure/msal-node');
 const { ClientSecretCredential, AuthorizationCodeCredential } = requireVsce('@azure/identity');
 const { createHttpHeaders } = requireIdentity('@azure/core-rest-pipeline');
-const requireSecretlint = createRequire(requireVsce.resolve('@secretlint/node'));
-const requireConfigLoader = createRequire(requireSecretlint.resolve('@secretlint/config-loader'));
-const requireAjv = createRequire(requireConfigLoader.resolve('ajv'));
-const uri = requireAjv('fast-uri');
+const requireClient = createRequire(require.resolve('vscode-languageclient/node'));
+const semver = requireVsce('semver');
 
 const tenant = '00000000-0000-0000-0000-000000000001';
 const clientId = '00000000-0000-0000-0000-000000000002';
@@ -32,47 +35,112 @@ const tokenResponse = {
     scope,
 };
 
-test('GHSA-w74x-v6f9-j3xg: percent-encoded schemes fail closed', () => {
-    for (const input of ['%6Aavascript:alert(1)', 'ht%74ps://example.com:443']) {
-        assert.equal(uri.parse(input).error, 'URI scheme is malformed.');
-        assert.equal(uri.normalize(input), input);
-        assert.equal(uri.equal(input, input), false);
-        assert.throws(() => uri.resolve('https://trusted.example/', input), /URI scheme is malformed\./);
+// The first fixed version for each advisory that has been raised against this tree.
+const patched = {
+    'minimatch': ['11.0.1', 'GHSA-g3hv-75wg-m249'],
+    '@azure/msal-node': ['7.1.0', 'GHSA-xcx6-jx8p-x3h5'],
+    'fast-uri': ['3.1.9', 'GHSA-w74x-v6f9-j3xg, GHSA-xhq7-xmqj-769h, GHSA-wjr9-j795-jxcr, GHSA-333x-w4r6-6crp'],
+};
+
+test('the lockfile has no version older than its advisory fix', () => {
+    const lock = JSON.parse(fs.readFileSync(path.join(root, 'package-lock.json'), 'utf8'));
+    let seen = 0;
+    for (const [key, entry] of Object.entries(lock.packages)) {
+        const name = key.slice(key.lastIndexOf('node_modules/') + 'node_modules/'.length);
+        if (!key || !(name in patched)) {
+            continue;
+        }
+        const [fixed, advisories] = patched[name];
+        assert.ok(semver.gte(entry.version, fixed), `${key}@${entry.version} is affected by ${advisories}`);
+        seen++;
     }
-    assert.equal(uri.normalize('HTTPS://Example.COM:443/path'), 'https://example.com/path');
+    assert.ok(seen > 0);
 });
 
-test('GHSA-xhq7-xmqj-769h: relative normalization preserves the target', () => {
-    const base = 'https://trusted.example/a/b/file';
-    for (const input of ['a/../b', '../x', 'x/..', 'a/..//x']) {
-        assert.equal(uri.resolve(base, uri.normalize(input)), uri.resolve(base, input));
-    }
-    assert.equal(uri.equal('../x', 'x'), false);
-    assert.equal(uri.equal('a/../b', '/b'), false);
-    assert.equal(uri.equal('a/../b', 'b'), true);
+// A stand-in for the `vscode` module: the members the file operation feature
+// uses, and an empty stub for everything the extension touches at load time.
+function stubVscode() {
+    const listeners = [];
+    const members = {
+        __esModule: true,
+        FileType: { File: 1, Directory: 2 },
+        workspace: {
+            onDidCreateFiles(listener, thisArg) {
+                listeners.push(listener.bind(thisArg));
+                return { dispose() {} };
+            },
+            fs: { async stat() { return { type: 1 }; } },
+        },
+    };
+    const stub = { get: (target, key) => key in target ? target[key] : new Proxy(function () {}, stub) };
+    const vscode = new Proxy(members, stub);
+    const resolve = Module._resolveFilename;
+    Module._resolveFilename = function (request, ...rest) {
+        return request === 'vscode' ? 'vscode' : resolve.call(this, request, ...rest);
+    };
+    require.cache.vscode = { id: 'vscode', filename: 'vscode', loaded: true, exports: vscode };
+    return listeners;
+}
+
+test('GHSA-g3hv-75wg-m249: `**/..` expansion is bounded', () => {
+    const minimatch = require('minimatch');
+    assert.equal(requireVsce('minimatch'), minimatch);
+    assert.equal(requireClient('minimatch'), minimatch);
+    const pattern = Array.from({ length: 16 }, (_, i) => `a${i}/**/..`).join('/') + '/x';
+    const start = Date.now();
+    assert.throws(() => new minimatch.Minimatch(pattern, { optimizationLevel: 2 }), RangeError);
+    assert.ok(Date.now() - start < 5000);
 });
 
-test('GHSA-wjr9-j795-jxcr: malformed hosts cannot alias another host', () => {
-    for (const input of ['https://a@b@evil.example/', 'https://ev\til.example/']) {
-        assert.equal(uri.parse(input).error, 'URI host is malformed.');
-        assert.equal(uri.normalize(input), input);
-        assert.equal(uri.equal(input, 'https://evil.example/'), false);
-        assert.throws(() => uri.resolve('https://trusted.example/', input), /URI host is malformed\./);
-    }
-    assert.equal(uri.parse('https://user:pass@example.com:8080/').host, 'example.com');
-});
+test('vscode-languageclient file operation filters work with minimatch 11', async () => {
+    const listeners = stubVscode();
+    // The extension entry point installs the Minimatch#makeRe() shim.
+    require(path.join(root, 'out', 'extension.js'));
+    const { DidCreateFilesFeature } = requireClient('vscode-languageclient/$test/common/fileOperations');
 
-test('GHSA-333x-w4r6-6crp: suffix normalization cannot introduce a scheme', () => {
-    const options = { reference: 'suffix', scheme: 'x' };
-    for (const input of ['javascript:alert(1)', 'data:text/html,x', 'vbscript:msgbox(1)']) {
-        assert.equal(uri.parse(uri.normalize(input, options)).scheme, undefined);
-    }
-    assert.equal(uri.normalize('javascript:alert(1)', options), 'javascript%3Aalert(1)');
-    for (const input of ['./a:b', 'a/../a:b']) {
-        const normalized = uri.normalize(input, options);
-        assert.equal(normalized, './a:b');
-        assert.equal(uri.parse(normalized).scheme, undefined);
-    }
+    const sent = [];
+    const warnings = [];
+    const client = {
+        code2ProtocolConverter: {
+            asDidCreateFilesParams: event => ({ files: event.files.map(uri => ({ uri: uri.toString() })) }),
+        },
+        middleware: {},
+        sendNotification: async (_type, params) => { sent.push(params); },
+        warn: message => warnings.push(message),
+        info() {},
+    };
+    const feature = new DidCreateFilesFeature(client);
+    feature.initialize({
+        workspace: {
+            fileOperations: {
+                didCreate: {
+                    filters: [
+                        { scheme: 'file', pattern: { glob: '**/*.{flow,lingo}' } },
+                        { pattern: { glob: '**/flow.config', options: { ignoreCase: true } } },
+                        { pattern: { glob: '**/lib', matches: 'folder' } },
+                    ],
+                },
+            },
+        },
+    });
+    assert.deepEqual(warnings, []);
+
+    const file = (fsPath, scheme = 'file') => ({ fsPath, scheme, toString: () => `${scheme}://${fsPath}` });
+    await listeners[0]({
+        files: [
+            file('/w/a.flow'), file('/w/b.ts'), file('/w/sub/c.lingo'), file('/w/.hidden/d.flow'),
+            file('/w/Flow.Config'), file('/w/lib'), file('/w/e.flow', 'untitled'),
+        ],
+    });
+    assert.deepEqual(sent, [{
+        files: ['file:///w/a.flow', 'file:///w/sub/c.lingo', 'file:///w/.hidden/d.flow', 'file:///w/Flow.Config']
+            .map(uri => ({ uri })),
+    }]);
+
+    // A pattern that matches nothing is still rejected.
+    feature.initialize({ workspace: { fileOperations: { didCreate: { filters: [{ pattern: { glob: '#comment' } }] } } } });
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0], /Invalid pattern #comment/);
 });
 
 function createConfidentialClient(requests) {
@@ -129,7 +197,7 @@ test('confidential clients reject instance-aware authorization requests', async 
 });
 
 for (const grant of ['client_credentials', 'authorization_code']) {
-    test(`Azure Identity remains compatible with overridden MSAL (${grant})`, async () => {
+    test(`Azure Identity works with MSAL Node 7 (${grant})`, async () => {
         const requests = [];
         const options = {
             disableInstanceDiscovery: true,

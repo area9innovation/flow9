@@ -730,6 +730,7 @@ StackSlot GLClip::getClipChildren(RUNNER_ARGS)
     RUNNER_DefSlots1(rv);
 
     rv = RUNNER->AllocateArray(children.size());
+    RUNNER_CheckError();
     for (size_t i = 0; i < children.size(); i++)
         RUNNER->SetArraySlot(rv, i, children[i]->getFlowValue());
 
@@ -1210,11 +1211,14 @@ StackSlot GLClip::getTouchPoints(RUNNER_ARGS)
     IGNORE_RUNNER_ARGS;
     std::vector<vec2> points = owner->getTouchPoints();
     
-    const StackSlot & pointsArray = RUNNER->AllocateArray(points.size());
+    RUNNER_DefSlots1(pointsArray);
+    pointsArray = RUNNER->AllocateArray(points.size());
+    RUNNER_CheckError();
     
-    for (short i = 0; i < points.size(); i++)
+    for (size_t i = 0; i < points.size(); i++)
     {
         const StackSlot & pointsPair = RUNNER->AllocateArray(2);
+        RUNNER_CheckError();
         RUNNER->SetArraySlot(pointsPair, 0, StackSlot::MakeDouble(points[i].x));
         RUNNER->SetArraySlot(pointsPair, 1, StackSlot::MakeDouble(points[i].y));
         
@@ -1420,6 +1424,7 @@ StackSlot GLClip::getGlobalTransformArray()
     RUNNER_VAR = getFlowRunner();
 
     const StackSlot & arr = RUNNER->AllocateArray(6);
+    RUNNER_CheckError();
     const mat3 & m = global_transform.forward;
     float s = m[2][2];
     float a = m[0][0] / s;

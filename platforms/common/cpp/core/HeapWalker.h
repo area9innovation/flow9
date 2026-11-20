@@ -46,13 +46,10 @@ struct FlowVarReference {
         switch (type) {
 #ifdef FLOW_COMPACT_STRUCTS
         case R_FIELD:
-            if (field.def->fn_set(field.obj->Bytes + field.def->offset, val)) {
-                field.runner->RegisterWrite(field.obj);
-            	*slot = val;
-            	return true;
-            } else {
+            if (!field.def->fn_set(field.obj->Bytes + field.def->offset, val))
                 return false;
-            }
+            field.runner->RegisterWrite(field.obj);
+            return true;
 #endif
         default: *slot = val; return true;
         }
@@ -70,6 +67,7 @@ class HeapWalker : private GarbageCollectorFnCallback
 
     StructDef *StructDefs;
     unsigned NumStructDefs;
+    StructDef *LookupStructDef(unsigned id);
 
 public:
     HeapWalker(ByteCodeRunner *Runner);
@@ -127,8 +125,10 @@ public:
 #ifdef FLOW_COMPACT_STRUCTS
     bool ProcessFields(FlowStructHeader *obj, StructDef *type, bool write_back = false);
 
-    virtual void VisitStruct(StackSlot &ref, FlowStructHeader* /*data*/, int /*size*/, StructDef* /*type*/) {
+    virtual void VisitCompactFields(FlowStructHeader *, StructDef *) {}
+    virtual void VisitStruct(StackSlot &ref, FlowStructHeader *data, int /*size*/, StructDef *type) {
         VisitSlot(ref);
+        VisitCompactFields(data, type);
     }
 #else
     virtual void VisitStruct(StackSlot &ref, StackSlot *data, int size, StructDef */*type*/) {
@@ -167,10 +167,8 @@ public:
     }
 
 #ifdef FLOW_COMPACT_STRUCTS
-    void VisitStruct(StackSlot &ref, FlowStructHeader *data, int size, StructDef *def)
+    void VisitCompactFields(FlowStructHeader *data, StructDef *def) override
     {
-        HeapWalker::VisitStruct(ref, data, size, def);
-
         if (IsHeapPtr(data) && MarkSeen(data))
             ProcessFields(data, def);
     }
@@ -237,22 +235,24 @@ public:
         RecursiveHeapWalker::VisitClosure(ref, data, size);
     }
 #ifdef FLOW_COMPACT_STRUCTS
-    virtual void VisitStruct(StackSlot &ref, FlowStructHeader *data, int size, StructDef *type) {
-#else
-    virtual void VisitStruct(StackSlot &ref, StackSlot *data, int size, StructDef *type) {
-#endif
+    void VisitCompactFields(FlowStructHeader *data, StructDef *type) override {
         if (IsHeapPtr(data) && !IsSeen(data))
         {
-#ifdef FLOW_COMPACT_STRUCTS
             NumStructSlots += type->ByteSize;
-            StructBytes[ref.GetStructId()] += type->ByteSize;
+            StructBytes[type->StructId] += type->ByteSize;
+        }
+        RecursiveHeapWalker::VisitCompactFields(data, type);
+    }
 #else
+    virtual void VisitStruct(StackSlot &ref, StackSlot *data, int size, StructDef *type) {
+        if (IsHeapPtr(data) && !IsSeen(data))
+        {
             NumStructSlots += size;
             StructBytes[ref.GetStructId()] += size * STACK_SLOT_SIZE;
-#endif
         }
         RecursiveHeapWalker::VisitStruct(ref, data, size, type);
     }
+#endif
 
     virtual void VisitNative(StackSlot &ref, void *obj) {
         CountArr(NumNatives, obj, 1);
