@@ -116,11 +116,51 @@ same lengths and indices and only make sense read together.
 `platforms/common/cpp/core/Utf8.cpp` was covered in slice 1; parts of it were
 read again here where this slice led into them, and it stays covered.
 
+### 2026-11-20 — slice 4: the rest of the document-fed decoders and emitters in `lib/formats/**`
+
+This slice closes area 1 on the flow side: the parsers, the generated parser
+tables and the string emitters that a document or a network peer reaches.
+
+- `lib/formats/css/css.flow`
+- `lib/formats/css/css_pegop.flow`
+- `lib/formats/css/cssterm.flow`
+- `lib/formats/css/stylesheet.flow`
+- `lib/formats/dom/conversion/css2string.flow`
+- `lib/formats/dom/conversion/element2xml.flow`
+- `lib/formats/dom/conversion/xml2string.flow`
+- `lib/formats/email/domain_pegop.flow`
+- `lib/formats/email/email_pegop.flow`
+- `lib/formats/html/html2form.flow`
+- `lib/formats/json/flow2json.flow`
+- `lib/formats/json/json_pegop.flow`
+- `lib/formats/json/ppjson.flow`
+- `lib/formats/latex/latex.flow`
+- `lib/formats/latex/latex_compiled_parser.flow`
+- `lib/formats/latex/latex_types.flow`
+- `lib/formats/lsp.flow`
+- `lib/formats/php/php_ast.flow`
+- `lib/formats/unicode/unidecode.flow`
+- `lib/formats/uri/uri_pegop.flow`
+- `lib/formats/uri2/uri2_ast.flow`
+- `lib/formats/uri2/uri2_parser.flow`
+- `lib/formats/wabt.flow`
+- `lib/formats/webvtt/webvtt_pegop.flow`
+- `lib/formats/webvtt/webvtt_types.flow`
+
+Read in part, only where the files above led into them, and so **not**
+counted as covered — a later slice takes them whole:
+`lib/lingo/compiler/syntaxtree_types.flow`, `lib/text/blueprint.flow`,
+`lib/formats/dom/css.flow`, `lib/formats/dom/element.flow`,
+`lib/formats/xml.flow` (covered in slice 1; its escaping helpers were read
+again here and it stays covered).
+
 ## Next
 
-66 of roughly 350 files in the listed surface are covered. Area 2 is done.
+91 of roughly 350 files in the listed surface are covered. Area 2 is done, and
+area 1 is done for `lib/formats/**`.
 
-Remaining in area 1: the rest of `lib/formats/**` (the latex, wasm, dom and
-php sub-trees, `lsp.flow`, the `uri2` parser tables), `lib/formats/html/html2form.flow`,
-`lib/formats/unicode/unidecode.flow`, and the UTF-8 and binary decoders in
-`platforms/java`. Then area 3, the browser runtime under `platforms/js/**`.
+Remaining in area 1: `lib/formats/dom/**` beyond the three conversion files
+read here, `lib/formats/html/parser/html_parse_typed.flow` and the typed-HTML
+helpers, `lib/formats/wasm/**`, `lib/formats/uri2/uri2_ast_mnemonics.flow`,
+and the UTF-8 and binary decoders in `platforms/java`. Then area 3, the
+browser runtime under `platforms/js/**`.
