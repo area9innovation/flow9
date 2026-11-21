@@ -1,3 +1,4 @@
+import formats/html/html_parse;
 import formats/html/html2md;
 import formats/webvtt/webvtt;
 import formats/svg/svg;
@@ -13,6 +14,8 @@ import sys/target;
 //  - An arc with a zero radius is a straight line, as the SVG spec says, and an arc that
 //    cannot be computed adds no curve with NaN coordinates.
 //  - svgString2Form converts a deeply nested file as before.
+//  - ruHtml2md escapes the text of a link once, however deeply links are nested in each
+//    other, so its time does not grow with the nesting depth.
 
 failures : ref int = ref 0;
 
@@ -138,6 +141,33 @@ testLayers() -> void {
 	);
 }
 
+// The Markdown of lines wrapped in links nested depth deep, and the time ruHtml2md took, in ms
+measureNestedLinks(depth : int, lines : int) -> double {
+	html = parseHtml(strRepeat("<a href=\"http://e.com/\">", depth) + strRepeat("<br>", lines) + strRepeat("</a>", depth)).first;
+	start = timestamp();
+	md = ruHtml2md(html);
+	time = timestamp() - start;
+	// Each link contributes its brackets and url around the lines of the one inside it
+	check("the Markdown of " + i2s(depth) + " nested links", i2s(strlen(md)), i2s(17 * depth));
+	println("  " + i2s(depth) + " nested links over " + i2s(lines) + " lines: " + d2s(roundTo(time, 0.1)) + " ms");
+	time;
+}
+
+testNestedLinks() -> void {
+	println("Nested links:");
+	measureNestedLinks(20, 20000); // warm-up
+	tShallow = measureNestedLinks(20, 100000);
+	tDeep = measureNestedLinks(400, 100000);
+	// The text of a link is escaped once, so the same nodes are not rewritten once per link
+	// they are nested in: the time is flat in the depth. A rewrite per level gives about 20x.
+	ratio = tDeep / max(tShallow, 1.0);
+	println("  time ratio for 20x the nesting depth: " + d2s(roundTo(ratio, 0.1)));
+	if (ratio > 4.0) {
+		failures := ^failures + 1;
+		println("FAIL: ruHtml2md is not flat in the nesting depth: " + d2s(roundTo(ratio, 0.1)) + "x slower for 20x the depth");
+	}
+}
+
 testArcs() -> void {
 	ops = \p -> toString(svgSimplePath2GraphicsOps(p));
 	check("an arc with both radii zero is a line", ops("M10 10 A 0 0 0 0 1 20 20"), "[MoveTo(10.0, 10.0), LineTo(20.0, 20.0)]");
@@ -188,6 +218,7 @@ main() {
 	testWebVTT();
 	testLayers();
 	testArcs();
+	testNestedLinks();
 	testSvg();
 
 	if (^failures == 0) {
