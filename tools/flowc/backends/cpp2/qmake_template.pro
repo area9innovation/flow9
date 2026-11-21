@@ -337,7 +337,6 @@ if(false) { # true to put MediaRecorder on
     SOURCES+= \
         %FLOWDIR/platforms/common/cpp/utils/MediaRecorderSupport.cpp \
         %FLOWDIR/platforms/common/cpp/utils/MediaStreamSupport.cpp \
-        %FLOWDIR/platforms/common/cpp/utils/WebRTCSupport.cpp \
         %FLOWDIR/platforms/qt/qt-backend/QMediaRecorderSupport.cpp \
         %FLOWDIR/platforms/qt/qt-backend/QMediaStreamSupport.cpp
 
@@ -345,7 +344,6 @@ if(false) { # true to put MediaRecorder on
     HEADERS += \
         %FLOWDIR/platforms/common/cpp/utils/MediaRecorderSupport.h \
         %FLOWDIR/platforms/common/cpp/utils/MediaStreamSupport.h \
-        %FLOWDIR/platforms/common/cpp/utils/WebRTCSupport.h \
         %FLOWDIR/platforms/qt/qt-backend/QMediaRecorderSupport.h \
         %FLOWDIR/platforms/qt/qt-backend/QMediaStreamSupport.h
 

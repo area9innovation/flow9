@@ -4,22 +4,21 @@
 2. [Usage](#usage)
    1. [mediastream.flow](#mediastreamflow)
    2. [mediarecorder.flow](#mediarecorderflow)
-   3. [webrtc.flow](#webrtcflow)
 3. [Building with QT](#building-with-qt)
 
 ## Supported platforms
 
-|            | MediaStream | MediaRecorder | WebRTC |
-|------------|:-----------:|:-------------:|:------:|
-| Chrome     |52+          |47+            |51+     |
-| Firefox    |36+          |25+            |22+     |
-| Safari     |11+          |-              |11+     |
-| Edge       |12+          |-              |15+     |
-| Android    |+            |+              |+       |
-| iOS        |+            |+              |+       |
-| QT Windows |+            |+              |-       |
-| QT MacOS   |+            |+              |-       |
-| QT Linux   |-            |-              |-       |
+|            | MediaStream | MediaRecorder |
+|------------|:-----------:|:-------------:|
+| Chrome     |52+          |47+            |
+| Firefox    |36+          |25+            |
+| Safari     |11+          |-              |
+| Edge       |12+          |-              |
+| Android    |+            |+              |
+| iOS        |+            |+              |
+| QT Windows |+            |+              |
+| QT MacOS   |+            |+              |
+| QT Linux   |-            |-              |
 
 ## Usage
 Example of media lib usage can be found [here](https://github.com/area9innovation/flow9/blob/master/lib/material/tests/test_mediastream.flow)
@@ -75,22 +74,6 @@ makeMediaRecorderFromStream(
     []
 );
 ```
-
-### webrtc.flow
-
-`initWebRTC : io(OnReady: () -> void) -> void`  
- Load libraries which are needed for JS
-
-`makeMediaSenderFromStream(serverUrl : string, roomId : string, stream : MediaStream, onReady : (stop : () -> void) -> void, onError : (string) -> void, onNewParticipant : (id : string, stream : MediaStream) -> void, onParticipantLeave: (id : string) -> void, styles : [WebRTCStyle]) -> void`  
-Join socket.io room and start WebRTC chat
->`serverUrl : string` url of socket.io server  
->`roomId : string` socket.io room id  
->`stream : MediaStream` stream which will be sent to other room participants  
->`onReady : (stop : () -> void) -> void` invoked once MediaSender is ready  
->`onError : (string) -> void` invoked when error is thrown  
->`onNewParticipant : (id : string, stream : MediaStream) -> void` invoked when new participant joins room  
->`onParticipantLeave: (id : string) -> void` invoked when chat participant leaves room  
->`styles : [WebRTCStyle]` Array of STUN/TURN servers
 
 ## Building with QT
 
