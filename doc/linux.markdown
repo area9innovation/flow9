@@ -105,12 +105,12 @@ what the next step does.
 
 ### 3. Build the C++ runner
 
-**Linux users currently need to build the runner themselves.** The
-`QtByteRunner` binary committed in `platforms/qt/bin/linux` predates the Qt 5 to
-Qt 6 migration, so it still links against `libQt5Core.so.5`,
-`libQt5WebEngineWidgets.so.5` and friends. Several distributions - Arch among
-them - have dropped Qt 5 WebEngine, WebSockets and WebChannel from their
-repositories, so that binary will not start there.
+`bin/flowcpp` prefers a local release build, then the packaged x86-64
+`QtByteRunner-qt6` when its shared libraries are available. That binary is
+built against Ubuntu 24.04's Qt 6.4. The legacy Qt 5 executable remains the
+fallback for existing installations; it does not implement newer natives such
+as `Native.copyFile`. Fetch both binaries with Git LFS. On other architectures
+or distributions with incompatible libraries, build the runner locally.
 
 Build out of source, into a directory at the root of the checkout:
 
