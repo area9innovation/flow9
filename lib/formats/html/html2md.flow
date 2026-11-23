@@ -17,8 +17,13 @@ export {
 	ruHtml2md(html : [HtmlNode]) -> string;
 }
 
+RuMdTextMode ::= RuMdPlain, RuMdLinkLabel, RuMdCode;
+RuMdPlain();
+RuMdLinkLabel();
+RuMdCode();
+
 ruHtml2md(html : [HtmlNode]) -> string {
-	output = ruDoHtml2md(html, "*", false);
+	output = ruDoHtml2md(html, "*", RuMdPlain());
 	// OK, now clean it up and avoid too many empty lines
 	lines = strSplit(output, "\n");
 	// Clean out whitespace
@@ -32,9 +37,8 @@ ruHtml2md(html : [HtmlNode]) -> string {
 	strGlue(list2array(simplify), "\n");
 }
 
-// In code, Markdown shows the text as it is written, so nothing is escaped there
-ruDoHtml2md(html : [HtmlNode], indent : string, code : bool) -> string {
-	ruJoinHtml2md(html, map(html, \elem -> ruHtmlNode2md(elem, indent, code)), code);
+ruDoHtml2md(html : [HtmlNode], indent : string, mode : RuMdTextMode) -> string {
+	ruJoinHtml2md(html, map(html, \elem -> ruHtmlNode2md(elem, indent, mode)), mode == RuMdCode());
 }
 
 // A & from an entity is written as &amp; if it makes a new entity with the text after it, as in &amp;copy;.
@@ -116,21 +120,26 @@ ruStartsWithMdEntity(md : string) -> bool {
 	startsWith(md, "&") && exists(["&lt;", "&amp;", "&#91;", "&#92;", "&#93;"], \entity -> startsWith(md, entity));
 }
 
-ruHtmlNode2md(html : HtmlNode, indent : string, code : bool) -> string {
+ruHtmlCodeTag(tag : string) -> bool {
+	tag == "code" || tag == "pre" || tag == "tt";
+}
+
+ruHtmlNode2md(html : HtmlNode, indent : string, mode : RuMdTextMode) -> string {
+	code = mode == RuMdCode();
 	switch (html) {
 		HtmlTag(tag, attribs, body): {
 			if (tag == "a") {
 				linkUrl = ruHtmlWebUrl(attribs, "href");
 				if (linkUrl != "") {
-					// In the text of a link, [ and ] are written as entities, as a ] would end the text
-					contents = ruDoHtml2md(if (code) body else ruHtmlLinkText(body), indent, code);
+					// Escape brackets as the text is emitted, without rewriting the link's subtree.
+					contents = ruDoHtml2md(body, indent, if (code) mode else RuMdLinkLabel());
 					ruMdLink(trim2(contents, " \n\t\r"), linkUrl, code);
 				} else {
 					// Internal link. Ignore
-					trim2(ruDoHtml2md(body, indent, code), " \n\t\r");
+					trim2(ruDoHtml2md(body, indent, mode), " \n\t\r");
 				}
-			} else if (tag == "pre" || tag == "tt" || tag == "code") {
-				contents = ruDoHtml2md(body, indent, true);
+			} else if (ruHtmlCodeTag(tag)) {
+				contents = ruDoHtml2md(body, indent, RuMdCode());
 				if (tag != "code") {
 					"`" + contents + "`";
 				} else if (strContains(contents, "\n")) {
@@ -138,8 +147,12 @@ ruHtmlNode2md(html : HtmlNode, indent : string, code : bool) -> string {
 				} else {
 					"`" + contents + "`";
 				}
+			} else if (tag == "ol" || tag == "ul" || tag == "li") {
+				ruHtmlList2md(tag, body, indent, mode);
+			} else if (tag == "table") {
+				ruHtmlTable2md(body, mode);
 			} else {
-				contents = ruDoHtml2md(body, indent, code);
+				contents = ruDoHtml2md(body, indent, mode);
 				if (strlen(tag) == 2 && getCharAt(tag, 0) == "h") {
 					ruHtmlHeading2md(s2i(getCharAt(tag, 1)), contents);
 				} else if (tag == "p" || tag == "div" || tag == "body" || tag == "section" || tag == "html") {
@@ -156,12 +169,8 @@ ruHtmlNode2md(html : HtmlNode, indent : string, code : bool) -> string {
 					"*" + contents + "*";
 				} else if (tag == "blockquote") {
 					strGlue(map(strSplit(contents, "\n"), \line -> "> " + line), "\n");
-				} else if (tag == "ol" || tag == "ul" || tag == "li") {
-					ruHtmlList2md(tag, body, indent, code);
 				} else if (tag == "sub") {
 					"_" + contents;
-				} else if (tag == "table") {
-					ruHtmlTable2md(body, code);
 				} else if (tag == "span") {
 					trimmed = trim2(contents, " \n\t\r");
 					if (trimmed != contents) trimmed + " " else trimmed
@@ -190,35 +199,16 @@ ruHtmlNode2md(html : HtmlNode, indent : string, code : bool) -> string {
 				}
 			}
 		}
-		HtmlText(text): text;
+		HtmlText(text): if (mode == RuMdLinkLabel()) ruEscapeMdBrackets(text) else text;
 		HtmlComment(text): "";
 		HtmlEntity(prefix, body): {
 			text = unescapeHtmlEntity(html);
 			// A < from an entity is written as &lt;, so that it does not start a tag
-			if (text == "<" && !code) "&lt;" else text;
+			if (text == "<" && !code) "&lt;"
+			else if (mode == RuMdLinkLabel() && (text == "[" || text == "]")) ruEscapeMdBrackets(text)
+			else text;
 		}
 	}
-}
-
-ruHtmlLinkText(body : [HtmlNode]) -> [HtmlNode] {
-	map(body, \node -> switch (node) {
-		HtmlTag(tag, attribs, children): {
-			// Code is kept verbatim, and a link inside a link escapes its own text when
-			// ruHtmlNode2md reaches it. Walking into either here would rewrite the same
-			// nodes once for every link they are nested in.
-			if (tag == "code" || tag == "pre" || tag == "tt" || (tag == "a" && ruHtmlWebUrl(attribs, "href") != "")) {
-				node;
-			} else {
-				HtmlTag(tag, attribs, ruHtmlLinkText(children));
-			}
-		}
-		HtmlText(text): HtmlText(ruEscapeMdBrackets(text));
-		HtmlEntity(__, __): {
-			text = unescapeHtmlEntity(node);
-			if (text == "[" || text == "]") HtmlText(ruEscapeMdBrackets(text)) else node;
-		}
-		HtmlComment(__): node;
-	});
 }
 
 // Writes the & in the part as &amp; if it makes an entity with the text after the part, which starts
@@ -437,11 +427,11 @@ insertPrefix2md(pref : string, s : string) -> string {
 	}
 }
 
-ruHtmlList2md(tag : string, body : [HtmlNode], indent : string, code : bool) -> string {
+ruHtmlList2md(tag : string, body : [HtmlNode], indent : string, mode : RuMdTextMode) -> string {
 	i = ref 0;
 	"\n" + ruJoinHtml2md(body,
 		map(body, \elem ->  {
-			str = ruHtmlNode2md(elem, indent, code);
+			str = ruHtmlNode2md(elem, indent, mode);
 			switch (elem) {
 				HtmlTag(tag1, __,__): {
 					if (tag1 != "li") str else {
@@ -456,7 +446,7 @@ ruHtmlList2md(tag : string, body : [HtmlNode], indent : string, code : bool) -> 
 				default: str;
 			}
 		}),
-		code
+		mode == RuMdCode()
 	);
 }
 
@@ -474,14 +464,17 @@ ruFirstTag(body : [HtmlNode]) -> HtmlTag {
 	firstElement(tags, HtmlTag("", [], [])); 
 }
 
-ruHtmlTable2md(children : [HtmlNode], code : bool) -> string {
+ruHtmlTable2md(children : [HtmlNode], mode : RuMdTextMode) -> string {
 	first_row = ruFirstTag(children);
 	first_col = ruFirstTag(first_row.children);
 	headers = if (first_col.tag != "th") None() else {
+		// A non-tr wrapper is not rendered. A verbatim wrapper still shields its text
+		// from an enclosing link label, but doesn't turn these cells into Markdown code.
+		headerMode = if (mode == RuMdLinkLabel() && ruHtmlCodeTag(first_row.tag)) RuMdPlain() else mode;
 		Some(filtermap(first_row.children, \elem ->
 			switch(elem) {
 				HtmlTag(tag, __, children1): {
-					if (tag != "th") None() else Some(ruDoHtml2md(children1, "", code));
+					if (tag != "th") None() else Some(ruDoHtml2md(children1, "", headerMode));
 				}
 				default: None();
 			}
@@ -504,7 +497,7 @@ ruHtmlTable2md(children : [HtmlNode], code : bool) -> string {
 								switch(elem1) {
 									HtmlTag(tag1, __, cell): {
 										if (tag1 != "td") None() else {
-											Some(ruDoHtml2md(cell, "", code));
+											Some(ruDoHtml2md(cell, "", mode));
 										}
 									}
 									default: None();
