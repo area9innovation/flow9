@@ -1,11 +1,27 @@
+import fs/filesystem;
 import net/http;
 import net/url_parameter;
+import timer;
 
 main() {
 	url = getUrlParameter("url");
 	dest = getUrlParameter("dest");
-	done = \ -> { println("download: done"); quit(0) };
-	error = \message -> { println("download: error: " + message); quit(1) };
-	if (isUrlParameterTrue("headers")) downloadFileBinaryWithHeaders(url, [], dest, done, error)
+	spool = getUrlParameter("spool");
+	finish = \code, message -> {
+		println("download: " + message);
+		if (exists(readDirectory(spool), \name -> startsWith(name, "flowtmp"))) quit(2)
+		// Qt implements timers <= 5 ms as deferred Flow actions. Use an actual
+		// event-loop turn so the transport can deliver its remaining notifications.
+		else if (isUrlParameterTrue("deferQuit")) timer(10, \ -> quit(code))
+		else quit(code);
+	};
+	done = \ -> finish(0, "done");
+	error = \message -> finish(1, "error: " + message);
+	if (isUrlParameterTrue("legacy404")) {
+		// A custom request has a response callback, not a separate error callback.
+		httpCustomRequest(url, GET(), [], RequestParameters([]), \status, body, __ -> {
+			if (status == 404 && body != "") done() else error("missing HTTP error response")
+		}, true);
+	} else if (isUrlParameterTrue("headers")) downloadFileBinaryWithHeaders(url, [], dest, done, error)
 	else downloadFileBinary(url, dest, done, error);
 }

@@ -78,6 +78,7 @@ class AbstractHttpSupport : public NativeMethodHost {
     void cancelRequest(int id);
 
     unicode_string parseDataBytes(const void * buffer, size_t count);
+    void finishDownload(HttpRequest &rq, bool failed, const void *message, size_t length);
     unicode_string urlencode(const unicode_string &url);
 
 

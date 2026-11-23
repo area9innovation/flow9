@@ -5,6 +5,17 @@
 #include <stdlib.h>
 #include <fstream>
 #include <sstream>
+#ifndef _WIN32
+#include "core/ReplaceFile.h"
+#else
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#include <atomic>
+#ifdef _MSC_VER
+#pragma comment(lib, "advapi32.lib")
+#endif
+#endif
 
 // 
 ResponseEncoding defaultResponseEncoding = ResponseEncodingAuto;
@@ -43,6 +54,7 @@ void AbstractHttpSupport::deliverDataBytes(int id, const void *buffer, unsigned 
 {
     HttpRequest *rq = getRequestById(id);
 
+    if (!rq) return;
     if (rq->response_enc != ResponseEncodingByte)
         deliverData(id, parseDataBytes(buffer, count));
     else
@@ -169,16 +181,15 @@ void AbstractHttpSupport::deliverError(int id, const void * buffer, size_t count
     HttpRequest *rq = getRequestById(id);
 
     if (!rq) return;
-    if (!rq->error_cb.IsVoid()) {
+    if (rq->save_to_file) {
+        finishDownload(*rq, true, buffer, count);
+    } else if (!rq->error_cb.IsVoid()) {
         RUNNER_VAR = getFlowRunner();
         RUNNER_DefSlots1(msg);
 
         msg = RUNNER->AllocateString(parseDataBytes(buffer, count));
         RUNNER->EvalFunction(rq->error_cb, 1, msg);
 
-        active_requests.erase(id);
-        getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
-    } else if (rq->save_to_file) {
         active_requests.erase(id);
         getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
     } else {
@@ -201,32 +212,147 @@ void AbstractHttpSupport::deliverStatus(int id, int status)
     getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
 }
 
-static bool saveDownload(HttpRequest &rq)
+// Called under the deferred runner lock. The callback may reenter the host, or
+// quit without unwinding it. Keep only Flow roots across that call.
+void AbstractHttpSupport::finishDownload(HttpRequest &rq, bool failed, const void *message, size_t length)
+{
+    RUNNER_VAR = getFlowRunner();
+    RUNNER_DefSlots2(cb, arg);
+    cb = failed ? rq.error_cb : rq.done_cb;
+    if (failed && !cb.IsVoid())
+        arg = RUNNER->AllocateString(parseDataBytes(message, length));
+    const int id = rq.req_id;
+    active_requests.erase(id); // closes and removes the named spool
+    if (!cb.IsVoid() && !RUNNER->IsErrorReported()) {
+        if (failed) RUNNER->EvalFunction(cb, 1, arg);
+        else RUNNER->EvalFunction(cb, 0);
+    }
+    RUNNER->NotifyHostEvent(HostEventNetworkIO);
+}
+
+static bool writeDownload(const HttpRequest &rq, FILE *dest)
 {
     FILE *source = rq.tmp_file;
-    if (source && (fflush(source) != 0 || fseek(source, 0, SEEK_SET) != 0))
-        return false;
-
-    FILE *dest = fopen(rq.result_filename.c_str(), "wb");
-    if (!dest) return false;
-
-    bool ok = true;
     if (source) {
+        if (fflush(source) != 0 || fseek(source, 0, SEEK_SET) != 0) return false;
         char block[16384];
         size_t n;
-        while ((n = fread(block, 1, sizeof(block), source)) != 0) {
-            if (fwrite(block, 1, n, dest) != n) {
-                ok = false;
-                break;
+        while ((n = fread(block, 1, sizeof(block), source)) != 0)
+            if (fwrite(block, 1, n, dest) != n) return false;
+        return !ferror(source);
+    }
+    return rq.tmp_buffer.empty() || fwrite(rq.tmp_buffer.data(), 1, rq.tmp_buffer.size(), dest) == rq.tmp_buffer.size();
+}
+
+static bool writeAndCloseDownload(const HttpRequest &rq, FILE *out)
+{
+    bool ok = writeDownload(rq, out) && !ferror(out);
+    return fclose(out) == 0 && ok;
+}
+
+#ifndef _WIN32
+static bool saveDownload(const HttpRequest &rq)
+{
+    std::string path = rq.result_filename;
+    if (path.empty() || path.find('\0') != path.npos) return false;
+    struct stat st;
+    if (lstat(path.c_str(), &st) == 0) {
+        // Follow an existing link, but never publish a regular file over the link.
+        if (S_ISLNK(st.st_mode)) {
+            char *target = realpath(path.c_str(), NULL);
+            if (!target) return false;
+            path = target;
+            free(target);
+            if (stat(path.c_str(), &st) != 0) return false;
+        }
+        if (!S_ISREG(st.st_mode)) {
+            if (!S_ISCHR(st.st_mode) && !S_ISFIFO(st.st_mode)) return false;
+            int fd = open(path.c_str(), O_WRONLY | O_NOFOLLOW);
+            if (fd == -1) return false;
+            if (fstat(fd, &st) == 0 && (S_ISCHR(st.st_mode) || S_ISFIFO(st.st_mode))) {
+                if (FILE *out = fdopen(fd, "wb")) return writeAndCloseDownload(rq, out);
+            }
+            close(fd);
+            return false;
+        }
+        if (access(path.c_str(), W_OK) != 0) return false;
+    } else if (errno != ENOENT) return false;
+    return replaceRegularFile(path, [&](FILE *out) { return writeDownload(rq, out); });
+}
+#else
+static bool writeDownloadHandle(const HttpRequest &rq, HANDLE h)
+{
+    int fd = _open_osfhandle(reinterpret_cast<intptr_t>(h), _O_WRONLY | _O_BINARY);
+    if (fd == -1) { CloseHandle(h); return false; }
+    if (FILE *out = _fdopen(fd, "wb")) return writeAndCloseDownload(rq, out);
+    _close(fd);
+    return false;
+}
+
+static bool saveDownload(const HttpRequest &rq)
+{
+    if (rq.result_filename.empty() || rq.result_filename.find('\0') != std::string::npos) return false;
+    unicode_string u = parseUtf8(rq.result_filename);
+    std::wstring name(u.begin(), u.end());
+    DWORD size = GetFullPathNameW(name.c_str(), 0, NULL, NULL);
+    if (!size) return false;
+    std::vector<wchar_t> buffer(size);
+    wchar_t *leaf = NULL;
+    DWORD n = GetFullPathNameW(name.c_str(), size, buffer.data(), &leaf);
+    if (!n || n >= size || !leaf) return false;
+    std::wstring path(buffer.data(), n), dir(buffer.data(), size_t(leaf - buffer.data()));
+
+    // Check the existing target without truncating it. A device/pipe is a
+    // stream; a reparse point must not be replaced with a new directory entry.
+    std::vector<unsigned char> security;
+    SECURITY_ATTRIBUTES attrs = {sizeof(SECURITY_ATTRIBUTES), NULL, FALSE};
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    bool existing = h != INVALID_HANDLE_VALUE;
+    if (!existing) {
+        if (GetLastError() != ERROR_FILE_NOT_FOUND) return false;
+    } else {
+        DWORD type = GetFileType(h);
+        if (type == FILE_TYPE_CHAR || type == FILE_TYPE_PIPE) return writeDownloadHandle(rq, h);
+        BY_HANDLE_FILE_INFORMATION info;
+        bool regular = type == FILE_TYPE_DISK && GetFileInformationByHandle(h, &info) &&
+            !(info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
+        // A same-directory rename carries the stage's DACL. Do not create a
+        // more widely readable stage/replacement for an existing private file.
+        DWORD bytes = 0;
+        if (regular) {
+            GetKernelObjectSecurity(h, DACL_SECURITY_INFORMATION, NULL, 0, &bytes);
+            security.resize(bytes);
+            regular = bytes && GetKernelObjectSecurity(h, DACL_SECURITY_INFORMATION, security.data(), bytes, &bytes);
+            if (regular) attrs.lpSecurityDescriptor = security.data();
+            else {
+                // FAT/exFAT have no per-file ACL to copy.
+                DWORD flags = 0;
+                regular = GetVolumeInformationByHandleW(h, NULL, 0, NULL, NULL, &flags, NULL, 0) &&
+                          !(flags & FILE_PERSISTENT_ACLS);
             }
         }
-        ok = ok && !ferror(source);
-    } else if (!rq.tmp_buffer.empty()) {
-        ok = fwrite(rq.tmp_buffer.data(), 1, rq.tmp_buffer.size(), dest) == rq.tmp_buffer.size();
+        CloseHandle(h);
+        if (!regular) return false;
     }
-    // Buffered writes can first report an error at close.
-    return fclose(dest) == 0 && ok;
+
+    static std::atomic<unsigned> sequence(0);
+    std::wstring stage;
+    for (unsigned i = 0; i < 128; ++i) {
+        stage = dir + L".flow-download-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(++sequence);
+        if (_wcsicmp(path.c_str(), stage.c_str()) == 0) continue;
+        h = CreateFileW(stage.c_str(), GENERIC_WRITE, 0, &attrs, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) {
+            if (GetLastError() == ERROR_FILE_EXISTS) continue;
+            return false;
+        }
+        if (writeDownloadHandle(rq, h) && MoveFileExW(stage.c_str(), path.c_str(), existing ? MOVEFILE_REPLACE_EXISTING : 0)) return true;
+        DeleteFileW(stage.c_str());
+        return false;
+    }
+    return false;
 }
+#endif
 
 void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers)
 {
@@ -235,9 +361,14 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
     
     HttpRequest *rq = getRequestById(id);
 
-    if (rq && rq->save_to_file && !saveDownload(*rq)) {
-        const char message[] = "Could not save downloaded file";
-        deliverError(id, message, sizeof(message) - 1);
+    if (rq && rq->save_to_file) {
+        if (saveDownload(*rq)) {
+            RUNNER->InvalidateFileCache(rq->result_filename);
+            finishDownload(*rq, false, NULL, 0);
+        } else {
+            const char message[] = "Could not save downloaded file";
+            finishDownload(*rq, true, message, sizeof(message) - 1);
+        }
         return;
     }
 

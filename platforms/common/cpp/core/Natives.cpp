@@ -1,5 +1,6 @@
 #include "ByteCodeRunner.h"
 #ifndef _WIN32
+    #include "ReplaceFile.h"
     #include <sys/time.h>
     #include <sys/stat.h>
     #include <fcntl.h>
@@ -1640,40 +1641,6 @@ StackSlot ByteCodeRunner::readPackedFile(RUNNER_ARGS)
     return RUNNER->LoadFileAsString(encodeUtf8(RUNNER->GetString(path)));
 }
 
-#ifndef _WIN32
-template<class Write>
-static bool replaceCopy(const std::string &dest, Write write)
-{
-    struct stat st;
-    bool existing = stat(dest.c_str(), &st) == 0;
-    if (existing ? !S_ISREG(st.st_mode) : errno != ENOENT) return false;
-
-    // A private staging directory lets open apply the ordinary creation mode and
-    // the caller's umask without exposing intermediate data or changing the umask.
-    std::string dir = dest.substr(0, dest.find_last_of('/') + 1) + ".flowcopyXXXXXX";
-    if (!mkdtemp(&dir[0])) return false;
-    std::string tmp = dir + "/data";
-    struct stat stage;
-    bool ready = chmod(dir.c_str(), 0700) == 0 && stat(dir.c_str(), &stage) == 0 &&
-                 (stage.st_mode & 07777) == 0700;
-    int fd = ready ? open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL, existing ? 0600 : 0666) : -1;
-    bool ok = false;
-    if (fd >= 0) {
-        if (FILE *out = fdopen(fd, "wb")) {
-            ok = write(out) && !ferror(out) && fflush(out) == 0 &&
-                 (!existing || fchmod(fd, st.st_mode & 0777) == 0);
-            if (fclose(out) != 0) ok = false;
-        } else {
-            close(fd);
-        }
-        if (ok) ok = rename(tmp.c_str(), dest.c_str()) == 0;
-    }
-    if (!ok && ready) unlink(tmp.c_str());
-    rmdir(dir.c_str());
-    return ok;
-}
-#endif
-
 StackSlot ByteCodeRunner::copyFile(RUNNER_ARGS)
 {
     RUNNER_PopArgs2(from, to);
@@ -1695,7 +1662,7 @@ StackSlot ByteCodeRunner::copyFile(RUNNER_ARGS)
         return StackSlot::MakeBool(false);
     }
 
-    bool ok = replaceCopy(dest, [&in](FILE *out) {
+    bool ok = replaceRegularFile(dest, [&in](FILE *out) {
         char buf[16384];
         size_t n;
         while ((n = fread(buf, 1, sizeof(buf), in)) != 0)
@@ -1797,7 +1764,7 @@ StackSlot ByteCodeRunner::setFileContentHelper(RUNNER_ARGS, void (*processor)(in
 #ifndef _WIN32
     if (whole_file || !nbytes) {
         size_t size = whole_file ? file->second : 0;
-        bool ok = replaceCopy(filename, [&](FILE *out) { return !size || fwrite(pdata, 1, size, out) == size; });
+        bool ok = replaceRegularFile(filename, [&](FILE *out) { return !size || fwrite(pdata, 1, size, out) == size; });
         if (ok) RUNNER->InvalidateFileCache(filename);
         return StackSlot::MakeBool(ok);
     }
