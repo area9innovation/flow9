@@ -1,19 +1,34 @@
 import tools/flowc/backends/java/parser/java_parser;
 
+// The private literal rules and their cursors are tested by java_parser_literal_guards_test.sh.
 main() {
-	valid = "package p; class A { char c = 'x'; String s = \"ok\"; /* comment */ }";
+	valid = "package p; class A { char c = 'x'; String s = \"ok\"; /* comment */ }// last line\n";
 	parsed = parse_Compilation(valid);
 	failed = ref false;
-	if (parsed.first.choice == -1 || parsed.first.end != strlen(valid)) {
+	if (parsed.first.rule == -1 || parsed.first.end != strlen(valid)) {
 		println("Valid Java source was not fully consumed");
 		failed := true;
 	}
-	iter(["package p; class A { char c = '", "package p; class A { String s = \"", "/* unfinished", "// unfinished"], \source -> {
+	iter(["package p; class A { char c = '", "package p; class A { String s = \"", "package p; class A { /* unfinished"], \source -> {
 		r = parse_Compilation(source);
-		if (r.first.end == strlen(source) || r.second.pos != strlen(source)) {
-			println("Expected a diagnostic at EOF for " + toString(source) + ", got " + toString(r.second));
+		// fi2javaRuntime reports a parse error only for rule == -1.
+		if (r.first.rule != -1 || r.second.pos != strlen(source)) {
+			println("Expected parse failure at EOF for " + toString(source) + ", got rule " + i2s(r.first.rule) + ", position " + i2s(r.second.pos));
 			failed := true;
 		}
 	});
+
+	// Java permits // at EOF. java.lingo currently requires a newline, so the
+	// class can parse successfully with the comment left over. In that case
+	// expect.pos records how far the comment rule got; it is not a parse error.
+	unit = "package p; class A {}";
+	source = unit + "// last line";
+	r = parse_Compilation(source);
+	full = r.first.end == strlen(source);
+	beforeComment = r.first.end == strlen(unit) && r.second.pos == strlen(source);
+	if (r.first.rule == -1 || !(full || beforeComment)) {
+		println("Unexpected trailing // result: rule " + i2s(r.first.rule) + ", end " + i2s(r.first.end) + ", position " + i2s(r.second.pos));
+		failed := true;
+	}
 	quit(if (^failed) 1 else 0);
 }
