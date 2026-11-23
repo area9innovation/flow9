@@ -80,30 +80,38 @@ void AbstractHttpSupport::deliverPartialData(int id, const void *buffer, unsigne
     {
         size_t pos = rq->tmp_buffer.size();
         rq->tmp_buffer.resize(pos+count);
-        memcpy(rq->tmp_buffer.data()+pos, buffer, count);
+        if (count) memcpy(rq->tmp_buffer.data()+pos, buffer, count);
 
         if (rq->tmp_buffer.size() >= MIN_MMAP_SIZE)
         {
-            char fnbuf[1024];
-#if defined(WIN32)
-            rq->tmp_filename = tmpnam(fnbuf);
-#else
-            rq->tmp_filename = mkstemp(fnbuf);
-#endif
             rq->tmp_file = MakeTemporaryFile(&rq->tmp_filename);
 
             if (!rq->tmp_file)
             {
-                unicode_string errorMessage = parseUtf8("Could not open temporary file: " + rq->tmp_filename);
-                deliverError(id, errorMessage.data(), errorMessage.size());
+                const char message[] = "Could not open temporary file";
+                deliverError(id, message, sizeof(message) - 1);
                 return;
             }
 
             rq->is_utf = !(rq->tmp_buffer[0] == char(0xFF) && rq->tmp_buffer[1] == char(0xFE));
-            int skip = (rq->is_utf ? 0 : 2);
+            int skip = (rq->is_utf || rq->save_to_file ? 0 : 2);
             buffer = rq->tmp_buffer.data()+skip;
             count = rq->tmp_buffer.size()-skip;
         }
+    }
+
+    if (rq->save_to_file) {
+        // Binary downloads keep the spool open until deliverResponse. No text
+        // conversion or close/reopen by pathname is needed for this callback.
+        if (rq->tmp_file) {
+            if (count && fwrite(buffer, 1, count, rq->tmp_file) != count) {
+                const char message[] = "Could not write temporary download file";
+                deliverError(id, message, sizeof(message) - 1);
+                return;
+            }
+            rq->tmp_buffer.clear();
+        }
+        return;
     }
 
     if (rq->tmp_file)
@@ -160,13 +168,17 @@ void AbstractHttpSupport::deliverError(int id, const void * buffer, size_t count
 
     HttpRequest *rq = getRequestById(id);
 
-    if (rq && !rq->error_cb.IsVoid()) {
+    if (!rq) return;
+    if (!rq->error_cb.IsVoid()) {
         RUNNER_VAR = getFlowRunner();
         RUNNER_DefSlots1(msg);
 
         msg = RUNNER->AllocateString(parseDataBytes(buffer, count));
         RUNNER->EvalFunction(rq->error_cb, 1, msg);
 
+        active_requests.erase(id);
+        getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
+    } else if (rq->save_to_file) {
         active_requests.erase(id);
         getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
     } else {
@@ -189,6 +201,33 @@ void AbstractHttpSupport::deliverStatus(int id, int status)
     getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
 }
 
+static bool saveDownload(HttpRequest &rq)
+{
+    FILE *source = rq.tmp_file;
+    if (source && (fflush(source) != 0 || fseek(source, 0, SEEK_SET) != 0))
+        return false;
+
+    FILE *dest = fopen(rq.result_filename.c_str(), "wb");
+    if (!dest) return false;
+
+    bool ok = true;
+    if (source) {
+        char block[16384];
+        size_t n;
+        while ((n = fread(block, 1, sizeof(block), source)) != 0) {
+            if (fwrite(block, 1, n, dest) != n) {
+                ok = false;
+                break;
+            }
+        }
+        ok = ok && !ferror(source);
+    } else if (!rq.tmp_buffer.empty()) {
+        ok = fwrite(rq.tmp_buffer.data(), 1, rq.tmp_buffer.size(), dest) == rq.tmp_buffer.size();
+    }
+    // Buffered writes can first report an error at close.
+    return fclose(dest) == 0 && ok;
+}
+
 void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers)
 {
     RUNNER_VAR = getFlowRunner();
@@ -196,28 +235,10 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
     
     HttpRequest *rq = getRequestById(id);
 
-    if (rq && rq->result_filename != "") {
-        std::vector<char> tmp_buffer;
-
-        if (rq->tmp_filename != "") {
-            FILE* tmp_file = fopen(rq->tmp_filename.c_str(), "rb");
-
-            fseek(tmp_file, 0, SEEK_END);
-            tmp_buffer.resize(ftell(tmp_file));
-            rewind(tmp_file);
-
-            fread(tmp_buffer.data(), 1, tmp_buffer.size(), tmp_file);
-            fclose(tmp_file);
-        } else {
-            tmp_buffer = rq->tmp_buffer;
-        }
-
-        FILE* result_file = fopen(rq->result_filename.c_str(), "wb");
-
-        fwrite(tmp_buffer.data(), 1, tmp_buffer.size(), result_file);
-
-        fclose(result_file);
-        tmp_buffer.clear();
+    if (rq && rq->save_to_file && !saveDownload(*rq)) {
+        const char message[] = "Could not save downloaded file";
+        deliverError(id, message, sizeof(message) - 1);
+        return;
     }
 
     if (rq && !rq->response_cb.IsVoid()) {
@@ -593,6 +614,7 @@ StackSlot AbstractHttpSupport::downloadFileBinary(RUNNER_ARGS)
     rq.method = parseUtf8("GET");
     rq.response_enc = ResponseEncodingByte;
     rq.url = RUNNER->GetString(url);
+    rq.save_to_file = true;
     rq.result_filename = encodeUtf8(RUNNER->GetString(pathToSave));
     rq.done_cb = onDone;
     rq.error_cb = onError;
@@ -618,6 +640,7 @@ StackSlot AbstractHttpSupport::downloadFileBinaryWithHeaders(RUNNER_ARGS)
     rq.method = parseUtf8("GET");
     rq.response_enc = ResponseEncodingByte;
     rq.url = RUNNER->GetString(url);
+    rq.save_to_file = true;
     rq.result_filename = encodeUtf8(RUNNER->GetString(pathToSave));
     rq.done_cb = onDone;
     rq.error_cb = onError;

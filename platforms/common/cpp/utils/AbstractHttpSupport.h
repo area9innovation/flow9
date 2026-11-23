@@ -39,6 +39,7 @@ struct HttpRequest {
     IncrementalUtf8Parser tmp_parser;
     FILE *tmp_file;
 
+    bool save_to_file;
     std::string result_filename;
 
     void *aux_data;
@@ -46,6 +47,7 @@ struct HttpRequest {
     HttpRequest() {
         req_id = 0;
         is_media_preload = false;
+        save_to_file = false;
         data_cb = error_cb = status_cb = done_cb = response_cb = StackSlot::MakeVoid();
         open_cb = progress_cb = StackSlot::MakeVoid();
         tmp_file = NULL;
