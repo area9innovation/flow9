@@ -1,3 +1,4 @@
+import ds/arrayutils;
 import formats/uri2/uri2;
 import lingo/linecolumn;
 
@@ -633,11 +634,13 @@ lspDocumentFilter2Json(documentFilter : LspDocumentFilter) -> Json {
 }
 
 lspTextDocumentContentChangeEvent2Json(event : LspTextDocumentContentChangeEvent) -> Json {
-	JsonObject([
-		Pair("range", lspRange2Json(event.range)),
-		Pair("rangeLength", JsonDouble(i2d(event.rangeLength))),
-		Pair("text", JsonString(event.text)),
-	]);
+	text = Pair("text", JsonString(event.text));
+	if (event.range == lspFullDocumentRange) JsonObject([text]) else
+	JsonObject(filtermap([
+		Some(Pair("range", lspRange2Json(event.range))),
+		if (event.rangeLength < 0) None() else Some(Pair("rangeLength", JsonDouble(i2d(event.rangeLength)))),
+		Some(text)
+	], idfn));
 }
 
 lspTextDocumentChangeRegistrationOptions2Json(options : LspTextDocumentChangeRegistrationOptions) -> Json {
@@ -988,10 +991,19 @@ json2LspResponseError(json : Json) -> Maybe<LspResponseError> {
 	Some(LspResponseError(s2i(code), message, getJsonFieldValue(json, "data", JsonNull())));
 }
 
+// Position fields are LSP uintegers: check before narrowing the JSON number to a Flow int.
+json2LspCoordinate(json : Json) -> Maybe<int> {
+	switch (json) {
+		JsonDouble(d): if (d >= 0.0 && d <= 2147483647.0 && i2d(trunc(d)) == d) Some(trunc(d)) else None();
+		default: None();
+	}
+}
+
 json2LspPosition(json : Json) -> Maybe<LspPosition> {
-	line = getJsonIntField(json, "line", -1);
-	char = getJsonIntField(json, "character", -1);
-	if (line != -1 && char != -1) Some(LspPosition(line, char)) else None();
+	maybeMap2(\line, char -> LspPosition(line, char))(
+		json2LspCoordinate(getJsonFieldValue(json, "line", JsonNull())),
+		json2LspCoordinate(getJsonFieldValue(json, "character", JsonNull()))
+	);
 }
 
 json2LspRange(json : Json) -> Maybe<LspRange> {
@@ -1080,31 +1092,36 @@ json2LspVersionedTextDocumentIdentifier(json : Json) -> Maybe<LspVersionedTextDo
 }
 
 json2LspDidChangeTextDocumentParams(json : Json) -> Maybe<LspDidChangeTextDocumentParams> {
-	maybeMap(json2LspVersionedTextDocumentIdentifier(getJsonObjectField(json, "textDocument")), \textDocument ->
-		LspDidChangeTextDocumentParams(textDocument,
-			filtermap(getJsonArrayField(json, "contentChanges"), json2LspTextDocumentContentChangeEvent)
-		)
+	// Each range is relative to the document produced by the preceding change.
+	maybeMap2(\doc, changes -> LspDidChangeTextDocumentParams(doc, changes))(
+		json2LspVersionedTextDocumentIdentifier(getJsonObjectField(json, "textDocument")),
+		mapM(getJsonArrayField(json, "contentChanges"), json2LspTextDocumentContentChangeEvent)
 	);
+}
+
+lspFullDocumentRange = LspRange(LspPosition(-1, -1), LspPosition(-1, -1));
+
+lspIsOrderedEditRange(range : LspRange) -> bool {
+	a = range.start;
+	b = range.end;
+	a.line >= 0 && a.character >= 0 && b.character >= 0 &&
+		(a.line < b.line || (a.line == b.line && a.character <= b.character));
 }
 
 json2LspTextDocumentContentChangeEvent(json : Json) -> Maybe<LspTextDocumentContentChangeEvent> {
 	switch (json) {
-		JsonString(text): {
-			Some(LspTextDocumentContentChangeEvent(LspRange(LspPosition(-1, -1), LspPosition(-1, -1)), strlen(text), text));
-		}
+		JsonString(text): Some(LspTextDocumentContentChangeEvent(lspFullDocumentRange, strlen(text), text));
 		default: {
-			if (!jsonObjectHasField(json, "text")) None() else {
-				text = getJsonStringField(json, "text", "");
-				range = json2LspRange(getJsonObjectField(json, "range"));
-				rangeLength = getJsonStringField(json, "rangeLength", "");
-				Some(LspTextDocumentContentChangeEvent(
-					switch (range) {
-						Some(r): r;
-						None(): LspRange(LspPosition(-1, -1), LspPosition(-1, -1));
-					},
-					if (rangeLength == "") -1 else s2i(rangeLength),
-					text
-				));
+			switch (getJsonFieldValue(json, "text", JsonNull())) {
+				JsonString(text): switch (getJsonFieldValueM(json, "range")) {
+					None(): if (jsonObjectHasField(json, "rangeLength")) None() else
+						Some(LspTextDocumentContentChangeEvent(lspFullDocumentRange, -1, text));
+					Some(raw): maybeBind(json2LspRange(raw), \range ->
+						if (!lspIsOrderedEditRange(range)) None() else
+						Some(LspTextDocumentContentChangeEvent(range, getJsonIntField(json, "rangeLength", -1), text))
+					);
+				};
+				default: None();
 			}
 		}
 	}
@@ -1563,17 +1580,31 @@ json2LspWorkspaceFolder(json : Json) -> Maybe<LspWorkspaceFolder> {
 }
 
 
-lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src : string) -> string {
-	if (changeEvent.range.start.line != -1) {
-		resolver = makeLineResolver(src);
-		start = findLineIndex(resolver, changeEvent.range.start.line, changeEvent.range.start.character);
-		end = findLineIndex(resolver, changeEvent.range.end.line, changeEvent.range.end.character);
+// Advance by whole LSP lines, then UTF-16 code units. Stop before the line ending
+// for an overlong column, or at EOF for a line beyond the document.
+lspEditOffset(src : string, offset : int, lines : int, chars : int) -> int {
+	if (offset == strlen(src) || (lines == 0 && chars == 0)) offset else {
+		c = getCharCodeAt(src, offset);
+		if (c == 10 || c == 13) {
+			if (lines == 0) offset else {
+				crlf = c == 13 && offset + 1 < strlen(src) && getCharCodeAt(src, offset + 1) == 10;
+				lspEditOffset(src, offset + (if (crlf) 2 else 1), lines - 1, chars);
+			}
+		} else {
+			lspEditOffset(src, offset + 1, lines, if (lines == 0) chars - 1 else chars);
+		}
+	}
+}
 
-		before = substring(src, 0, start);
-		after = substring(src, end, strlen(src) - end);
-		before + changeEvent.text + after;
-	} else {
-		// changed file is passed as a whole.
-		changeEvent.text;
+lspApplyContentChangeEvent(changeEvent : LspTextDocumentContentChangeEvent, src : string) -> string {
+	range = changeEvent.range;
+	if (range == lspFullDocumentRange) changeEvent.text
+	else if (!lspIsOrderedEditRange(range)) src
+	else {
+		start = lspEditOffset(src, 0, range.start.line, range.start.character);
+		lines = range.end.line - range.start.line;
+		chars = if (lines == 0) range.end.character - range.start.character else range.end.character;
+		end = lspEditOffset(src, start, lines, chars);
+		substring(src, 0, start) + changeEvent.text + substring(src, end, strlen(src) - end);
 	}
 }
