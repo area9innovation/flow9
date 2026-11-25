@@ -4,7 +4,8 @@ import formats/json/json;
 export {
 	// Tries to convert any flow object to a corresponding json.
 	// Doesn't work with native and functional types: these types are mapped onto JsonNull.
-	// Refs are dereferenced, i.e. not kept.
+	// Refs are dereferenced, i.e. not kept. Shared refs are expanded at each use.
+	// If a ref leads back to itself, the whole conversion returns JsonNull.
 	// Currently is implemented in: java backend.
 	flow2json(any : flow) -> Json;
 
@@ -15,8 +16,14 @@ export {
 }
 
 flow2json(any : flow) -> Json {
+	cyclic = ref false;
+	result = flowValue2json(any, makeList(), cyclic);
+	if (^cyclic) JsonNull() else result;
+}
+
+flowValue2json(any : flow, activeRefs : List<ref flow>, cyclic : ref bool) -> Json {
 	type = runtimeValueType(any);
-	if (type == "void" || type == "function" || type == "undef") {
+	if (^cyclic || type == "void" || type == "function" || type == "undef") {
 		JsonNull();
 	} else if (type == "int") {
 		JsonDouble(i2d(cast(any : flow -> int)));
@@ -27,9 +34,23 @@ flow2json(any : flow) -> Json {
 	} else if (type == "string") {
 		JsonString(cast(any : flow -> string));
 	} else if (type == "array") {
-		JsonArray(map(cast(any : flow -> [flow]), flow2json));
+		JsonArray(map(cast(any : flow -> [flow]), \v -> flowValue2json(v, activeRefs, cyclic)));
 	} else if (type == "ref") {
-		flow2json(^cast(any : flow -> ref flow));
+		cell = cast(any : flow -> ref flow);
+		switch (lastJsonRef(cell, cell, false)) {
+			Some(last): {
+				if (existsList(activeRefs, \r -> isSameObj(r, last))) {
+					cyclic := true;
+					JsonNull();
+				} else {
+					flowValue2json(^last, Cons(last, activeRefs), cyclic);
+				}
+			}
+			None(): {
+				cyclic := true;
+				JsonNull();
+			}
+		}
 	} else {
 		name = extractStructName(any);
 		if (name == "") {
@@ -41,9 +62,21 @@ flow2json(any : flow) -> Json {
 			JsonObject(concat(
 				[Pair("struct", JsonString(name))],
 				mapi(fields, \i, field ->
-					Pair(field, flow2json(args[i]))
+					Pair(field, flowValue2json(args[i], activeRefs, cyclic))
 				))
 			);
+		}
+	}
+}
+
+// Collapse consecutive refs without growing the stack or keeping one path entry per hop.
+// The slow cursor advances every other hop; meeting it means there is no last ref.
+lastJsonRef(fast : ref flow, slow : ref flow, moveSlow : bool) -> Maybe<ref flow> {
+	v = ^fast;
+	if (getDataTagForValue(v) != reference_data_tag) Some(fast) else {
+		next = cast(v : flow -> ref flow);
+		if (isSameObj(next, slow)) None() else {
+			lastJsonRef(next, if (moveSlow) cast(^slow : flow -> ref flow) else slow, !moveSlow);
 		}
 	}
 }
