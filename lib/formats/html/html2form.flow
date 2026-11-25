@@ -894,6 +894,21 @@ extractChildrenTextIgnoringTags(nodes : [XmlNode]) -> string {
 // TODO: Add margins as well to the style here
 HtmlAcc : (htmlStyle : HTMLStyle, story : List<[ParagraphElement]>, storyStyle : List<[ParagraphStyle]>, paragraph : List<ParagraphElement>, listNumber : int, paragraphNumber : int);
 
+// Links in a document may navigate to pages or native app handlers. Don't
+// turn an inline document or script into a navigation action. Only inspect
+// the scheme: the host's redirect hook still receives the original href.
+htmlIsNavigationLink(href : string) -> bool {
+	// The iOS host also accepts a fully percent-encoded URL.
+	url = if (ios() && !strContains(href, ":") && strContains(href, "%3A")) urlDecode(href) else href;
+	prefix = takeBefore(url, ":", "");
+	if (prefix == "") true else {
+		// Browsers trim leading C0/space and remove tabs and newlines in URLs.
+		start = countUntil(0, strlen(prefix), \i -> getCharCodeAt(prefix, i) > 0x20);
+		scheme = toLowerCase(strReplaces(strRight(prefix, start), ["\t", "", "\n", "", "\r", ""]));
+		!contains(["javascript", "vbscript", "data"], scheme)
+	}
+}
+
 renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : Tree<string, HTMLStyle>, acc : HtmlAcc, special : [HTMLSpecial]) -> HtmlAcc {
 	result = switch(node : XmlNode) {
 		XmlElement(tagcs, attrs, children): {
@@ -1007,7 +1022,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				styled := HtmlAcc(^styled.htmlStyle, ^styled.story, ^styled.storyStyle, Cons(TextFragment("\n", ^styled.htmlStyle.characterStyle), ^styled.paragraph), ^styled.listNumber, acc.paragraphNumber);
 
 				^styled;
-			} else if (tag == "a") {
+			} else if (tag == "a" && htmlIsNavigationLink(getXmlAttribute(attrs, "href", ""))) {
 				styled = HtmlAcc(HTMLStyle(concat([Fill(0x0000ff)], cs), ps, hms), acc.story, acc.storyStyle, makeList(), acc.listNumber, acc.paragraphNumber);
 				link = renderHtmlChildren(children, availableWidth, stylesheet, acc, styled, special);
 
@@ -1325,7 +1340,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				// Tags we ignore
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, acc, special);
 				acc;
-			} else if (tag == "span") {
+			} else if (tag == "span" || tag == "a") {
 				ac2 = HtmlAcc(HTMLStyle(cs, ps, hms), acc.story, acc.storyStyle, acc.paragraph, acc.listNumber, acc.paragraphNumber);
 				renderHtmlChildren(children, availableWidth, stylesheet, acc, ac2, special);
 			} else if (tag == "img") {
@@ -1677,7 +1692,7 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				hb = getXmlAttribute(attrs, "href", "");
 				tb = getXmlAttribute(attrs, "title", "");
 				// don't forget to add blue color for text!
-				linkForm = TextFragment(makeHtmlLink(hb, tb), acc.htmlStyle.characterStyle);
+				linkForm = TextFragment(if (htmlIsNavigationLink(hb)) makeHtmlLink(hb, tb) else escapeHtml2(tb), acc.htmlStyle.characterStyle);
 				HtmlAcc(acc.htmlStyle, acc.story, acc.storyStyle, Cons(linkForm, acc.paragraph), acc.listNumber, acc.paragraphNumber);
 			} else {
 				inline = ref true;
