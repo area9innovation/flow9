@@ -1118,6 +1118,11 @@ public class Native extends NativeHost {
 		} else return "";
 	}
 
+	public static Func2<Boolean, Object, Boolean> makeFlowJsonPath() {
+		Set<Object> path = Collections.newSetFromMap(new IdentityHashMap<>());
+		return (value, enter) -> enter ? path.add(value) : path.remove(value);
+	}
+
 	public static final boolean isStructName(String name) {
 		return FlowRuntime.struct_ids.containsKey(name);
 	}

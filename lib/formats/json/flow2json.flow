@@ -5,7 +5,7 @@ export {
 	// Tries to convert any flow object to a corresponding json.
 	// Doesn't work with native and functional types: these types are mapped onto JsonNull.
 	// Refs are dereferenced, i.e. not kept. Shared refs are expanded at each use.
-	// If a ref leads back to itself, the whole conversion returns JsonNull.
+	// A cycle has no JSON representation: the whole conversion returns JsonNull.
 	// Currently is implemented in: java backend.
 	flow2json(any : flow) -> Json;
 
@@ -15,58 +15,78 @@ export {
 	json2flow(json : Json) -> flow;
 }
 
+FlowJsonStep ::= FlowJsonLeaf, FlowJsonFrame, FlowJsonCycle;
+FlowJsonLeaf(json : Json);
+FlowJsonCycle();
+FlowJsonFrame(owner : flow, children : [flow], finish : ([Json]) -> Json, mutable index : int, mutable results : List<Json>);
+
 flow2json(any : flow) -> Json {
-	cyclic = ref false;
-	result = flowValue2json(any, makeList(), cyclic);
-	if (^cyclic) JsonNull() else result;
+	writeFlowJson(flowJsonStep(any), makeList(), makeFlowJsonPath());
 }
 
-flowValue2json(any : flow, activeRefs : List<ref flow>, cyclic : ref bool) -> Json {
-	type = runtimeValueType(any);
-	if (^cyclic || type == "void" || type == "function" || type == "undef") {
-		JsonNull();
-	} else if (type == "int") {
-		JsonDouble(i2d(cast(any : flow -> int)));
-	} else if (type == "double") {
-		JsonDouble(cast(any : flow -> double));
-	} else if (type == "bool") {
-		JsonBool(cast(any : flow -> bool));
-	} else if (type == "string") {
-		JsonString(cast(any : flow -> string));
-	} else if (type == "array") {
-		JsonArray(map(cast(any : flow -> [flow]), \v -> flowValue2json(v, activeRefs, cyclic)));
-	} else if (type == "ref") {
+flowJsonStep(any : flow) -> FlowJsonStep {
+	tag = getDataTagForValue(any);
+	if (tag == int_data_tag) FlowJsonLeaf(JsonDouble(i2d(cast(any : flow -> int))))
+	else if (tag == double_data_tag) FlowJsonLeaf(JsonDouble(cast(any : flow -> double)))
+	else if (tag == bool_data_tag) FlowJsonLeaf(JsonBool(cast(any : flow -> bool)))
+	else if (tag == string_data_tag) FlowJsonLeaf(JsonString(cast(any : flow -> string)))
+	else if (tag == array_data_tag) {
+		FlowJsonFrame(any, cast(any : flow -> [flow]), \xs -> JsonArray(xs), 0, makeList());
+	} else if (tag == reference_data_tag) {
 		cell = cast(any : flow -> ref flow);
 		switch (lastJsonRef(cell, cell, false)) {
-			Some(last): {
-				if (existsList(activeRefs, \r -> isSameObj(r, last))) {
-					cyclic := true;
-					JsonNull();
+			Some(last): FlowJsonFrame(flow(last), [^last], \xs -> xs[0], 0, makeList());
+			None(): FlowJsonCycle();
+		}
+	} else if (tag == struct_data_tag) {
+		name = extractStructName(any);
+		if (name == "") FlowJsonLeaf(JsonNull()) else {
+			FlowJsonFrame(any, extractStructArguments(any), \xs -> JsonObject(concat(
+				[Pair("struct", JsonString(name))], mapi(structFieldNames(name), \i, field -> Pair(field, xs[i]))
+			)), 0, makeList());
+		}
+	} else FlowJsonLeaf(JsonNull());
+}
+
+// One frame per open container. On delivery of its final child, build the parent
+// and carry it back up the same loop rather than unwinding the host call stack.
+writeFlowJson(step : FlowJsonStep, frames : List<FlowJsonFrame>, path : (flow, bool) -> bool) -> Json {
+	switch (step) {
+		FlowJsonCycle(): JsonNull();
+		FlowJsonFrame(owner, children, finish, __, __): {
+			if (length(children) == 0) writeFlowJson(FlowJsonLeaf(finish([])), frames, path)
+			else if (!path(owner, true)) JsonNull()
+			else writeFlowJson(flowJsonStep(children[0]), Cons(step, frames), path);
+		}
+		FlowJsonLeaf(json): switch (frames) {
+			EmptyList(): json;
+			Cons(parent, rest): {
+				parent.results ::= Cons(json, parent.results);
+				parent.index ::= parent.index + 1;
+				if (parent.index < length(parent.children)) {
+					writeFlowJson(flowJsonStep(parent.children[parent.index]), frames, path);
 				} else {
-					flowValue2json(^last, Cons(last, activeRefs), cyclic);
+					path(parent.owner, false);
+					writeFlowJson(FlowJsonLeaf(parent.finish(list2array(parent.results))), rest, path);
 				}
 			}
-			None(): {
-				cyclic := true;
-				JsonNull();
-			}
-		}
-	} else {
-		name = extractStructName(any);
-		if (name == "") {
-			// Not a struct
-			JsonNull();
-		} else {
-			args = extractStructArguments(any);
-			fields = structFieldNames(name);
-			JsonObject(concat(
-				[Pair("struct", JsonString(name))],
-				mapi(fields, \i, field ->
-					Pair(field, flowValue2json(args[i], activeRefs, cyclic))
-				))
-			);
 		}
 	}
+}
+
+// Enter an object by identity, returning false on a back-edge. Exits are LIFO.
+native makeFlowJsonPath : () -> (flow, bool) -> bool = Native.makeFlowJsonPath;
+makeFlowJsonPath() {
+	active : ref List<flow> = ref makeList();
+	\owner, enter -> if (enter) {
+		if (existsList(^active, \v -> isSameObj(v, owner))) false else {
+			active := Cons(owner, ^active);
+			true;
+		}
+	} else {
+		active := tailList(^active);
+		true;
+	};
 }
 
 // Collapse consecutive refs without growing the stack or keeping one path entry per hop.
