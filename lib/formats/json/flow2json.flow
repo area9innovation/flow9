@@ -1,7 +1,5 @@
 import dynamic;
-import ds/hashmap;
 import formats/json/json;
-import math/hash;
 
 export {
 	// Tries to convert any flow object to a corresponding json.
@@ -9,11 +7,6 @@ export {
 	// Refs are dereferenced, i.e. not kept.
 	// Currently is implemented in: java backend.
 	flow2json(any : flow) -> Json;
-
-	// Convert any json into some flow value. In case of error, or when a JsonNull is
-	// met during the conversion, returns IllegalStruct().
-	// Currently is implemented in: java backend.
-	json2flow(json : Json) -> flow;
 }
 
 flow2json(any : flow) -> Json {
@@ -48,71 +41,4 @@ flow2json(any : flow) -> Json {
 			);
 		}
 	}
-}
-
-json2flow(json : Json) -> flow {
-	switch (json) {
-		JsonObject(fields): {
-			switch (find(fields, \f -> f.first == "struct")) {
-				Some(str): {
-					name = getJsonStringValue(str.second, "");
-					field_names = structFieldNames(name);
-					// For small records, scanning is cheaper on Java than building a lookup.
-					args = if (length(field_names) <= 16) {
-						map(field_names, \field -> json2flow(firstJsonStructField(fields, field, 0)));
-					} else {
-						map(indexJsonStructFields(field_names, fields), \slot -> json2flow(^slot));
-					};
-					if (exists(args, isJsonDecodeError)) {
-						flow(IllegalStruct());
-					} else {
-						makeStructValue(name, args, IllegalStruct());
-					}
-				}
-				None(): {
-					IllegalStruct();
-				}
-			}
-		}
-		JsonArray(arr): {
-			vals = map(arr, json2flow);
-			if (exists(vals, isJsonDecodeError)) {
-				IllegalStruct();
-			} else {
-				flow(vals);
-			}
-		}
-		JsonBool(v): v;
-		JsonString(s): s;
-		JsonDouble(v): v;
-		JsonNull(): IllegalStruct();
-	}
-}
-
-isJsonDecodeError(value : flow) -> bool {
-	// Compare as flow: a decoded string, number or array is not a struct.
-	value == flow(IllegalStruct());
-}
-
-firstJsonStructField(fields : [Pair<string, Json>], name : string, i : int) -> Json {
-	if (i >= length(fields)) JsonNull()
-	else if (fields[i].first == name) fields[i].second
-	else firstJsonStructField(fields, name, i + 1);
-}
-
-// Index only declared fields. Removing a match keeps the first occurrence,
-// even when its value is JsonNull, and lets us skip unrelated trailing members.
-indexJsonStructFields(names : [string], fields : [Pair<string, Json>]) -> [ref Json] {
-	slots = map(names, \__ -> ref jsonNull);
-	pending = makeHashMapCap(fastHashString, length(names));
-	iteri(names, \i, field -> setHashMap(pending, field, slots[i]));
-	iteriUntil(fields, \__, f -> switch (lookupHashMap(pending, f.first)) {
-		Some(slot): {
-			slot := f.second;
-			removeFromHashMap(pending, f.first);
-			sizeHashMap(pending) == 0;
-		}
-		None(): false;
-	});
-	slots;
 }
