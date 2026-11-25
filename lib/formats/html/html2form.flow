@@ -1102,6 +1102,12 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				}
 
 				rowsCount = length(initRows);
+				// Each grid position gets a size behaviour and two references, even if
+				// it has no source cell. Allow 64K extra positions for sparse tables,
+				// in addition to the row contents already present in the document.
+				maxSlots = fold(initRows, 65536, \n, tr -> n + min(intMax - 1 - n, length(getXmlChildren(tr))));
+				maxColumns = maxSlots / max(1, rowsCount);
+				addColumns = \a, b -> if (a > maxColumns - b) maxColumns + 1 else a + b;
 				additionalCells = generate(0, rowsCount, \__ -> ref 0);
 				rows : [HTMLRow] = mapi(initRows, \i, tr -> {
 					switch (tr : XmlNode) {
@@ -1112,15 +1118,17 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 										xAlign = getXmlAttribute(tdatt, "align", "") |> align2double;
 										yAlign = getXmlAttribute(tdatt, "valign", "") |> align2double;
 										rowspan = min(getXmlAttribute(tdatt, "rowspan", "1") |> s2i, rowsCount - i);
+										// HTML limits a single cell to 1000 columns; clamp before narrowing to int.
+										span = s2d(getXmlAttribute(tdatt, "colspan", "1"));
+										colspan = if (span >= 1000.0) 1000 else if (span >= 1.0) floor(span) else 1;
 										if (rowspan > 1) {
-											fori(i + 1, i + rowspan - 1, \curRow -> additionalCells[curRow] := ^(additionalCells[curRow]) + 1);
+											fori(i + 1, i + rowspan - 1, \curRow -> additionalCells[curRow] := addColumns(^(additionalCells[curRow]), colspan));
 										}
-										colspan = getXmlAttribute(tdatt, "colspan", "1") |> s2i;
 										tdf = \aw -> renderHtmlXml(td, aw, stylesheet, [TightWidth()], special);
 										res = HTMLCell(xAlign, yAlign, colspan, rowspan, tdf);
 										HTMLRow(
 											ac.spanExists || rowspan > 1 || colspan > 1,
-											ac.colspansSum + colspan,
+											addColumns(ac.colspansSum, colspan),
 											arrayPush(ac.cells, res)
 										)
 									}
@@ -1132,7 +1140,9 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 					}
 				});
 				// Distribute the available width to the columns evenly
-				colsCount = foldi(rows, 0, \i, macc, r : HTMLRow -> max(macc, r.colspansSum + ^(additionalCells[i])));
+				columns = foldi(rows, 0, \i, macc, r : HTMLRow -> max(macc, addColumns(r.colspansSum, ^(additionalCells[i]))));
+				fitsGrid = columns <= maxColumns;
+				colsCount = if (fitsGrid) columns else 0;
 				newAWSrc = getXmlAttribute(attrs, "width", "");
 				hasBorder = getXmlAttribute(attrs, "border", "") != "";
 				newAW = if (newAWSrc != "") const(newAWSrc |> s2d) else availableWidth;
@@ -1171,12 +1181,13 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 
 				allOK = ref true;
 
-				iteri(rows, \baseRow, r : HTMLRow -> {
+				if (fitsGrid) iteri(rows, \baseRow, r : HTMLRow -> {
 					iteri(r.cells, \baseCol, c : HTMLCell -> {
 						freeCell = findNextFreeCell(baseRow, baseCol);
 						row = freeCell.first;
 						col = freeCell.second;
-						allOK := ^allOK && 0 <= row && row < rowsCount && 0 <= col && col < colsCount;
+						allOK := ^allOK && 0 <= row && row < rowsCount && 0 <= col && col < colsCount
+							&& c.colspan <= colsCount - col && c.rowspan <= rowsCount - row;
 						if (^allOK) {
 							colspan = c.colspan;
 							rowspan = c.rowspan;
@@ -1254,7 +1265,9 @@ renderHtmlAcc(node : XmlNode, availableWidth : Behaviour<double>, stylesheet : T
 				fitted : ref bool = ref true;
 				gridSizes : DynamicBehaviour<Pair<[double], [double]>> = make(Pair([],[]));
 
-				table = if (^allOK) {
+				table = if (!fitsGrid) {
+					Text("Table is too large to display", [Fill(red)])
+				} else if (^allOK) {
 					cells = mapi(cellsSrc, \row, r ->
 						mapi(r, \col, cell -> Inspect([ISize(cellSizes[pair2index(row, col)])], ^cell))
 					);
