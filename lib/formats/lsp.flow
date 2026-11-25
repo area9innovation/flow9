@@ -1,3 +1,4 @@
+import ds/arrayutils;
 import formats/uri2/uri2;
 import lingo/linecolumn;
 
@@ -1300,12 +1301,14 @@ json2LspDiagnosticRelatedInformation(json : Json) -> Maybe<LspDiagnosticRelatedI
 
 json2LspCodeAction(json : Json) -> Maybe<LspCodeAction> {
 	title = getJsonStringField(json, "title", "");
-	if (title == "") None() else {
+	rawEdit = getJsonFieldValueM(json, "edit");
+	edit = maybeBind(rawEdit, json2LspWorkspaceEdit);
+	if (title == "" || (isSome(rawEdit) && isNone(edit))) None() else {
 		Some(LspCodeAction(title,
 			getJsonStringField(json, "kind", ""),
 			filtermap(getJsonArrayField(json, "diagnostics"), json2LspDiagnostic),
 			getJsonBoolField(json, "isPreferred", false),
-			json2LspWorkspaceEdit(getJsonObjectField(json, "edit")),
+			edit,
 			json2Command(getJsonObjectField(json, "command"))
 		));
 	}
@@ -1347,15 +1350,23 @@ json2LspInsertReplaceEdit(json : Json) -> Maybe<LspInsertReplaceEdit> {
 }
 
 json2LspWorkspaceEdit(json : Json) -> Maybe<LspWorkspaceEdit> {
-	maybeMap(json2LspWorkspaceEditChanges(getJsonObjectField(json, "changes")),
-		\changes -> LspWorkspaceEdit(changes, filtermap(getJsonArrayField(json, "documentChanges"), json2LspWorkspaceEditDocumentChange))
-	);
+	switch (json) {
+		JsonObject(__): {
+			changes = if (jsonObjectHasField(json, "changes")) json2LspWorkspaceEditChanges(json) else Some(LspWorkspaceEditChanges([]));
+			switch (getJsonFieldValue(json, "documentChanges", JsonArray([]))) {
+				JsonArray(items): maybeMap2(\c, docs -> LspWorkspaceEdit(c, docs))(
+					changes, mapM(items, json2LspWorkspaceEditDocumentChange)
+				);
+				default: None();
+			}
+		}
+		default: None();
+	}
 }
 
 json2LspWorkspaceEditChanges(json : Json) -> Maybe<LspWorkspaceEditChanges> {
-	if (!jsonObjectHasField(json, "changes")) None() else {
-		changes = getJsonObjectField(json, "changes");
-		Some(LspWorkspaceEditChanges(filtermap(changes.members, \pair -> {
+	switch (getJsonFieldValue(json, "changes", JsonNull())) {
+		JsonObject(members): Some(LspWorkspaceEditChanges(filtermap(members, \pair -> {
 			uri = parseURI(pair.first);
 			if (uri2string(uri) != pair.first) None() else {
 				Some(Pair(
@@ -1364,25 +1375,31 @@ json2LspWorkspaceEditChanges(json : Json) -> Maybe<LspWorkspaceEditChanges> {
 				));
 			}
 		})));
+		default: None();
 	}
 }
 
 json2LspWorkspaceEditDocumentChange(json : Json) -> Maybe<LspWorkspaceEditDocumentChange> {
-	switch (json2LspCreateFile(json)) {
-		Some(create): Some(create);
-		None(): {
-			switch (json2LspRenameFile(json)) {
-				Some(rename): Some(rename);
-				None(): {
-					switch (json2LspDeleteFile(json)) {
-						Some(delete): Some(delete);
-						None(): {
-							cast(json2LspTextDocumentEdit(json) : Maybe<LspTextDocumentEdit> -> Maybe<LspWorkspaceEditDocumentChange>);
-						}
-					}
-				}
-			}
+	if (!jsonObjectHasField(json, "kind"))
+		json2LspTextDocumentEdit(json)
+	else {
+		kind = getJsonStringField(json, "kind", "");
+		if (kind == "create") json2LspCreateFile(json)
+		else if (kind == "rename") json2LspRenameFile(json)
+		else if (kind == "delete") json2LspDeleteFile(json)
+		else None();
+	}
+}
+
+// Decode the resource name, not permission to act on it. A DocumentUri needs a
+// scheme; URI2 also accepts relative references and returns an empty URI on failure.
+lspResourceUri(json : Json, field : string) -> Maybe<URI> {
+	switch (getJsonFieldValue(json, field, JsonNull())) {
+		JsonString(s): {
+			uri = parseURI(s);
+			if (uri.scheme != "" && uri2string(uri) == s) Some(uri) else None();
 		}
+		default: None();
 	}
 }
 
@@ -1397,12 +1414,11 @@ json2LspCreateFileOptions(json : Json) -> Maybe<LspCreateFileOptions> {
 
 json2LspCreateFile(json : Json) -> Maybe<LspCreateFile> {
 	kind = getJsonStringField(json, "kind", "");
-	if (kind != "create" || !jsonObjectHasField(json, "uri")) None() else {
-		Some(LspCreateFile(
-			parseURI(getJsonStringField(json, "uri", "")),
+	if (kind != "create") None() else
+		maybeMap(lspResourceUri(json, "uri"), \uri -> LspCreateFile(
+			uri,
 			json2LspCreateFileOptions(getJsonObjectField(json, "options"))
 		));
-	}
 }
 
 json2LspRenameFileOptions(json : Json) -> Maybe<LspRenameFileOptions> {
@@ -1416,13 +1432,10 @@ json2LspRenameFileOptions(json : Json) -> Maybe<LspRenameFileOptions> {
 
 json2LspRenameFile(json : Json) -> Maybe<LspRenameFile> {
 	kind = getJsonStringField(json, "kind", "");
-	if (kind != "rename" || !jsonObjectHasField(json, "oldUri") || !jsonObjectHasField(json, "newUri")) None() else {
-		Some(LspRenameFile(
-			parseURI(getJsonStringField(json, "oldUri", "")),
-			parseURI(getJsonStringField(json, "newUri", "")),
+	if (kind != "rename") None() else
+		maybeMap2(\oldUri, newUri -> LspRenameFile(oldUri, newUri,
 			json2LspRenameFileOptions(getJsonObjectField(json, "options"))
-		));
-	}
+		))(lspResourceUri(json, "oldUri"), lspResourceUri(json, "newUri"));
 }
 
 json2LspDeleteFileOptions(json : Json) -> Maybe<LspDeleteFileOptions> {
@@ -1436,12 +1449,11 @@ json2LspDeleteFileOptions(json : Json) -> Maybe<LspDeleteFileOptions> {
 
 json2LspDeleteFile(json : Json) -> Maybe<LspDeleteFile> {
 	kind = getJsonStringField(json, "kind", "");
-	if (kind != "delete" || !jsonObjectHasField(json, "uri")) None() else {
-		Some(LspDeleteFile(
-			parseURI(getJsonStringField(json, "uri", "")),
+	if (kind != "delete") None() else
+		maybeMap(lspResourceUri(json, "uri"), \uri -> LspDeleteFile(
+			uri,
 			json2LspDeleteFileOptions(getJsonObjectField(json, "options"))
 		));
-	}
 }
 
 json2LspCallHierarchyItem(json : Json) -> Maybe<LspCallHierarchyItem> {

@@ -1,0 +1,49 @@
+import formats/lsp;
+
+failures = ref 0;
+
+check(name : string, ok : bool) -> void {
+	if (!ok) {
+		println("FAIL: " + name);
+		failures := ^failures + 1;
+	}
+}
+
+workspace(docs : [Json]) -> Json {
+	JsonObject([Pair("documentChanges", JsonArray(docs))]);
+}
+
+codeAction(edit : Json) -> Json {
+	JsonObject([Pair("title", JsonString("Update resources")), Pair("edit", edit)]);
+}
+
+main() {
+	create = parseJson("{\"kind\":\"create\",\"uri\":\"file:///sample.flow\"}");
+	rename = parseJson("{\"kind\":\"rename\",\"oldUri\":\"file:///sample.flow\",\"newUri\":\"virtual://editor/sample%20two.flow\"}");
+	delete = parseJson("{\"kind\":\"delete\",\"uri\":\"virtual://editor/sample%20two.flow\"}");
+	file = parseURI("file:///sample.flow");
+	virtual = parseURI("virtual://editor/sample%20two.flow");
+	ops : [LspWorkspaceEditDocumentChange] = [LspCreateFile(file, None()), LspRenameFile(file, virtual, None()), LspDeleteFile(virtual, None())];
+	edit = LspWorkspaceEdit(LspWorkspaceEditChanges([]), ops);
+	raw = workspace([create, rename, delete]);
+	check("documentChanges without changes", json2LspWorkspaceEdit(raw) == Some(edit));
+	check("code action preserves ordered resource operations", maybeBind(json2LspCodeAction(codeAction(raw)), \a -> a.edit) == Some(edit));
+	check("workspace encoder and decoder agree", json2LspWorkspaceEdit(lspWorkspaceEdit2Json(edit)) == Some(edit));
+	plain = parseJson("{\"changes\":{\"file:///sample.flow\":[]}}");
+	check("plain changes map read once", json2LspWorkspaceEdit(plain) == Some(LspWorkspaceEdit(LspWorkspaceEditChanges([Pair(file, [])]), [])));
+	text = parseJson("{\"textDocument\":{\"uri\":\"file:///sample.flow\",\"version\":2},\"edits\":[]}");
+	check("text document edits share the dispatch", isSome(json2LspWorkspaceEdit(workspace([create, text]))));
+	check("an action can omit its edit", isSome(json2LspCodeAction(parseJson("{\"title\":\"Run command\",\"command\":{\"title\":\"Run\",\"command\":\"run\"}}"))));
+
+	check("create needs a URI string", isNone(json2LspCreateFile(parseJson("{\"kind\":\"create\",\"uri\":false}"))));
+	check("delete needs an absolute URI", isNone(json2LspDeleteFile(parseJson("{\"kind\":\"delete\",\"uri\":\"/sample.flow\"}"))));
+	check("rename validates its source", isNone(json2LspRenameFile(parseJson("{\"kind\":\"rename\",\"oldUri\":\"\",\"newUri\":\"file:///b\"}"))));
+	bad = parseJson("{\"kind\":\"rename\",\"oldUri\":\"file:///a\",\"newUri\":\"file:///unescaped space\"}");
+	check("rename validates its destination", isNone(json2LspRenameFile(bad)));
+	check("invalid resource operation rejects the ordered edit", isNone(json2LspWorkspaceEdit(workspace([create, bad, delete]))));
+	check("invalid edit is not treated as absent", isNone(json2LspCodeAction(codeAction(workspace([bad])))));
+	check("a tagged operation cannot fall back to a text edit", isNone(json2LspWorkspaceEditDocumentChange(
+		parseJson("{\"kind\":\"create\",\"textDocument\":{\"uri\":\"file:///a\",\"version\":1},\"edits\":[]}"))));
+	if (^failures == 0) println("LSP workspace edit tests passed");
+	quit(if (^failures == 0) 0 else 1);
+}
