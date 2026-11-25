@@ -20,6 +20,7 @@ class FlowSprite extends Sprite {
 	private var transformChanged : Bool = true;
 
 	private var url : String = "";
+	private var svgImageUrl : String;
 	private var headers : Array<Array<String>> = [];
 	public var loaded : Bool = false;
 	public var failed : Bool = false;
@@ -77,8 +78,8 @@ class FlowSprite extends Sprite {
 		};
 
 		if (this.isHTMLRenderer()) {
-			// Chrome can't render svgs with <img> element if file contains "data:img" type instead of "data:image"
-			// As workaround we insert svg content directly to innerHTML
+			// Some SVGs embed raster images with the old data:img MIME prefix.
+			// Check those before handing the image to Chrome's image decoder.
 			forceSvg = Platform.isChrome && url.indexOf(".svg") > 0;
 			this.initNativeWidget("img");
 		} else {
@@ -290,32 +291,8 @@ class FlowSprite extends Sprite {
 							}
 						});
 
-						// With Chrome svg data:img images are not scaled correctly for devicePixelRatio > 1.
-						// For instance, with Retina display, which has a factor from 2 to 3.
-						var width = Math.isFinite(widgetBounds.maxX) ? {
-							if (
-								forceSvg
-								&& Browser.window.devicePixelRatio > 1
-								&& Platform.isChrome
-							) {
-								widgetBounds.maxX / Browser.window.devicePixelRatio;
-							 } else {
-								widgetBounds.maxX;
-							}
-						} : 0;
-						var height = Math.isFinite(widgetBounds.maxY) ? {
-							if (
-								forceSvg
-								&& Browser.window.devicePixelRatio > 1
-								&& Platform.isChrome
-							) {
-								widgetBounds.maxY / Browser.window.devicePixelRatio;
-							 } else {
-								widgetBounds.maxY;
-							}
-						} : 0;
-
-						metricsFn(width, height);
+						metricsFn(Math.isFinite(widgetBounds.maxX) ? widgetBounds.maxX : 0,
+							Math.isFinite(widgetBounds.maxY) ? widgetBounds.maxY : 0);
 					} else {
 						metricsFn(texture.width, texture.height);
 					}
@@ -401,10 +378,6 @@ class FlowSprite extends Sprite {
 
 		this.deleteNativeWidget();
 
-		if (forceSvg) {
-			tagName = "div";
-		}
-
 		nativeWidget = Browser.document.createElement(tagName);
 		this.updateClipID();
 
@@ -421,25 +394,21 @@ class FlowSprite extends Sprite {
 
 				try {
 					var isContentTypeSvg = svgXhr.getResponseHeader("content-type").indexOf("svg") > 0;
-					if (isContentTypeSvg && svgXhr.response.indexOf("data:img") > 0) {
-						nativeWidget.style.width = null;
-						nativeWidget.style.height = null;
-						nativeWidget.innerHTML = svgXhr.response;
-
-						onLoaded();
+					if (isContentTypeSvg && svgXhr.responseText.indexOf("data:img/") >= 0) {
+						// Repair legacy href/xlink:href values; the result is still image data.
+						var svg = ~/(\s(?:xlink:)?href\s*=\s*["'])data:img\//gi.replace(svgXhr.responseText, "$1data:image/");
+						svgImageUrl = "data:image/svg+xml;utf8," + untyped encodeURIComponent(svg);
 					} else if (isContentTypeSvg && svgXhr.response.indexOf('foreignObject') > 0) {
 						var warnMessage = 'Warning! SVG (' + url + ') has a <foreignObject> inside, which could effect file size and ability to take a screenshot';
 						untyped console.warn(warnMessage);
 						errorFn(warnMessage);
 						// SVG with foreignObject taints canvas, so we have to trick it
-						url = "data:image/svg+xml;utf8," + untyped encodeURIComponent(svgXhr.response);
-						forceImageElement();
-					} else {
-						forceImageElement();
+						svgImageUrl = "data:image/svg+xml;utf8," + untyped encodeURIComponent(svgXhr.response);
 					}
 				} catch (e : Dynamic) {
-					forceImageElement();
+					// Fall back to the original image source.
 				}
+				forceImageElement();
 			};
 			svgXhr.onerror = function() {
 				forceImageElement();
@@ -451,7 +420,7 @@ class FlowSprite extends Sprite {
 			}
 
 			svgXhr.send();
-		} else if (this.headers.length == 0) {
+		} else if (this.headers.length == 0 || svgImageUrl != null) {
 			if (useCrossOrigin) {
 				nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
 			}
@@ -459,7 +428,7 @@ class FlowSprite extends Sprite {
 			// Loads image natively, with browser functions
 			nativeWidget.onload = onLoaded;
 			nativeWidget.onerror = onError;
-			nativeWidget.src = url;
+			nativeWidget.src = svgImageUrl != null ? svgImageUrl : url;
 		} else {
 			if (useCrossOrigin) {
 				nativeWidget.crossOrigin = Util.determineCrossOrigin(url);
