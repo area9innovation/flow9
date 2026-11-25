@@ -11,7 +11,18 @@ export {
 }
 
 parseWebVTT(content : string) -> WebVTT {
+	invalidTime = CueTimestamp(-1, 0, 0, 0);
+	// PEG actions can also run during lookahead. If hours overflow, check whether the cue kept that timestamp.
+	sawInvalidHour = ref false;
 	vttPegActions = pegActions([
+		Pair("withHours", \xs : [flow] -> {
+			h = s2d(flow2s(xs[0]));
+			ts : CueTimestamp = xs[1];
+			flow(if (h <= i2d(intMax)) CueTimestamp(ts with h = trunc(h)) else {
+				sawInvalidHour := true;
+				invalidTime
+			})
+		}),
 		Pair("concatLines", \xs : [flow] -> {
 			x0 = cast(xs[0] : flow -> [string]);
 			fold(x0, "", \acc, s -> acc + s)
@@ -30,7 +41,12 @@ parseWebVTT(content : string) -> WebVTT {
 					CueBlock(__, __, __, __, __) : Triple(acc with third = Cons(r, acc.third));
 					CueNote(__) : acc;
 				}),
-				\regions, styles, cues -> WebVTT(vtt.caption, list2array(regions), list2array(styles), list2array(cues))
+				\regions, styles, cues -> if (^sawInvalidHour && existsList(cues, \c ->
+					c.start == invalidTime || c.end == invalidTime || exists(c.text, \t -> contains(t.style, invalidTime))
+				)) {
+					println("WebVTT timestamp hour does not fit in CueTimestamp.h");
+					WebVTT("", [], [], [])
+				} else WebVTT(vtt.caption, list2array(regions), list2array(styles), list2array(cues))
 			)
 		}
 	)
@@ -39,4 +55,3 @@ parseWebVTT(content : string) -> WebVTT {
 isWebVTT(content : string) -> bool {
 	startsWith(content, "WEBVTT")
 }
-
