@@ -29,6 +29,8 @@ export {
 			PhpConstString(value : string);
 			PhpConstInt(value : int);
 
+	// For a complete PhpFunction, an invalid identifier spelling in its name or variable
+	// lists produces a diagnostic comment instead of a partial function.
 	phpElement2string(e : PhpElement) -> string;
 	emptyPhpBlock = PhpBlock([], [], [], []);
 }
@@ -50,8 +52,32 @@ phpElement2string(e : PhpElement) -> string {
 	}
 }
 
+// PHP accepts bytes >= 0x80 in names, so non-ASCII text is valid in UTF-8
+// source. Only ASCII digits are restricted to positions after the first.
+isPhpIdentifierSpelling(s : string) -> bool {
+	n = strlen(s);
+	n > 0 && countUntil(0, n, \i -> {
+		c = getCharCodeAt(s, i);
+		!(c >= 0x80 || c == 0x5f || (c >= 0x41 && c <= 0x5a) || (c >= 0x61 && c <= 0x7a) || (i > 0 && c >= 0x30 && c <= 0x39))
+	}) == n
+}
+
+phpFunctionNameProblem(f : PhpFunction) -> string {
+	// Quote the name for display without letting it end the diagnostic comment.
+	describe = \role, name -> role + " " + strReplace(toStringForJson(name), "*/", "*\\u002f");
+	if (!isPhpIdentifierSpelling(f.name)) describe("function name", f.name)
+	else fold([
+		Pair("parameter", f.body.externalVars), Pair("local variable", f.body.declaredVars), Pair("return variable", f.body.returnVars)
+	], "", \problem, group -> {
+		if (problem != "") problem
+		else eitherMap(findi(group.second, \v -> !isPhpIdentifierSpelling(v.name)), \i -> describe(group.first + " #" + i2s(i + 1), group.second[i].name), "")
+	})
+}
+
 phpFunction2string(f : PhpFunction) -> string {
-	blueprint(
+	problem = phpFunctionNameProblem(f);
+	if (problem != "") "/* Cannot generate PHP: " + problem + " is not a PHP identifier. */\n"
+	else blueprint(
 "function %func%(%args%) {
 	%body%
 	%return%;
