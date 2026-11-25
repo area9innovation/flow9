@@ -42,44 +42,32 @@ phpElement2string(e : PhpElement) -> string {
 		PhpVar(__): phpVar2string(e);
 		PhpConstString(__): phpConst2string(e);
 		PhpConstInt(__): phpConst2string(e);
-		PhpArray(__): phpArray2string(e);
-		PhpFunctionCallStub(__): phpStatement2string(e);
-		PhpAssign(__, __): phpStatement2string(e);
-		PhpFunctionCall(__, __): phpStatement2string(e);
-		PhpIf_If(__, __): phpOperation2string(e);
-		PhpIf_ElseIf(__, __): phpOperation2string(e);
-		PhpIf_Else(__): phpOperation2string(e);
+		PhpArray(__): phpArray2string(e, "");
+		PhpFunctionCallStub(__): phpStatement2string(e, "");
+		PhpAssign(__, __): phpStatement2string(e, "");
+		PhpFunctionCall(__, __): phpStatement2string(e, "");
+		PhpIf_If(__, __): phpOperation2string(e, "");
+		PhpIf_ElseIf(__, __): phpOperation2string(e, "");
+		PhpIf_Else(__): phpOperation2string(e, "");
 	}
 }
 
 phpFunction2string(f : PhpFunction) -> string {
-	blueprint(
-"function %func%(%args%) {
-	%body%
-	%return%;
-}
-",
-	[
-		"func", f.name,
-		"args", superglue(f.body.externalVars, phpVar2string, ", "),
-		"body", phpBlock2string(f.body),
-		"return", "return " + phpArray2string(PhpArray(f.body.returnVars))
-	]
-	);
+	"function " + f.name + "(" + superglue(f.body.externalVars, phpVar2string, ", ") + ") {\n"
+		+ phpIndentedBlock(f.body, "\t") + "\n\treturn " + phpArray2string(PhpArray(f.body.returnVars), "\t") + ";\n}\n";
 }
 
 phpBlock2string(b : PhpBlock) -> string {
-	superglue(b.statements, \s -> phpStatement2string(s), "\n");
+	phpIndentedBlock(b, "")
+}
+
+// Indent statements at their AST boundaries, not inside literal text or PHP fragments.
+phpIndentedBlock(b : PhpBlock, indent : string) -> string {
+	superglue(b.statements, \s -> indent + phpStatement2string(s, indent), "\n");
 }
 
 phpStringLiteral(s : string) -> string {
-	// Enclosing blueprints indent new lines and expand %...% in their arguments.
-	// Use PHP escapes for those characters so the literal survives nesting.
-	if (strContains(s, "\n") || strContains(s, "%")) {
-		"\"" + strReplaces(s, ["\\", "\\\\", "\"", "\\\"", "$", "\\$", "\n", "\\n", "\r", "\\r", "%", "\\x25"]) + "\""
-	} else {
-		"'" + strReplaces(s, ["\\", "\\\\", "'", "\\'"]) + "'"
-	}
+	"'" + strReplaces(s, ["\\", "\\\\", "'", "\\'"]) + "'";
 }
 
 phpConst2string(c : PhpConst) -> string {
@@ -89,55 +77,45 @@ phpConst2string(c : PhpConst) -> string {
 	}
 }
 
-phpOperation2string(o : PhpOperation) -> string {
+phpOperation2string(o : PhpOperation, indent : string) -> string {
 	phpFuncArg2string = \a : PhpFuncArg -> switch (a) {
 		PhpVar(__): phpVar2string(a);
-		PhpArray(__): phpArray2string(a);
+		PhpArray(__): phpArray2string(a, indent);
 		PhpConstString(value): phpConst2string(a);
 		PhpConstInt(value): phpConst2string(a);
 	};
 
+	braces = \block -> " {\n" + phpIndentedBlock(block, indent + "\t") + "\n" + indent + "}";
 	switch (o)  {
 		PhpFunctionCallStub(formula): formula;
-		PhpFunctionCall(name, args): blueprint("%func%(%args%)", [
-			"func", name,
-			"args", superglue(args, phpFuncArg2string, ", ")
-		]);
+		PhpFunctionCall(name, args): name + "(" + superglue(args, phpFuncArg2string, ", ") + ")";
 
-		PhpIf_If(condition, block): blueprint("if (%cond%) {\n\t%block%\n}", ["cond", condition, "block", phpBlock2string(block)]);
-		PhpIf_ElseIf(condition, block): blueprint("else if (%cond%) {\n\t%block%\n}", ["cond", condition, "block", phpBlock2string(block)]);
-		PhpIf_Else(block): blueprint("else {\n\t%block%\n}", ["block", phpBlock2string(block)])
+		PhpIf_If(condition, block): "if (" + condition + ")" + braces(block);
+		PhpIf_ElseIf(condition, block): "else if (" + condition + ")" + braces(block);
+		PhpIf_Else(block): "else" + braces(block);
 	};
 }
 
-phpStatement2string(s : PhpStatement) -> string {
+phpStatement2string(s : PhpStatement, indent : string) -> string {
 	res = switch (s) {
-		PhpAssign(left, right): 
-			Pair(blueprint("%left% = %right%", 
-				["left", phpVar2string(left),
-				"right", phpOperation2string(right)
-				]), false);
-		PhpFunctionCallStub(__): Pair(phpOperation2string(s), false);
-		PhpFunctionCall(__, __): Pair(phpOperation2string(s), false);
-		PhpIf_If(__, __): Pair(phpOperation2string(s), false);
-		PhpIf_ElseIf(__, __): Pair(phpOperation2string(s), true); // we don't want ; after IfElse block because it is not final block in statements
-		PhpIf_Else(__): Pair(phpOperation2string(s), false);
+		PhpAssign(left, right): Pair(phpVar2string(left) + " = " + phpOperation2string(right, indent), false);
+		PhpFunctionCallStub(__): Pair(phpOperation2string(s, indent), false);
+		PhpFunctionCall(__, __): Pair(phpOperation2string(s, indent), false);
+		PhpIf_If(__, __): Pair(phpOperation2string(s, indent), false);
+		PhpIf_ElseIf(__, __): Pair(phpOperation2string(s, indent), true); // we don't want ; after IfElse block because it is not final block in statements
+		PhpIf_Else(__): Pair(phpOperation2string(s, indent), false);
 	}
 
 	if (endsWith(res.first, ";") || endsWith(res.first, "}") || res.second) res.first else res.first + ";"
 }
 
-phpArray2string(a : PhpArray) -> string {
+phpArray2string(a : PhpArray, indent : string) -> string {
 	phpArrayElement2string = \k : string, v : string -> phpStringLiteral(k) + " => " + v;
 
-	blueprint("array(%elements%)", 
-		["elements", superglue(a.elements, 
-			\e -> switch(e) {
-				PhpVar(name): phpArrayElement2string(name, phpVar2string(e));
-				PhpVarVal(name, value): phpArrayElement2string(name, phpConst2string(value));
-			}, ",\n")
-		]
-	);
+	"array(" + superglue(a.elements, \e -> switch (e) {
+		PhpVar(name): phpArrayElement2string(name, phpVar2string(e));
+		PhpVarVal(name, value): phpArrayElement2string(name, phpConst2string(value));
+	}, ",\n" + indent) + ")";
 }
 
 phpVar2string(v : PhpVar) -> string { "$" + v.name; }

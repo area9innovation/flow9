@@ -19,11 +19,21 @@ main() {
 		Pair("", "")
 	];
 	label = "Owner's 25% share in \"$total\"";
-	args = [PhpConstString(label), PhpArray(map(fields, \f -> PhpVarVal(f.first, PhpConstString(f.second))))];
-	fn = PhpFunction("report", PhpBlock([], [], [PhpFunctionCall("record_fields", args)], []));
-	source = "function record_fields($s, $a) { echo json_encode([$s, array_keys($a), array_values($a)]); }\n"
+	raw = PhpVar("raw");
+	text = "day %nl1%\nsecond line";
+	args = [PhpConstString(label), PhpArray(map(fields, \f -> PhpVarVal(f.first, PhpConstString(f.second)))), raw];
+	record = PhpBlock([], [], [PhpFunctionCall("record_fields", args)], []);
+	// Conditions and formulas are PHP source; a percent marker and a physical
+	// line break inside a quoted PHP string must reach PHP unmodified as well.
+	choose = PhpIf_ElseIf("$raw === '" + text + "'", record);
+	fn = PhpFunction("report", PhpBlock([], [raw], [
+		PhpAssign(raw, PhpFunctionCallStub("'" + text + "'")),
+		PhpIf_If("'%func%' === expected_marker()", PhpBlock([], [], [PhpIf_If("false", emptyPhpBlock), choose], []))
+	], []));
+	source = "function expected_marker() { return '%func%'; }\n"
+		+ "function record_fields($s, $a, $v) { echo json_encode([$s, array_keys($a), array_values($a), $v]); }\n"
 		+ phpElement2string(fn) + "\nreport();";
-	expected = JsonArray([JsonString(label), JsonArray(map(fields, \f -> JsonString(f.first))), JsonArray(map(fields, \f -> JsonString(f.second)))]);
+	expected = JsonArray([JsonString(label), JsonArray(map(fields, \f -> JsonString(f.first))), JsonArray(map(fields, \f -> JsonString(f.second))), JsonString(text)]);
 	output = ref "";
 	code = execSystemProcess("php", ["-n", "-r", source], ".", \line -> output := ^output + line, println);
 	if (code == 0 && parseJson(^output) == expected) {
