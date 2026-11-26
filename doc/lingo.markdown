@@ -782,14 +782,29 @@ latter uses the first rule's name as its prefix, e.g. `st_DidNotExpectStart_Stop
 in a grammar starting with `Start`. `prefix_rules` renames the grammar itself, including its
 public entry point; it isn't needed to generate matching mnemonics.
 
-When regenerating a **published** parser, a sibling `<grammar>.lingo.mnemonics` can preserve
-its existing names and negative IDs. The first line is the published prefix for the `3*i+2`
-constants. Optional `RuleName=-N` lines pin exceptions in the parser's own namespace (which
-must then be distinct). Use normalized rule names, as printed by `flowparserdebug=1` with
-`$` written as `__`. Rules without an exception use the regular ID. See
-`tools/flowc/backends/java/parser/java.lingo.mnemonics` for the Java table. Keep this input
-with the grammar; the generator does not read old output. The table applies to a single,
-unrenamed grammar, not a new grammar assembled with `prefix_rules` or a list of files.
+To keep the names and negative IDs of a **published** parser, place a `<grammar>.lingo.mnemonics`
+file next to its grammar. For example, these three lines from the Java table:
+
+```
+flow
+LetterOrDigit=-1
+COMMA=-12
+```
+
+keep the regular `st_DidNotExpectflow_*` exports (`3*i+2`), but tell the parser to use
+`st_DidNotExpectCompilation_LetterOrDigit` (`-1`) and `st_DidNotExpectCompilation_COMMA` (`-12`)
+for those two failures. Unlisted rules use their regular ID.
+
+- The first nonblank line is the prefix for the regular IDs. If there are overrides, this
+  prefix must differ from the parser's own prefix so the two sets of names do not collide.
+- Each remaining nonblank line is `RuleName=-N`, with no spaces around `=`. Each rule must
+  exist in the normalized grammar (`flowparserdebug=1`, with `$` written as `__`). Both prefix
+  and rule names must be identifiers. List each rule once and give it a distinct negative
+  decimal integer, with no leading zeros.
+- LF and CRLF line endings are accepted. Blank lines are ignored; comments are not allowed.
+
+The table is an input, not previous generator output. It applies to a single unrenamed
+grammar, not one assembled with `prefix_rules` or a list of files.
 
 To extract the matching text of a SyntaxTree node, you can use `grabSTText` from 
 `lingo/compiler/syntaxtree_util`. You give it a SyntaxTree node, the original text that was

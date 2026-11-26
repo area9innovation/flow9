@@ -20,11 +20,21 @@ Stop = "b";
 LINGO
 generate file=tiny.lingo flowparser=tiny_parser flowparserast=tiny_ast.flow
 
+printf '%s\n' 'old' 'Start=-1' 'Stop=-1' > tiny.lingo.mnemonics
+if generate file=tiny.lingo flowparser=duplicate_parser flowparserast=duplicate_ast.flow > duplicate.log 2>&1; then
+	echo 'Two rules with the same negative ID were accepted' >&2
+	exit 1
+fi
+grep -F 'Invalid mnemonic table tiny.lingo.mnemonics' duplicate.log > /dev/null
+
 # Use the real module paths so cmp also checks imports, exports and every ID.
 j=tools/flowc/backends/java/parser
 mkdir -p "$j"
-for pass in 1 2; do
-	generate "file=$root/$j/java.lingo" "flowparser=$j/java_parser" "flowparserast=$j/java_ast.flow"
+cp "$root/$j/java.lingo" "$j/"
+# Repeat the generation with a CRLF copy of the published table next to its grammar.
+awk '{ sub(/\r$/, ""); printf "%s\r\n", $0 }' "$root/$j/java.lingo.mnemonics" > "$j/java.lingo.mnemonics"
+for grammar in "$root/$j/java.lingo" "$j/java.lingo"; do
+	generate "file=$grammar" "flowparser=$j/java_parser" "flowparserast=$j/java_ast.flow"
 	for f in java_parser.flow java_ast.flow java_ast_mnemonics.flow; do
 		cmp "$j/$f" "$root/$j/$f"
 	done
