@@ -79,7 +79,6 @@ LOCAL_SRC_FILES += \
     utils/FileSystemInterface.cpp \
     utils/PrintingSupport.cpp \
     utils/MediaStreamSupport.cpp \
-    utils/WebRTCSupport.cpp \
     utils/MediaRecorderSupport.cpp \
     utils/AbstractWebSocketSupport.cpp \
     utils/md5.cpp \

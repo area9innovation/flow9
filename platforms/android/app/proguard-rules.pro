@@ -62,15 +62,11 @@
 -keep class dk.area9.flowrunner.FlowMediaRecorderSupport$FlowMediaRecorderObject {
     *;
 }
--keep class dk.area9.flowrunner.FlowWebRTCSupport$FlowMediaSenderObject {
-    *;
-}
 
 # Keep the enclosing support classes (they hold the nested JNI object types and
 # are wired into the native callbacks). Members are exercised via JNI/reflection.
 -keep class dk.area9.flowrunner.FlowMediaStreamSupport { *; }
 -keep class dk.area9.flowrunner.FlowMediaRecorderSupport { *; }
--keep class dk.area9.flowrunner.FlowWebRTCSupport { *; }
 
 # -----------------------------------------------------------------------------
 # Android components declared in AndroidManifest.xml. The Android framework
@@ -113,10 +109,6 @@
 # reflection and may not ship complete rules.
 # -----------------------------------------------------------------------------
 
-# socket.io-client / engine.io-client
--dontwarn io.socket.**
--keep class io.socket.** { *; }
-
 # Java-WebSocket
 -dontwarn org.java_websocket.**
 -keep class org.java_websocket.** { *; }
@@ -127,9 +119,6 @@
 # Stream WebRTC (ships consumer rules; suppress warnings from optional deps)
 -dontwarn org.webrtc.**
 -keep class org.webrtc.** { *; }
-
-# org.json is provided by the Android platform (excluded from socket.io dep)
--dontwarn org.json.**
 
 # -----------------------------------------------------------------------------
 # Resource lookup via reflection. The runner resolves app resources by name:

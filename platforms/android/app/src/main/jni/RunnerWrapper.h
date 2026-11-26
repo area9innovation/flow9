@@ -13,7 +13,6 @@
 #include "utils/FileLocalStore.h"
 #include "utils/FileSystemInterface.h"
 #include "utils/MediaStreamSupport.h"
-#include "utils/WebRTCSupport.h"
 #include "utils/MediaRecorderSupport.h"
 #include "utils/AbstractWebSocketSupport.h"
 #include "utils/PrintingSupport.h"
@@ -284,37 +283,6 @@ private:
 
 };
 
-class AndroidWebRTCSupport : public WebRTCSupport {
-    AndroidRunnerWrapper *owner;
-
-public:
-    AndroidWebRTCSupport(AndroidRunnerWrapper *owner);
-
-    class FlowNativeMediaSender : public FlowNativeObject
-    {
-        AndroidWebRTCSupport *owner;
-    public:
-
-        FlowNativeMediaSender(AndroidWebRTCSupport* owner);
-        ~FlowNativeMediaSender();
-
-        jobject mediaSender;
-
-        DEFINE_FLOW_NATIVE_OBJECT(FlowNativeMediaSender, FlowNativeObject)
-    };
-
-    void deliverOnMediaSenderReadyCallback(jint cb_root, jobject sender);
-    void deliverOnNewParticipantCallback(jint cb_root, jstring id, jobject mediaStream);
-    void deliverOnParticipantLeaveCallback(jint cb_root, jstring id);
-    void deliverOnErrorCallback(jint cb_root, jstring error);
-
-private:
-    virtual void makeSenderFromStream(unicode_string serverUrl, unicode_string roomId, std::vector<unicode_string> stunUrls, std::vector<std::vector<unicode_string> > turnServers,
-                                                       StackSlot stream, int onMediaSenderReadyRoot, int onNewParticipantRoot, int onParticipantLeaveRoot, int onErrorRoot);
-    virtual void stopSender(StackSlot sender);
-
-};
-
 class AndroidMediaRecorderSupport : public MediaRecorderSupport {
     AndroidRunnerWrapper *owner;
 
@@ -402,7 +370,6 @@ class AndroidRunnerWrapper {
     friend class AndroidGeolocationSupport;
     friend class AndroidTextureImage;
     friend class AndroidMediaStreamSupport;
-    friend class AndroidWebRTCSupport;
     friend class AndroidMediaRecorderSupport;
     friend class AndroidWebSocketSupport;
     friend class AndroidFileSystemInterface;
@@ -424,7 +391,6 @@ class AndroidRunnerWrapper {
     AndroidLocalyticsSupport localytics;
     AndroidGeolocationSupport geolocation;
     AndroidMediaStreamSupport mediaStream;
-    AndroidWebRTCSupport webrtcSupport;
     AndroidMediaRecorderSupport mediaRecorder;
     AndroidWebSocketSupport websockets;
     FileLocalStore store;
@@ -457,7 +423,6 @@ public:
     AndroidNotificationsSupport *getNotifications() { return &notifications; }
     AndroidGeolocationSupport *getGeolocation() { return &geolocation; }
     AndroidMediaStreamSupport *getMediaStream() { return &mediaStream; }
-    AndroidWebRTCSupport *getWebRTCSupport() { return &webrtcSupport; }
     AndroidMediaRecorderSupport *getMediaRecorder() { return &mediaRecorder; }
     AndroidWebSocketSupport *getWebSockets() { return &websockets; }
     AndroidFileSystemInterface *getFSInterface() { return &fsinterface; }
