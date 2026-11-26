@@ -33,7 +33,9 @@ RuleUse(
 	// giving a single or multiple values
 	single : bool, 
 	// True if in a sequence with a single rule, where we do not construct a separate AST node
-	omitted : bool
+	omitted : bool,
+	// True for a named rule whose result does not occupy a child slot
+	hidden : bool
 );
 
 compileAstMnemonics(g : Grammar, prefix : string) -> string {
@@ -64,6 +66,19 @@ compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string {
 	}
 
 	gname = syntaxRuleName(g.productions[0].name);
+	// RuleUse positions count rule references, but a rule ending in '_' does
+	// not contribute a slot to a materialized sequence in the parser.
+	hiddenSlots = foldArrayTree(rulemap, makeTree(), \__, u, acc ->
+		if (u.hidden) treePushToArrayValue(acc, Pair(u.from, u.choice), u.position) else acc);
+	// A repeated or optional auto-rule is reached through its _s accessor.
+	// Once the caller has selected a group, its stored children are on that
+	// node. Keep the old shortcut for single parents and for choices where
+	// the parser omits the parent node and returns the matched rule itself.
+	followAuto = \u : RuleUse -> strContains(syntaxRuleName(u.from), "__") &&
+		(u.omitted || u.hidden || exists(getTreeArrayValue(rulemap, u.from), \parent -> parent.single));
+	directPosition = \u : RuleUse -> if (strContains(syntaxRuleName(u.from), "__")) {
+		u.position - length(filter(getTreeArrayValue(hiddenSlots, Pair(u.from, u.choice)), \p -> p < u.position))
+	} else u.position;
 
 	decls = fold(g.productions, "", \acc, p -> {
 		uses = getTreeArrayValue(rulemap, p.name);
@@ -109,7 +124,7 @@ compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string {
 				"cases", fold(uses, "", \acc2, u -> {
 					acc2 + if (u.single) {
 						rulename = syntaxRuleName(u.from);
-						if (strContains(rulename, "__")) {
+						if (followAuto(u)) {
 							// An auto-rule
 							if (u.omitted) {
 								blueprint("
@@ -141,7 +156,7 @@ compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string {
 									} else ", [
 									"rulename", "st_"+rulename,
 									"choice", i2s(u.choice),
-									"pos", i2s(u.position),
+									"pos", i2s(directPosition(u)),
 								]
 							);
 						}
@@ -166,7 +181,7 @@ compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string {
 				"pname", pname,
 				"cases", fold(uses, "", \acc2, u -> {
 					rulename = syntaxRuleName(u.from);
-					acc2 + if (strContains(rulename, "__")) {
+					acc2 + if (followAuto(u)) {
 						// An auto-rule
 						blueprint("
 								if (get_%gname%_%rulename%(st).choice == %choice%) {
@@ -186,7 +201,7 @@ compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string {
 								} else ", [
 								"rulename", "st_" + rulename,
 								"choice", i2s(u.choice),
-								"pos", i2s(u.position),
+								"pos", i2s(directPosition(u)),
 							]
 						);
 					}
@@ -234,12 +249,12 @@ buildParsingRuleUseMap(g : Grammar, rulemap : Tree<string, [RuleUse]>, from : st
 		BindResult(name, p): rec(p, true);
 		BindMatched(name, p): rec(p, true);
 		Rule(name): {
-			use = RuleUse(from, name, choice, position, single, false);
+			use = RuleUse(from, name, choice, position, single, false, endsWith(name, "_"));
 			treePushToArrayValue(rulemap, name, use);
 		}
 		IRule(i): {
-			rule = Rule(g.productions[i].name);
-			buildParsingRuleUseMap(g, rulemap, from, choice, position, single, rule);
+			name = g.productions[i].name;
+			treePushToArrayValue(rulemap, name, RuleUse(from, name, choice, position, single, false, false));
 		}
 		Term(t): rulemap;
 		CharRange(first, last): rulemap;
@@ -258,7 +273,7 @@ buildParsingRuleUseMap(g : Grammar, rulemap : Tree<string, [RuleUse]>, from : st
 				p0 = s[0];
 				switch (p0) {
 					Rule(to): {
-						use = RuleUse(from, to, choice, position, single, true);
+						use = RuleUse(from, to, choice, position, single, true, endsWith(to, "_"));
 						treePushToArrayValue(rulemap, to, use);
 					}
 					default: rulemap;
