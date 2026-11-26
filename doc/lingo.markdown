@@ -801,7 +801,10 @@ for those two failures. Unlisted rules use their regular ID.
   exist in the normalized grammar (`flowparserdebug=1`, with `$` written as `__`). Both prefix
   and rule names must be identifiers. List each rule once and give it a distinct negative
   decimal integer, with no leading zeros.
-- LF and CRLF line endings are accepted. Blank lines are ignored; comments are not allowed.
+- All exported mnemonic names must be distinct after prefixes are joined to rule names.
+  A collision is reported before the parser, AST or mnemonic file is written.
+- LF and CRLF line endings are accepted. Blank lines (including spaces and tabs) are ignored;
+  comments are not allowed.
 
 The table is an input, not previous generator output. It applies to a single unrenamed
 grammar, not one assembled with `prefix_rules` or a list of files.

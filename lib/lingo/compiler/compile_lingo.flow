@@ -7,6 +7,7 @@ import lingo/compiler/nested_choices;
 import lingo/compiler/compile_ast_functions;
 import lingo/pegaction;
 import text/blueprint;
+import text/serialize;
 import loop;
 import fs/filesystem;
 
@@ -66,20 +67,23 @@ compileSyntaxGrammarToFlow(gr : Grammar, options : [CompileSyntaxWithGrammarOpti
 
 	prefix = extractStruct(options, CswgoInnerFunctionsPrefix(syntaxRuleName(grammar.productions[0].name))).value;
 	legacy = extractStruct(options, CswgoLegacyMnemonics(prefix, []));
-	if (prefix == legacy.prefix && legacy.negativeIds != []) {
-		Pair("Legacy negative IDs need a distinct mnemonic namespace", "");
-	} else if (exists(legacy.negativeIds, \a -> !exists(grammar.productions, \p -> syntaxRuleName(p.name) == a.first))) {
+	identifier = \s -> s != "" && deserializeIdentifier(s).first == s;
+	parserName = \r -> qualifiedSyntaxRule(prefix, r);
+	mnemonics = if (containsStruct(options, legacy) && !identifier(legacy.prefix)) {
+		Pair("Invalid legacy mnemonic prefix: " + legacy.prefix, "");
+	} else if (exists(legacy.negativeIds, \a -> !identifier(a.first) || !exists(grammar.productions, \p -> syntaxRuleName(p.name) == a.first))) {
 		Pair("Legacy negative ID refers to an unknown rule; check the mnemonic table against the normalized grammar", "");
 	} else {
+		checkedAstMnemonics(grammar, legacy.prefix, map(legacy.negativeIds, \a -> Pair(parserName(a.first), a.second)));
+	}
+	if (mnemonics.first != "") mnemonics else {
 		negative = pairs2tree(legacy.negativeIds);
-		names = SyntaxRuleNames(\r -> qualifiedSyntaxRule(prefix, r), \r ->
+		names = SyntaxRuleNames(parserName, \r ->
 			qualifiedSyntaxRule(if (containsKeyTree(negative, syntaxRuleName(r))) prefix else legacy.prefix, r));
 		astfile = getUrlParameter("flowparserast");
 		if (astfile != "") {
 			astMnemoFile = changeFileExt(astfile, "") + "_mnemonics.flow";
-			aliases = map(legacy.negativeIds, \a -> Pair(names.parser(a.first), a.second));
-			astMnemonics = compileAstMnemonicsWithAliases(grammar, legacy.prefix, aliases);
-			setFileContent(astMnemoFile, astMnemonics);
+			setFileContent(astMnemoFile, mnemonics.second);
 			astfuns = compileAstFunctions(grammar, astMnemoFile);
 			r = setFileContent(astfile, astfuns);
 			println(if (r) "Saved " + astfile + " with AST functions" else "ERROR: Could not save " + astfile + " with AST functions")
