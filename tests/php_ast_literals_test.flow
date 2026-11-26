@@ -1,0 +1,46 @@
+import formats/php/php_ast;
+import formats/json/json;
+import sys/system;
+
+// Run with flowcpp --batch and the PHP CLI on PATH. Compare the data PHP
+// reads from a generated function with the original Flow strings.
+main() {
+	plain = PhpArray([PhpVar("total"), PhpVarVal("year", PhpConstInt(2026))]);
+	if (phpElement2string(plain) != "array('total' => $total,\n'year' => 2026)") {
+		println("PHP AST: ordinary array formatting changed");
+		quit(1);
+	}
+	fields = [
+		Pair("O'Brien", "owner's copy"),
+		Pair("path\\", "\\\\server\\reports\\"),
+		Pair("café", "cost: $5, \"net\""),
+		Pair("%func%", "%nl1% / %1 / 25%"),
+		Pair("a\nb", "two\r\nlines and a literal \\n"),
+		Pair("", "")
+	];
+	label = "Owner's 25% share in \"$total\"";
+	raw = PhpVar("raw");
+	text = "day %nl1%\nsecond line";
+	args = [PhpConstString(label), PhpArray(map(fields, \f -> PhpVarVal(f.first, PhpConstString(f.second)))), raw];
+	record = PhpBlock([], [], [PhpFunctionCall("record_fields", args)], []);
+	// Conditions and formulas are PHP source; a percent marker and a physical
+	// line break inside a quoted PHP string must reach PHP unmodified as well.
+	choose = PhpIf_ElseIf("$raw === '" + text + "'", record);
+	fn = PhpFunction("report", PhpBlock([], [raw], [
+		PhpAssign(raw, PhpFunctionCallStub("'" + text + "'")),
+		PhpIf_If("'%func%' === expected_marker()", PhpBlock([], [], [PhpIf_If("false", emptyPhpBlock), choose], []))
+	], []));
+	source = "function expected_marker() { return '%func%'; }\n"
+		+ "function record_fields($s, $a, $v) { echo json_encode([$s, array_keys($a), array_values($a), $v]); }\n"
+		+ phpElement2string(fn) + "\nreport();";
+	expected = JsonArray([JsonString(label), JsonArray(map(fields, \f -> JsonString(f.first))), JsonArray(map(fields, \f -> JsonString(f.second))), JsonString(text)]);
+	output = ref "";
+	code = execSystemProcess("php", ["-n", "-r", source], ".", \line -> output := ^output + line, println);
+	if (code == 0 && parseJson(^output) == expected) {
+		println("PHP AST literals round-tripped");
+		quit(0);
+	} else {
+		println("PHP AST: expected " + json2string(expected) + ", got " + ^output + " (PHP exit " + i2s(code) + ")");
+		quit(1);
+	}
+}
