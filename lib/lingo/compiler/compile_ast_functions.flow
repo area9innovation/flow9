@@ -17,6 +17,8 @@ export {
 	// AST constructed by the compiled parsers.
 	compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string;
 	compileAstMnemonics(g : Grammar, prefix : string) -> string;
+	compileAstMnemonicsWithAliases(g : Grammar, prefix : string, aliases : [Pair<string, int>]) -> string;
+	qualifiedSyntaxRule(prefix : string, rule : string) -> string;
 	// Convert a name of a rule to something that works. Basically replaces $ with __
 	syntaxRuleName(s : string) -> string;
 }
@@ -37,11 +39,19 @@ RuleUse(
 );
 
 compileAstMnemonics(g : Grammar, prefix : string) -> string {
+	compileAstMnemonicsWithAliases(g, prefix, []);
+}
+
+qualifiedSyntaxRule(prefix : string, rule : string) -> string {
+	(if (prefix == "") "" else prefix + "_") + syntaxRuleName(rule);
+}
+
+compileAstMnemonicsWithAliases(g : Grammar, prefix : string, aliases : [Pair<string, int>]) -> string {
 	mnemonics = foldi(g.productions, "", \ix, acc, p -> {
 		name = syntaxRuleName(p.name);
-		acc + "\t" + blueprint("st_%name% = %ix0%;\n\tst_Expected_%name% = %ix1%;\n\tst_DidNotExpect%prefix%_%name% = %ix2%;\n",
+		acc + "\t" + blueprint("st_%name% = %ix0%;\n\tst_Expected_%name% = %ix1%;\n\tst_DidNotExpect%negated% = %ix2%;\n",
 			[
-				"prefix", prefix,
+				"negated", qualifiedSyntaxRule(prefix, p.name),
 				"name", name,
 				"ix0", i2s(ix*3+0),
 				"ix1", i2s(ix*3+1),
@@ -49,9 +59,8 @@ compileAstMnemonics(g : Grammar, prefix : string) -> string {
 			]
 		);
 	});
-	blueprint("export {\n%mnemonics%\n}\n", [
-		"mnemonics", mnemonics
-	]);
+	"export {\n" + mnemonics + "\n" + fold(aliases, "", \acc, a ->
+		acc + "\tst_DidNotExpect" + a.first + " = " + i2s(a.second) + ";\n") + "}\n";
 }
 
 compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string {
@@ -199,13 +208,16 @@ compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string {
 		import lingo/compiler/syntaxtree_types;
 		import %mnemo%;
 
+		% if hasDecls %
 		export {
 			%decls%
 		}
+		% endif %
 
 		%sdefs%
 		%mdefs%
 		", [
+		"hasDecls", b2s(decls != ""),
 		"decls", decls,
 		"sdefs", singledefs,
 		"mdefs", multidefs,
