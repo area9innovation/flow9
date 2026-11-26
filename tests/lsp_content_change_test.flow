@@ -1,0 +1,54 @@
+import formats/lsp;
+
+failures = ref 0;
+
+check(name : string, ok : bool) -> void {
+	if (!ok) {
+		println("FAIL: " + name);
+		failures := ^failures + 1;
+	}
+}
+
+edit(a : int, b : int, c : int, d : int, text : string) -> LspTextDocumentContentChangeEvent {
+	LspTextDocumentContentChangeEvent(LspRange(LspPosition(a, b), LspPosition(c, d)), -1, text);
+}
+
+main() {
+	iter(["\r\n", "\n", "\r"], \eol -> {
+		src = "abc" + eol + "😀de" + eol + "f";
+		check("multiline range, UTF-16 end column", lspApplyContentChangeEvent(edit(0, 1, 1, 2, "!"), src) == "a!de" + eol + "f");
+		check("clamp before EOL", lspApplyContentChangeEvent(edit(1, 3, 1, 2147483647, "!"), src) == "abc" + eol + "😀d!" + eol + "f");
+		check("clamp start and end independently", lspApplyContentChangeEvent(edit(0, 20, 1, 2, ""), src) == "abcde" + eol + "f");
+		check("past last line is EOF", lspApplyContentChangeEvent(edit(40, 0, 40, 0, "!"), src) == src + "!");
+	});
+	check("empty trailing line", lspApplyContentChangeEvent(edit(1, 4, 1, 7, "!"), "a\n") == "a\n!");
+	check("direct reversed event leaves text alone", lspApplyContentChangeEvent(edit(1, 0, 0, 1, "!"), "a\nb") == "a\nb");
+
+	check("maximum coordinate", json2LspPosition(parseJson("{\"line\":0,\"character\":2147483647}")) == Some(LspPosition(0, 2147483647)));
+	iter([JsonDouble(-2.0), JsonDouble(0.5), JsonDouble(2147483648.0), JsonString("1"), JsonNull()], \invalid -> {
+		check("invalid line", isNone(json2LspPosition(JsonObject([Pair("line", invalid), Pair("character", JsonDouble(0.0))]))));
+		check("invalid character", isNone(json2LspPosition(JsonObject([Pair("line", JsonDouble(0.0)), Pair("character", invalid)]))));
+	});
+
+	full = parseJson("{\"text\":\"\"}");
+	switch (json2LspTextDocumentContentChangeEvent(full)) {
+		None(): check("decode empty full replacement", false);
+		Some(e): {
+			check("full replacement", lspApplyContentChangeEvent(e, "abc") == "");
+			check("full replacement omits range", lspTextDocumentContentChangeEvent2Json(e) == full);
+		}
+	}
+	check("legacy bare text replacement", eitherMap(json2LspTextDocumentContentChangeEvent(JsonString("new")), \e -> lspApplyContentChangeEvent(e, "old"), "") == "new");
+	bad = parseJson("{\"text\":\"x\",\"range\":null}");
+	check("present invalid range is not full replacement", isNone(json2LspTextDocumentContentChangeEvent(bad)));
+	check("reversed range is not decoded", isNone(json2LspTextDocumentContentChangeEvent(lspTextDocumentContentChangeEvent2Json(edit(0, 2, 0, 1, "!")))));
+	valid = lspTextDocumentContentChangeEvent2Json(edit(0, 0, 0, 1, "Y"));
+	notification = \changes -> JsonObject([
+		Pair("textDocument", parseJson("{\"uri\":\"file:///example.flow\",\"version\":2}")), Pair("contentChanges", JsonArray(changes))
+	]);
+	check("ordered changes", eitherMap(json2LspDidChangeTextDocumentParams(notification([JsonString("abc"), valid])), \p ->
+		fold(p.contentChanges, "old", \src, e -> lspApplyContentChangeEvent(e, src)), "") == "Ybc");
+	check("reject whole batch if one range is invalid", isNone(json2LspDidChangeTextDocumentParams(notification([bad, valid]))));
+	if (^failures == 0) println("LSP content change tests passed");
+	quit(if (^failures == 0) 0 else 1);
+}
