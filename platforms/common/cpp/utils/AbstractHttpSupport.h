@@ -41,7 +41,12 @@ struct HttpRequest {
 
     bool save_to_file;
     bool create_only;
+    // Absolute destination captured at request start; empty if it could not be resolved.
+#ifdef _WIN32
+    std::wstring result_filename;
+#else
     std::string result_filename;
+#endif
 
     void *aux_data;
 

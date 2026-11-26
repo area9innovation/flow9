@@ -1,5 +1,6 @@
 """Run with python3 and a Qt runner built from these sources (optionally FLOWCPP).
-Use an xattr-capable filesystem and setfacl on Linux, or local transaction-capable NTFS on Windows.
+Use an xattr-capable filesystem and setfacl on Linux. The default Windows suite needs local
+transaction-capable NTFS; --windows-no-txf-dir DIR tests an unsupported ACL-bearing volume separately.
 """
 import argparse
 import os
@@ -16,8 +17,13 @@ from threading import Thread
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--jit', action='store_true', help='use the default JIT instead of interpreter GC stress')
-parser.add_argument('--windows-audit', action='store_true', help='also check an explicit audit rule (requires SACL access on the disposable NTFS fixture)')
+windows = parser.add_mutually_exclusive_group()
+windows.add_argument('--windows-audit', action='store_true', help='also check an explicit audit rule (requires SACL access on the disposable NTFS fixture)')
+windows.add_argument('--windows-no-txf-dir', type=Path, metavar='DIR',
+                     help='only test create/refused refresh in a writable directory on an ACL-bearing SMB share, ReFS or other volume without usable TxF')
 args = parser.parse_args()
+if args.windows_no_txf_dir and os.name != 'nt':
+    parser.error('--windows-no-txf-dir requires Windows')
 root = Path(__file__).resolve().parents[2]
 with tempfile.TemporaryDirectory() as tmp:
     work = Path(tmp)
@@ -42,11 +48,11 @@ with tempfile.TemporaryDirectory() as tmp:
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, directory=work))
     Thread(target=server.serve_forever, daemon=True).start()
 
-    def download(src, dest, headers=False, error=False, limit=False, defer_quit=False, legacy404=False, cache_target=''):
+    def download(src, dest, headers=False, error=False, limit=False, defer_quit=False, legacy404=False, cache_target='', next_cwd=''):
         cmd = [runner, '--batch', *([] if args.jit else ['--gc-stress-test']), bytecode, '--',
                f'url=http://127.0.0.1:{server.server_port}/{src.name}',
                f'dest={dest}', f'headers={int(headers)}', f'spool={spool}',
-               f'deferQuit={int(defer_quit)}', f'legacy404={int(legacy404)}', f'cacheTarget={cache_target}']
+               f'deferQuit={int(defer_quit)}', f'legacy404={int(legacy404)}', f'cacheTarget={cache_target}', f'nextCwd={next_cwd}']
         if limit:
             # Limit ordinary files in the runner child only. Large responses hit
             # the HTTP spool limit; small ones hit the destination stage limit.
@@ -68,18 +74,63 @@ with tempfile.TemporaryDirectory() as tmp:
         assert not list(spool.glob('flowtmp*')), list(spool.iterdir())
 
     src, dest = work / 'source', out / 'result'
+    save_error = 'Could not save downloaded file'
+    if args.windows_no_txf_dir:
+        with tempfile.TemporaryDirectory(dir=args.windows_no_txf_dir.resolve()) as folder:
+            target = Path(folder) / 'result'
+            src.write_bytes(b'first download')
+            download(src, target)
+            assert target.read_bytes() == b'first download'
+            with target.open('r+b') as writable:  # Ordinary write access is not the reason for refusal.
+                writable.write(b'first download')
+            src.write_bytes(b'refresh')
+            download(src, target, headers=True, error=save_error)
+            assert target.read_bytes() == b'first download' and set(Path(folder).iterdir()) == {target}
+        server.shutdown()
+        server.server_close()
+        print('Windows create/refused refresh test passed')
+        sys.exit(0)
+
+    other = work / 'other-cwd'
+    other.mkdir()
+    (other / 'cwd-marker').touch()
+    src.write_bytes(b'new download')
+    download(src, 'relative-new', headers=True, next_cwd=other)
+    assert (work / 'relative-new').read_bytes() == src.read_bytes() and not (other / 'relative-new').exists()
+
+    cached = work / 'relative-cached'
+    cached.write_bytes(b'A' * 150000)
+    (other / cached.name).write_bytes(b'C' * 150000)
+    src.write_bytes(b'B' * 150000)
+    download(src, cached.name, cache_target=cached, next_cwd=other)
+    assert cached.read_bytes() == src.read_bytes() and (other / cached.name).read_bytes() == b'C' * 150000
+
+    if os.name == 'posix':
+        # The filesystem interprets '..' after following the directory symlink.
+        child = work / 'tree' / 'child'
+        child.mkdir(parents=True)
+        (work / 'shortcut').symlink_to(child)
+        download(src, 'shortcut/../through-link', next_cwd=other)
+        assert (child.parent / 'through-link').read_bytes() == src.read_bytes() and not (work / 'through-link').exists()
+    elif os.name == 'nt' and work.drive.endswith(':'):
+        for leaf, spelling in [('drive-relative', work.drive + 'drive-relative'),
+                               ('drive-rooted', str(work / 'drive-rooted')[len(work.drive):])]:
+            download(src, spelling, next_cwd=other)
+            assert (work / leaf).read_bytes() == src.read_bytes() and not (other / leaf).exists()
+
     for i, data in enumerate([b'', b'\x00\xffA', b'\xff\xfe' + bytes(range(256)) * 4096 + b'!']):
         src.write_bytes(data)
         download(src, dest, headers=bool(i % 2))
         assert dest.read_bytes() == data
-    save_error = 'Could not save downloaded file'
     delayed = work / 'while-missing'
     delayed.write_bytes(b'response')
     peer = out / 'peer'
     download(delayed, peer, error=save_error)
     assert peer.read_bytes() == b'peer result'
     peer.unlink()
-    download(src, work / 'missing' / 'result', error=save_error)
+    (other / 'missing').mkdir()
+    download(src, 'missing/result', error=save_error, next_cwd=other)
+    assert not (other / 'missing' / 'result').exists()
     # Qt still delivers a response notification after a network error. Let that
     # notification run before quitting and check the original file is untouched.
     download(work / 'absent', dest, error=True, defer_quit=True)

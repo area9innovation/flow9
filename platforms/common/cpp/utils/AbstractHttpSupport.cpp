@@ -252,13 +252,34 @@ static bool writeAndCloseDownload(const HttpRequest &rq, FILE *out)
 static void setDownloadDestination(HttpRequest &rq, const unicode_string &name)
 {
     rq.save_to_file = true;
-    rq.result_filename = encodeUtf8(name);
-    // Only permit replacement if a destination could be observed at request start.
+    if (name.empty() || name.find(unicode_char(0)) != name.npos) return;
 #ifndef _WIN32
+    // Anchor the spelling, not the referent: the leaf may be missing and '..'
+    // following a symlink must still be interpreted by the filesystem.
+    if (name[0] != '/') {
+        std::vector<char> cwd(256);
+        while (!getcwd(cwd.data(), cwd.size())) {
+            if (errno != ERANGE) return;
+            cwd.resize(cwd.size() * 2);
+        }
+        if (cwd[0] != '/') return;
+        rq.result_filename = cwd.data();
+        if (rq.result_filename.back() != '/') rq.result_filename += '/';
+    }
+    rq.result_filename += encodeUtf8(name);
     struct stat st;
     rq.create_only = lstat(rq.result_filename.c_str(), &st) != 0;
 #else
-    rq.create_only = GetFileAttributesW(std::wstring(name.begin(), name.end()).c_str()) == INVALID_FILE_ATTRIBUTES;
+    // Let Win32 resolve drive-relative and rooted names against the current
+    // drive/directory. Retain the native spelling through publication.
+    std::wstring input(name.begin(), name.end());
+    // Allow an extended-length path without a second lookup against a mutable cwd.
+    std::vector<wchar_t> buffer(32768);
+    wchar_t *leaf = NULL;
+    DWORD n = GetFullPathNameW(input.c_str(), DWORD(buffer.size()), buffer.data(), &leaf);
+    if (!n || n >= buffer.size() || !leaf || wcschr(leaf, L':')) return;
+    rq.result_filename.assign(buffer.data(), n);
+    rq.create_only = GetFileAttributesW(rq.result_filename.c_str()) == INVALID_FILE_ATTRIBUTES;
 #endif
 }
 
@@ -266,7 +287,7 @@ static void setDownloadDestination(HttpRequest &rq, const unicode_string &name)
 static bool saveDownload(const HttpRequest &rq)
 {
     std::string path = rq.result_filename;
-    if (path.empty() || path.find('\0') != path.npos) return false;
+    if (path.empty()) return false;
     struct stat st;
     bool existing = lstat(path.c_str(), &st) == 0;
     if (existing) {
@@ -367,16 +388,8 @@ static bool updateAclDownload(const HttpRequest &rq, const std::wstring &path, c
 
 static bool saveDownload(const HttpRequest &rq)
 {
-    if (rq.result_filename.empty() || rq.result_filename.find('\0') != std::string::npos) return false;
-    unicode_string u = parseUtf8(rq.result_filename);
-    std::wstring name(u.begin(), u.end());
-    DWORD size = GetFullPathNameW(name.c_str(), 0, NULL, NULL);
-    if (!size) return false;
-    std::vector<wchar_t> buffer(size);
-    wchar_t *leaf = NULL;
-    DWORD n = GetFullPathNameW(name.c_str(), size, buffer.data(), &leaf);
-    if (!n || n >= size || !leaf || wcschr(leaf, L':')) return false;
-    std::wstring path(buffer.data(), n), dir(buffer.data(), size_t(leaf - buffer.data()));
+    const std::wstring &path = rq.result_filename;
+    if (path.empty()) return false;
 
     // Check the existing target without truncating it. A device/pipe is a
     // stream; a reparse point must not be replaced with a new directory entry.
@@ -400,6 +413,9 @@ static bool saveDownload(const HttpRequest &rq)
     }
 
     static std::atomic<unsigned> sequence(0);
+    size_t slash = path.find_last_of(L'\\');
+    if (slash == path.npos) return false;
+    const std::wstring dir = path.substr(0, slash + 1);
     std::wstring stage;
     for (unsigned i = 0; i < 128; ++i) {
         stage = dir + L".flow-download-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(++sequence);
@@ -428,7 +444,9 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
 
     if (rq && rq->save_to_file) {
         if (saveDownload(*rq)) {
+#ifdef FLOW_MMAP_HEAP
             RUNNER->InvalidateFileCache(rq->result_filename);
+#endif
             finishDownload(*rq, false, NULL, 0);
         } else {
             const char message[] = "Could not save downloaded file";
