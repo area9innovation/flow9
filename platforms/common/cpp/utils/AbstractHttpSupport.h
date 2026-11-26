@@ -51,6 +51,7 @@ struct HttpRequest {
     // Relative spellings are interpreted at this directory, even after chdir.
     ScopedFd result_dir{AT_FDCWD};
     std::string result_filename;
+    size_t result_split = std::string::npos; // optional bounded lookup via the retained ancestor
 #endif
 
     void *aux_data;

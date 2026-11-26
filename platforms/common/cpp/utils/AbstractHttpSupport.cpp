@@ -252,9 +252,9 @@ static bool writeAndCloseDownload(const HttpRequest &rq, FILE *out)
 #ifndef _WIN32
 static int openSearchDirectory(int base, const char *path)
 {
-#if defined(O_PATH)
+#if defined(O_PATH) && !defined(FLOW_TEST_NO_SEARCH_HANDLE)
     const int access = O_PATH;
-#elif defined(O_SEARCH)
+#elif defined(O_SEARCH) && !defined(FLOW_TEST_NO_SEARCH_HANDLE)
     const int access = O_SEARCH;
 #else
     const int access = O_RDONLY;
@@ -271,6 +271,17 @@ static bool anchorDownloadPath(ScopedFd &anchor, std::string &path)
     int fd = openSearchDirectory(AT_FDCWD, ".");
     if (fd < 0) {
         if (errno != EACCES) return false;
+        // A relative destination can have an openable parent even when '.'
+        // itself cannot be opened for reading. Pin it while the name is short.
+        size_t leaf = path.find_last_of('/') + 1;
+        if (leaf && leaf < path.size()) {
+            fd = openSearchDirectory(AT_FDCWD, path.substr(0, leaf).c_str());
+            if (fd >= 0) {
+                anchor.reset(fd);
+                path.erase(0, leaf);
+                return true;
+            }
+        }
         // Older kernels/SDKs may not provide search-only handles. Keep the
         // unlistable components relative to the nearest openable ancestor.
         std::vector<char> buf(256);
@@ -293,6 +304,50 @@ static bool anchorDownloadPath(ScopedFd &anchor, std::string &path)
     anchor.reset(fd);
     return true;
 }
+
+// When a directory can be searched but not opened, the fallback retains an
+// ancestor. The kernel may accept each half of a pathname but not the joined
+// syscall argument. Use a private, short-lived symlink for the first half.
+// Its target starts at the *held fd*, not a mutable absolute name or cwd.
+// No helper is left on disk while the HTTP request is pending.
+template<class Use>
+static bool withDownloadPath(const HttpRequest &rq, Use use)
+{
+    const int base = rq.result_dir.get();
+    const std::string &path = rq.result_filename;
+    if (rq.result_split == path.npos) return use(base, path);
+#ifdef __linux__
+    const std::string root = "/proc/self/fd/" + std::to_string(base);
+    struct stat held, via_proc;
+    if (fstat(base, &held) || stat(root.c_str(), &via_proc) ||
+        held.st_dev != via_proc.st_dev || held.st_ino != via_proc.st_ino) return false;
+
+    if (temp_file_path.empty() || temp_file_path[0] != '/') return false;
+    // As with /tmp, only the owner should be able to rename a private entry.
+    // stat and mkdtemp need search/write access here, not directory listing.
+    struct stat tmp;
+    if (stat(temp_file_path.c_str(), &tmp) || !S_ISDIR(tmp.st_mode) ||
+        (tmp.st_uid != 0 && tmp.st_uid != geteuid()) ||
+        ((tmp.st_mode & 0022) && !(tmp.st_mode & S_ISVTX))) return false;
+
+    std::string dir = temp_file_path + "/flowtmp-path-XXXXXX";
+    const std::string target = root + "/" + path.substr(0, rq.result_split);
+    const std::string name = "p" + path.substr(rq.result_split);
+    if (!mkdtemp(&dir[0])) return false;
+    struct RemoveAt {
+        int base; const char *name; int flags;
+        ~RemoveAt() { unlinkat(base, name, flags); }
+    } remove_dir{AT_FDCWD, dir.c_str(), AT_REMOVEDIR};
+    ScopedFd scratch;
+    struct stat private_dir;
+    if (!openStageDirectory(AT_FDCWD, dir, scratch) || fstat(scratch.get(), &private_dir) ||
+        private_dir.st_uid != geteuid() || symlinkat(target.c_str(), scratch.get(), "p")) return false;
+    RemoveAt remove_link{scratch.get(), "p", 0};
+    return use(scratch.get(), name);
+#else
+    return false;
+#endif
+}
 #endif
 
 static void setDownloadDestination(HttpRequest &rq, const unicode_string &name)
@@ -301,10 +356,24 @@ static void setDownloadDestination(HttpRequest &rq, const unicode_string &name)
     if (name.empty() || name.find(unicode_char(0)) != name.npos) return;
 #ifndef _WIN32
     std::string path = encodeUtf8(name);
+    const size_t original = path.size();
     if (name[0] != '/' && !anchorDownloadPath(rq.result_dir, path)) return;
     rq.result_filename.swap(path);
     struct stat st;
-    rq.create_only = fstatat(rq.result_dir.get(), rq.result_filename.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0;
+    auto inspect = [&](int base, const std::string &p) {
+        rq.create_only = fstatat(base, p.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0;
+        return !rq.create_only || errno == ENOENT;
+    };
+    if (!inspect(rq.result_dir.get(), rq.result_filename)) {
+        // Only shorten the expanded fallback, never reinterpret a caller's
+        // already-invalid overlong spelling. Split inside the captured prefix.
+        const size_t size = rq.result_filename.size();
+        if (errno == ENAMETOOLONG && rq.result_dir.get() >= 0 && size > original) {
+            rq.result_split = rq.result_filename.rfind('/', std::min(size / 2, size - original - 1));
+            if (rq.result_split != std::string::npos && withDownloadPath(rq, inspect)) return;
+        }
+        rq.result_filename.clear(); // unknown is not the same as initially absent
+    }
 #else
     // Let Win32 resolve drive-relative and rooted names against the current
     // drive/directory. Retain the native spelling through publication.
@@ -320,11 +389,10 @@ static void setDownloadDestination(HttpRequest &rq, const unicode_string &name)
 }
 
 #ifndef _WIN32
-static bool saveDownload(const HttpRequest &rq)
+static bool saveDownloadAt(const HttpRequest &rq, int start, const std::string &original)
 {
-    std::string path = rq.result_filename;
-    if (path.empty()) return false;
-    int base = rq.result_dir.get();
+    std::string path = original;
+    int base = start;
     ScopedFd parent;
     struct stat st;
     bool existing;
@@ -351,7 +419,7 @@ static bool saveDownload(const HttpRequest &rq)
         if (!S_ISLNK(st.st_mode)) break;
         // Check the original spelling against the filesystem's own link limit,
         // including links in parent components, before walking the leaf links.
-        if (!hops && fstatat(rq.result_dir.get(), rq.result_filename.c_str(), &st, 0) != 0) return false;
+        if (!hops && fstatat(start, original.c_str(), &st, 0) != 0) return false;
         if (hops == 40) return false;
         std::vector<char> target(256);
         ssize_t n;
@@ -379,6 +447,13 @@ static bool saveDownload(const HttpRequest &rq)
             close(source);
             return ok;
         });
+}
+
+static bool saveDownload(const HttpRequest &rq)
+{
+    return !rq.result_filename.empty() && withDownloadPath(rq, [&](int base, const std::string &path) {
+        return saveDownloadAt(rq, base, path);
+    });
 }
 #else
 static bool writeDownloadHandle(const HttpRequest &rq, HANDLE h)

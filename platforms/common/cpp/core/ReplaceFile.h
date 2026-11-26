@@ -57,15 +57,10 @@ static bool makeStageDirectory(int base, std::string &dir)
     return false;
 }
 
-// existing describes the regular file the caller inspected. A null pointer
-// means create only, even if another writer publishes while the stage is open.
-template<class Write, class Prepare>
-static bool replaceRegularFile(int base, const std::string &dest, const struct stat *existing, Write write, Prepare prepare)
+// Open a newly created private directory, including under an
+// owner-restrictive umask. Only use the opened fd for entries inside it.
+static bool openStageDirectory(int base, const std::string &dir, ScopedFd &directory)
 {
-    // A private staging directory lets open apply the ordinary creation mode and
-    // the caller's umask without exposing intermediate data or changing the umask.
-    std::string dir = dest.substr(0, dest.find_last_of('/') + 1);
-    if (!makeStageDirectory(base, dir)) return false;
     struct stat stage;
     bool ready = fstatat(base, dir.c_str(), &stage, AT_SYMLINK_NOFOLLOW) == 0 && S_ISDIR(stage.st_mode);
     if (ready) {
@@ -75,7 +70,7 @@ static bool replaceRegularFile(int base, const std::string &dest, const struct s
         ready = (stage.st_mode & 07777) == mode ||
             fchmodat(base, dir.c_str(), mode, AT_SYMLINK_NOFOLLOW) == 0;
     }
-    ScopedFd directory(ready ? openat(base, dir.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : -1);
+    directory.reset(ready ? openat(base, dir.c_str(), O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC) : -1);
     struct stat opened;
     ready = directory.get() >= 0 && fstat(directory.get(), &opened) == 0 &&
         opened.st_dev == stage.st_dev && opened.st_ino == stage.st_ino &&
@@ -92,6 +87,19 @@ static bool replaceRegularFile(int base, const std::string &dest, const struct s
         } else ready = errno == ENOENT;
     }
 #endif
+    return ready;
+}
+
+// existing describes the regular file the caller inspected. A null pointer
+// means create only, even if another writer publishes while the stage is open.
+template<class Write, class Prepare>
+static bool replaceRegularFile(int base, const std::string &dest, const struct stat *existing, Write write, Prepare prepare)
+{
+    // Let open apply the ordinary creation mode and umask inside a private stage.
+    std::string dir = dest.substr(0, dest.find_last_of('/') + 1);
+    if (!makeStageDirectory(base, dir)) return false;
+    ScopedFd directory;
+    bool ready = openStageDirectory(base, dir, directory);
     int fd = ready ? openat(directory.get(), "data", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, existing ? 0600 : 0666) : -1;
     bool ok = false;
     if (fd >= 0) {

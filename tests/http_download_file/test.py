@@ -1,6 +1,8 @@
 """Run with python3 and a Qt runner built from these sources (optionally FLOWCPP).
 Use an xattr-capable filesystem and setfacl on Linux. The default Windows suite needs local
 transaction-capable NTFS; --windows-no-txf-dir DIR tests an unsupported ACL-bearing volume separately.
+On Linux, build with qmake DEFINES+=FLOW_TEST_NO_SEARCH_HANDLE and pass --no-search-handle
+to also check the refusal when the long-path fallback has no writable temporary directory.
 """
 import argparse
 import os
@@ -17,18 +19,21 @@ from threading import Thread
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--jit', action='store_true', help='use the default JIT instead of interpreter GC stress')
+parser.add_argument('--no-search-handle', action='store_true', help='expect a Linux runner built with FLOW_TEST_NO_SEARCH_HANDLE (run unprivileged with procfs)')
 windows = parser.add_mutually_exclusive_group()
 windows.add_argument('--windows-audit', action='store_true', help='also check an explicit audit rule (requires SACL access on the disposable NTFS fixture)')
 windows.add_argument('--windows-no-txf-dir', type=Path, metavar='DIR',
                      help='only test create/refused refresh in a writable directory on an ACL-bearing SMB share, ReFS or other volume without usable TxF')
 args = parser.parse_args()
+if args.no_search_handle and (not sys.platform.startswith('linux') or os.geteuid() == 0 or not Path('/proc/self/fd').is_dir()):
+    parser.error('--no-search-handle needs an unprivileged Linux process with procfs')
 if args.windows_no_txf_dir and os.name != 'nt':
     parser.error('--windows-no-txf-dir requires Windows')
 root = Path(__file__).resolve().parents[2]
 with tempfile.TemporaryDirectory() as tmp:
     work = Path(tmp)
     spool = work / 'spool'
-    spool.mkdir()
+    spool.mkdir(mode=0o700)
     out = work / 'output'
     out.mkdir()
     bytecode = work / 'download.bytecode'
@@ -119,10 +124,12 @@ with tempfile.TemporaryDirectory() as tmp:
         path_max = os.pathconf(work, 'PC_PATH_MAX')
         if path_max > 0:
             deep = short = work.resolve()
+            components = []
             while len(os.fsencode(deep)) < path_max - 41:
                 component = 'd' * min(120, path_max - 40 - len(os.fsencode(deep)) - 1)
                 deep, short = deep / component, short / component
                 short.mkdir()
+                components.append(short)
                 if deep == short and len(os.fsencode(deep)) >= path_max // 2:
                     short = work / 'deep-alias'
                     short.symlink_to(deep, target_is_directory=True)
@@ -160,6 +167,71 @@ with tempfile.TemporaryDirectory() as tmp:
             finally:
                 short.chmod(0o700)
             assert set(os.listdir(short)) == {leaf, alias, marker, 'sub', 'dangling', 'peer'}
+
+            if sys.platform.startswith('linux') and os.geteuid() != 0 and probe:
+                # Now even the suffix below the nearest readable directory is too long.
+                # Keep using the test driver's short alias; the runner only gets the leaf.
+                long_leaf = 'f' * 200
+                assert len(os.fsencode((deep / long_leaf).relative_to(work.resolve()))) >= path_max, 'use a shorter TMPDIR for the long-suffix fixture'
+                (work / marker).touch()  # also detect the fallback's ancestor fd in the callback
+                for directory in components:
+                    directory.chmod(0o300)
+                try:
+                    target = short / long_leaf
+                    target.write_bytes(b'ordinary creation')
+                    target.unlink()
+                    for headers in (False, True):
+                        src.write_bytes(b'A' * 150000)
+                        download(src, long_leaf, headers=headers, defer_quit=True, **location)
+                        assert target.read_bytes() == src.read_bytes() and not (other / long_leaf).exists()
+                        (other / long_leaf).write_bytes(b'C' * 150000)
+                        src.write_bytes(b'B' * 150000)
+                        download(src, long_leaf, headers=headers, cache_target=target, **location)
+                        assert target.read_bytes() == src.read_bytes() and (other / long_leaf).read_bytes() == b'C' * 150000
+                        src.write_bytes(b'x' * 4096)
+                        download(src, long_leaf, headers=headers, limit=True, error=save_error, defer_quit=True, **location)
+                        assert target.read_bytes() == b'B' * 150000
+                        target.unlink()
+                        (other / long_leaf).unlink()
+
+                    peer = target
+                    download(delayed, long_leaf, headers=True, error=save_error, defer_quit=True, **location)
+                    assert target.read_bytes() == b'peer result' and not (other / long_leaf).exists()
+                    target.unlink()
+                    target.symlink_to(alias)  # long name -> two existing links -> regular file
+                    download(src, long_leaf, **location)
+                    assert target.is_symlink() and (short / leaf).read_bytes() == src.read_bytes()
+                    target.unlink()
+
+                    # This writable child can itself be opened and pinned at request start.
+                    download(src, 'sub/' + long_leaf, **location)
+                    assert (short / 'sub' / long_leaf).read_bytes() == src.read_bytes()
+                    (short / 'sub' / long_leaf).unlink()
+
+                    spool.chmod(0o300)  # The shortcut need not list even its temp parent.
+                    try:
+                        download(src, long_leaf, **location)
+                        assert target.read_bytes() == src.read_bytes()
+                    finally:
+                        spool.chmod(0o700)
+                    assert not list(spool.iterdir())
+
+                    # A small response needs no HTTP spool. Only the fallback shortcut
+                    # needs a writable TMPDIR; the ordinary handle must still work.
+                    target.write_bytes(b'original')
+                    spool.chmod(0o500)
+                    try:
+                        download(src, long_leaf, error=save_error if args.no_search_handle else False,
+                                 headers=True, defer_quit=True, **location)
+                        assert target.read_bytes() == (b'original' if args.no_search_handle else src.read_bytes())
+                    finally:
+                        spool.chmod(0o700)
+                    target.unlink()
+                finally:
+                    for directory in components:
+                        directory.chmod(0o700)
+                    (work / marker).unlink()
+                assert set(os.listdir(short)) == {leaf, alias, marker, 'sub', 'dangling', 'peer'}
     elif os.name == 'nt' and work.drive.endswith(':'):
         for leaf, spelling in [('drive-relative', work.drive + 'drive-relative'),
                                ('drive-rooted', str(work / 'drive-rooted')[len(work.drive):])]:
