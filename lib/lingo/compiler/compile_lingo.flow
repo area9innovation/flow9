@@ -7,20 +7,25 @@ import lingo/compiler/nested_choices;
 import lingo/compiler/compile_ast_functions;
 import lingo/pegaction;
 import text/blueprint;
+import text/serialize;
 import loop;
 import fs/filesystem;
 
 export {
 	// Returns an error, and then the code for a parser that parses the grammar
 	compileSyntaxWithGrammar(lingofilename : string, lingo : string, options : [CompileSyntaxWithGrammarOption]) -> Pair<string, string>;
-	CompileSyntaxWithGrammarOption ::= CswgoUseDirectSourceAccess, CswgoInnerFunctionsPrefix, CswgoProfiling;
+	CompileSyntaxWithGrammarOption ::= CswgoUseDirectSourceAccess, CswgoInnerFunctionsPrefix, CswgoProfiling, CswgoLegacyMnemonics;
 		CswgoUseDirectSourceAccess(value : bool);
 		CswgoInnerFunctionsPrefix(value : string);
 		CswgoProfiling(value : bool);
+		// Published namespace for the regular 3*i+2 IDs and exceptions in the parser's namespace.
+		CswgoLegacyMnemonics(prefix : string, negativeIds : [Pair<string, int>]);
 
 	// The same, except you might have parsed the grammar already
 	compileSyntaxGrammarToFlow(gr : Grammar, options : [CompileSyntaxWithGrammarOption]) ->  Pair<string, string>;
 }
+
+SyntaxRuleNames(parser : (string) -> string, negated : (string) -> string);
 
 compileSyntaxWithGrammar(lingofilename : string, lingo : string, options : [CompileSyntaxWithGrammarOption]) -> Pair<string, string> {
 	r = runPeg(lingo, pegOps4Lingo, makeTree(), defaultPegActions);
@@ -60,29 +65,37 @@ compileSyntaxGrammarToFlow(gr : Grammar, options : [CompileSyntaxWithGrammarOpti
 		printGrammar(grammar);
 	}
 
-	astfile = getUrlParameter("flowparserast");
-	if (astfile != "") {
-		astMnemoFile = changeFileExt(astfile, "") + "_mnemonics.flow";
-		rule_prefix = extractStruct(options, CswgoInnerFunctionsPrefix("source")).value;
-		astMnemonics = compileAstMnemonics(grammar, rule_prefix);
-		setFileContent(astMnemoFile, astMnemonics);
-		astfuns = compileAstFunctions(grammar, astMnemoFile);
-		r = setFileContent(astfile, astfuns);
-		println(if (r) "Saved " + astfile + " with AST functions" else "ERROR: Could not save " + astfile + " with AST functions")
+	prefix = extractStruct(options, CswgoInnerFunctionsPrefix(syntaxRuleName(grammar.productions[0].name))).value;
+	legacy = extractStruct(options, CswgoLegacyMnemonics(prefix, []));
+	identifier = \s -> s != "" && deserializeIdentifier(s).first == s;
+	parserName = \r -> qualifiedSyntaxRule(prefix, r);
+	mnemonics = if (containsStruct(options, legacy) && !identifier(legacy.prefix)) {
+		Pair("Invalid legacy mnemonic prefix: " + legacy.prefix, "");
+	} else if (exists(legacy.negativeIds, \a -> !identifier(a.first) || !exists(grammar.productions, \p -> syntaxRuleName(p.name) == a.first))) {
+		Pair("Legacy negative ID refers to an unknown rule; check the mnemonic table against the normalized grammar", "");
+	} else {
+		checkedAstMnemonics(grammar, legacy.prefix, map(legacy.negativeIds, \a -> Pair(parserName(a.first), a.second)));
 	}
+	if (mnemonics.first != "") mnemonics else {
+		negative = pairs2tree(legacy.negativeIds);
+		names = SyntaxRuleNames(parserName, \r ->
+			qualifiedSyntaxRule(if (containsKeyTree(negative, syntaxRuleName(r))) prefix else legacy.prefix, r));
+		astfile = getUrlParameter("flowparserast");
+		if (astfile != "") {
+			astMnemoFile = changeFileExt(astfile, "") + "_mnemonics.flow";
+			setFileContent(astMnemoFile, mnemonics.second);
+			astfuns = compileAstFunctions(grammar, astMnemoFile);
+			r = setFileContent(astfile, astfuns);
+			println(if (r) "Saved " + astfile + " with AST functions" else "ERROR: Could not save " + astfile + " with AST functions")
+		}
 
-	code = if (extractStruct(options, CswgoUseDirectSourceAccess(false)).value) syntaxGrammar2codeB(grammar, options) else syntaxGrammar2code(grammar, options);
-	Pair("", code);
+		code = if (extractStruct(options, CswgoUseDirectSourceAccess(false)).value) syntaxGrammar2codeB(grammar, options) else syntaxGrammar2code(grammar, options, names);
+		Pair("", code);
+	}
 }
 
-syntaxGrammar2code(g : Grammar, options : [CompileSyntaxWithGrammarOption]) -> string {
-	prefix = {
-		prefix = extractStruct(options, CswgoInnerFunctionsPrefix(g.productions[0].name)).value;
-		if (prefix == "") "" else prefix + "_";
-	}
-	ruleName = \n -> {
-		prefix + syntaxRuleName(n);
-	}
+syntaxGrammar2code(g : Grammar, options : [CompileSyntaxWithGrammarOption], names : SyntaxRuleNames) -> string {
+	ruleName = names.parser;
 
 	profiling = extractStruct(options, CswgoProfiling(isUrlParameterTrue("flowparserprofile"))).value;
 	options2 = replaceStruct(options, CswgoProfiling(profiling));
@@ -142,7 +155,7 @@ syntaxGrammar2code(g : Grammar, options : [CompileSyntaxWithGrammarOption]) -> s
 
 
 	foldi(g.productions, top, \i, acc, p -> {
-		acc + syntaxProduction2code(g, p, lookupTreeDef(cacheIndexMap, i, -1), options2) + "\n\n";
+		acc + syntaxProduction2code(g, p, lookupTreeDef(cacheIndexMap, i, -1), options2, names) + "\n\n";
 	});
 }
 
@@ -216,25 +229,18 @@ syntaxGrammar2codeB(g : Grammar, options : [CompileSyntaxWithGrammarOption]) -> 
 	});
 }
 
-syntaxProduction2code(g : Grammar, p : Production, cacheIndex : int, options : [CompileSyntaxWithGrammarOption]) -> string {
+syntaxProduction2code(g : Grammar, p : Production, cacheIndex : int, options : [CompileSyntaxWithGrammarOption], names : SyntaxRuleNames) -> string {
 	profiling = extractStruct(options, CswgoProfiling(false)).value;
-	prefix = {
-		prefix = extractStruct(options, CswgoInnerFunctionsPrefix(g.productions[0].name)).value;
-		if (prefix == "") "" else prefix + "_";
-	}
-	ruleName = \n -> {
-		prefix + syntaxRuleName(n);
-	}
 	nc = length(p.choices);
 //		Production(name : string, caching : bool, type : PegType, choices : [Seq]);
 
 	name0 = syntaxRuleName(p.name);
-	name = ruleName(p.name);
+	name = names.parser(p.name);
 
 	body = if (nc == 0) {
 		"SyntaxTree(st_" + name0 + ", 0, acc.i, acc.i, []);"
 	} else if (nc == 1) {
-		syntaxSequence2code(g, name0, 0, p.choices[0].seq, false, ruleName);
+		syntaxSequence2code(g, name0, 0, p.choices[0].seq, false, names);
 	} else {
 		"i = acc.i;\n" + foldi(reverseA(p.choices),
 			"SyntaxTree(st_Expected_" + name0 + ", -1, i, i, [])", \i, acc, c -> {
@@ -252,7 +258,7 @@ syntaxProduction2code(g : Grammar, p : Production, cacheIndex : int, options : [
 				}
 				",
 				["i", i2s(j),
-				"seq", syntaxSequence2code(g, name0, j, c.seq, true, ruleName),
+				"seq", syntaxSequence2code(g, name0, j, c.seq, true, names),
 				"choices", acc]
 			);
 		});
@@ -441,10 +447,10 @@ numSyntaxProductionResults(g : Grammar, p : Production) -> int {
 	}
 }
 
-syntaxSequence2code(g : Grammar, name : string, i : int, s : [Parsing], inchoice : bool, ruleName : (string) -> string) -> string {
+syntaxSequence2code(g : Grammar, name : string, i : int, s : [Parsing], inchoice : bool, names : SyntaxRuleNames) -> string {
 	if (length(s) == 1 && isSameStructType(s[0], Rule(""))) {
 		// A single rule only - we do not need to keep the intermediate result
-		syntaxParsing2code(g, s[0], "c0", 0, inchoice, ruleName);
+		syntaxParsing2code(g, s[0], "c0", 0, inchoice, names);
 	} else {
 		args = strGlue(filter(mapi(s, \j, p -> {
 			nr = numSyntaxResults(g, p);
@@ -458,7 +464,7 @@ syntaxSequence2code(g : Grammar, name : string, i : int, s : [Parsing], inchoice
 		+ foldi(reverseA(s),
 			"SyntaxTree(st_" + name + ", " + i2s(i) + ", i, acc.i, [" + args + "]);",
 			\j, acc, p -> {
-				syntaxParsing2code(g, p, acc, length(s) - j - 1, inchoice, ruleName)
+				syntaxParsing2code(g, p, acc, length(s) - j - 1, inchoice, names)
 			}
 		);
 
@@ -489,7 +495,8 @@ syntaxSequence2codeB(g : Grammar, name : string, i : int, s : [Parsing], inchoic
 	}
 }
 
-syntaxParsing2code(g : Grammar, p : Parsing, seq : string, i : int, inchoice : bool, ruleName : (string) -> string) -> string {
+syntaxParsing2code(g : Grammar, p : Parsing, seq : string, i : int, inchoice : bool, names : SyntaxRuleNames) -> string {
+	ruleName = names.parser;
 	switch (p : Parsing) {
 		Term(t): {
 			if (inchoice) {
@@ -572,7 +579,7 @@ syntaxParsing2code(g : Grammar, p : Parsing, seq : string, i : int, inchoice : b
 			}
 		}
 		IRule(ir): {
-			syntaxParsing2code(g, Rule(g.productions[ir].name), seq, i, inchoice, ruleName);
+			syntaxParsing2code(g, Rule(g.productions[ir].name), seq, i, inchoice, names);
 		}
 		Opt(t): {
 			switch (t) {
@@ -599,7 +606,7 @@ syntaxParsing2code(g : Grammar, p : Parsing, seq : string, i : int, inchoice : b
 					]);
 				}
 				IRule(ir): {
-					syntaxParsing2code(g, Opt(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+					syntaxParsing2code(g, Opt(Rule(g.productions[ir].name)), seq, i, inchoice, names);
 				}
 				default: "TODO 1: " + toString(p);
 			}
@@ -663,13 +670,13 @@ syntaxParsing2code(g : Grammar, p : Parsing, seq : string, i : int, inchoice : b
 					}
 				}
 				IRule(ir): {
-					syntaxParsing2code(g, Star(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+					syntaxParsing2code(g, Star(Rule(g.productions[ir].name)), seq, i, inchoice, names);
 				}
 				CutDown(ir): {
-					syntaxParsing2code(g, Star(ir), seq, i, inchoice, ruleName);
+					syntaxParsing2code(g, Star(ir), seq, i, inchoice, names);
 				}
 				CutUp(ir): {
-					syntaxParsing2code(g, Star(ir), seq, i, inchoice, ruleName);
+					syntaxParsing2code(g, Star(ir), seq, i, inchoice, names);
 				}
 				default: "TODO 3: " + toString(p);
 			}
@@ -751,7 +758,7 @@ syntaxParsing2code(g : Grammar, p : Parsing, seq : string, i : int, inchoice : b
 					}
 				}
 				IRule(ir): {
-					syntaxParsing2code(g, Plus(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+					syntaxParsing2code(g, Plus(Rule(g.productions[ir].name)), seq, i, inchoice, names);
 				}
 				default: "TODO 4: " + toString(p);
 			}
@@ -801,23 +808,24 @@ syntaxParsing2code(g : Grammar, p : Parsing, seq : string, i : int, inchoice : b
 							c%i% = do_parse_%r%(acc);
 							if (c%i%.choice == -1) {
 								%seq%
-							} else SyntaxTree(st_DidNotExpect%r%, -1, %i%, acc.i, []);",
+							} else SyntaxTree(st_DidNotExpect%negated%, -1, %i%, acc.i, []);",
 							["i", i2s(i),
+							"negated", names.negated(r),
 							"r", ruleName(r),
 							"seq", seq
 						]);
 					}
 				}
 				IRule(ir): {
-					syntaxParsing2code(g, Negation(Rule(g.productions[ir].name)), seq, i, inchoice, ruleName);
+					syntaxParsing2code(g, Negation(Rule(g.productions[ir].name)), seq, i, inchoice, names);
 				}
 				default: "TODO 5: " + toString(p);
 			}
 		}
-		BindResult(__, r): syntaxParsing2code(g, r, seq, i, inchoice, ruleName);
-		BindMatched(__, r): syntaxParsing2code(g, r, seq, i, inchoice, ruleName);
-		CutDown(r): syntaxParsing2code(g, r, seq, i, inchoice, ruleName);
-		CutUp(r): syntaxParsing2code(g, r, seq, i, inchoice, ruleName);
+		BindResult(__, r): syntaxParsing2code(g, r, seq, i, inchoice, names);
+		BindMatched(__, r): syntaxParsing2code(g, r, seq, i, inchoice, names);
+		CutDown(r): syntaxParsing2code(g, r, seq, i, inchoice, names);
+		CutUp(r): syntaxParsing2code(g, r, seq, i, inchoice, names);
 		default: "TODO 6: " + toString(p);
 	}
 }
@@ -1154,21 +1162,25 @@ syntaxParsing2codeB(g : Grammar, p : Parsing, seq : string, i : int, inchoice : 
 	}
 }
 
+// Keep CR in the comparison, but don't put a raw carriage return in generated source.
+syntaxTermComment(term : string) -> string {
+	if (term == "*/") "/* * / */" else " /* " + strReplace(term, "\r", "\\r") + " */";
+}
+
 // Past the end of the input, getCharCodeAt gives 0 on some targets and -1 on others.
 // So the code that compares with 0 checks first that the character is there.
-
 makeStringAt(term : string) -> string {
 	n = strlen(term);
 	if (n == 0) {
 		"true"
 	} else if (n == 1) {
 		(if (getCharCodeAt(term, 0) == 0) "acc.i < acc.length && " else "")
-		+ "getCharCodeAt(acc.input, acc.i) == " + i2s(getCharCodeAt(term, 0)) + " /* " + term + " */"
+		+ "getCharCodeAt(acc.input, acc.i) == " + i2s(getCharCodeAt(term, 0)) + syntaxTermComment(term)
 	} else if (n == 2) {
 		(if (getCharCodeAt(term, 0) == 0 || getCharCodeAt(term, 1) == 0) "acc.i + 1 < acc.length && " else "")
 		+ "getCharCodeAt(acc.input, acc.i) == " + i2s(getCharCodeAt(term, 0)) +
 		" && getCharCodeAt(acc.input, acc.i + 1) == " + i2s(getCharCodeAt(term, 1))
-		+ (if (term != "*/") " /* " + term + " */" else "/* * / */")
+		+ syntaxTermComment(term)
 	} else {
 		// "strContainsAt(acc.input, acc.i, " + toString(term) + ")"
 		"strRangeIndexOf(acc.input, " + toString(term) + ", acc.i, acc.i + " + i2s(strlen(term)) + ") == acc.i";
@@ -1187,10 +1199,10 @@ makeStringAtB(term : string) -> string {
 	if (n == 0) {
 		"true"
 	} else if (n == 1) {
-		"cc() == " + i2s(getCharCodeAt(term, 0)) + " /* " + term + " */"
+		"cc() == " + i2s(getCharCodeAt(term, 0)) + syntaxTermComment(term)
 	} else if (n == 2) {
 		"cc() == " + i2s(getCharCodeAt(term, 0)) + " && cc2(1) == " + i2s(getCharCodeAt(term, 1))
-		+ (if (term != "*/") " /* " + term + " */" else "/* * / */")
+		+ syntaxTermComment(term)
 	} else {
 		"cmpB(" + toString(term) + ")";
 	}

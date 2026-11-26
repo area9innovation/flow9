@@ -17,6 +17,10 @@ export {
 	// AST constructed by the compiled parsers.
 	compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string;
 	compileAstMnemonics(g : Grammar, prefix : string) -> string;
+	compileAstMnemonicsWithAliases(g : Grammar, prefix : string, aliases : [Pair<string, int>]) -> string;
+	// Error and source, respectively. No source is returned for an invalid table.
+	checkedAstMnemonics(g : Grammar, prefix : string, aliases : [Pair<string, int>]) -> Pair<string, string>;
+	qualifiedSyntaxRule(prefix : string, rule : string) -> string;
 	// Convert a name of a rule to something that works. Basically replaces $ with __
 	syntaxRuleName(s : string) -> string;
 }
@@ -37,21 +41,46 @@ RuleUse(
 );
 
 compileAstMnemonics(g : Grammar, prefix : string) -> string {
-	mnemonics = foldi(g.productions, "", \ix, acc, p -> {
-		name = syntaxRuleName(p.name);
-		acc + "\t" + blueprint("st_%name% = %ix0%;\n\tst_Expected_%name% = %ix1%;\n\tst_DidNotExpect%prefix%_%name% = %ix2%;\n",
-			[
-				"prefix", prefix,
-				"name", name,
-				"ix0", i2s(ix*3+0),
-				"ix1", i2s(ix*3+1),
-				"ix2", i2s(ix*3+2)
-			]
-		);
+	compileAstMnemonicsWithAliases(g, prefix, []);
+}
+
+qualifiedSyntaxRule(prefix : string, rule : string) -> string {
+	(if (prefix == "") "" else prefix + "_") + syntaxRuleName(rule);
+}
+
+compileAstMnemonicsWithAliases(g : Grammar, prefix : string, aliases : [Pair<string, int>]) -> string {
+	checkedAstMnemonics(g, prefix, aliases).second;
+}
+
+firstRepeatedMnemonicKey(keys : [?]) -> Maybe<?> {
+	seen = ref makeSet();
+	find(keys, \key -> {
+		if (containsSet(^seen, key)) true else {
+			seen := insertSet(^seen, key);
+			false;
+		}
 	});
-	blueprint("export {\n%mnemonics%\n}\n", [
-		"mnemonics", mnemonics
-	]);
+}
+
+checkedAstMnemonics(g : Grammar, prefix : string, aliases : [Pair<string, int>]) -> Pair<string, string> {
+	regular = mapiConcat(g.productions, \ix, p -> {
+		name = syntaxRuleName(p.name);
+		[Pair("st_" + name, ix*3), Pair("st_Expected_" + name, ix*3+1),
+			Pair("st_DidNotExpect" + qualifiedSyntaxRule(prefix, p.name), ix*3+2)];
+	});
+	extra = map(aliases, \a -> Pair("st_DidNotExpect" + a.first, a.second));
+	// Check exactly the declarations we will emit. Distinct prefixes need not
+	// give distinct exports (Expr + Token_End and Expr_Token + End).
+	duplicate = firstRepeatedMnemonicKey(map(concat(regular, extra), firstOfPair));
+	if (isSome(duplicate)) Pair("Duplicate mnemonic export: " + either(duplicate, ""), "")
+	else if (exists(aliases, \a -> a.second >= 0)) Pair("Legacy mnemonic IDs must be negative", "")
+	else switch (firstRepeatedMnemonicKey(map(aliases, secondOfPair))) {
+		Some(id): Pair("Duplicate legacy mnemonic ID: " + i2s(id), "");
+		None(): {
+			line = \d : Pair<string, int> -> "\t" + d.first + " = " + i2s(d.second) + ";\n";
+			Pair("", "export {\n" + concatStrings(map(regular, line)) + "\n" + concatStrings(map(extra, line)) + "}\n");
+		}
+	}
 }
 
 compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string {
@@ -199,13 +228,16 @@ compileAstFunctions(g : Grammar, mnemonicsFile : string) -> string {
 		import lingo/compiler/syntaxtree_types;
 		import %mnemo%;
 
+		% if hasDecls %
 		export {
 			%decls%
 		}
+		% endif %
 
 		%sdefs%
 		%mdefs%
 		", [
+		"hasDecls", b2s(decls != ""),
 		"decls", decls,
 		"sdefs", singledefs,
 		"mdefs", multidefs,

@@ -31,6 +31,27 @@ TODO:
 - Consider to producing the AST types automatically from the grammar
 */
 
+// A published grammar may pin its pre-existing names/IDs. Renaming or combining
+// grammars creates a different namespace, so don't apply its standalone table there.
+syntaxCompilerOptions(files : [string], prefix : string) -> Maybe<[CompileSyntaxWithGrammarOption]> {
+	if (prefix != "") Some([CswgoInnerFunctionsPrefix(prefix)])
+	else if (length(files) != 1 || !fileExists(files[0] + ".mnemonics")) Some([])
+	else {
+		table = strReplace(getFileContent(files[0] + ".mnemonics"), "\r\n", "\n");
+		lines = map(filter(strSplit(table, "\n"), \line -> trim2(line, " \t\u00a0") != ""), trim);
+		if (lines == []) None() else {
+			rows = tail(lines);
+			ids = filtermap(rows, \line -> {
+				p = strSplitNext(line, "=");
+				id = s2i(p.second);
+				if (i2s(id) == p.second) Some(Pair(p.first, id)) else None();
+			});
+			if (length(ids) != length(rows)) None()
+			else Some([CswgoLegacyMnemonics(lines[0], ids)]);
+		}
+	}
+}
+
 main() {
 	grammarfile = getUrlParameter("file");
 	targetfile = getUrlParameter("out");
@@ -85,6 +106,7 @@ main() {
         Compiling to flow (fastest parser):
         flowparser=<file> produces a flow file that can parse the grammar using a SyntaxTree AST.
         flowparserast=<file> produces a flow file with functions to use the SyntaxTree AST.
+        A standalone grammar can pin published mnemonic IDs in <file.lingo>.mnemonics (see doc/lingo.markdown).
         flowparserdebug=1 prints the transformed lingo grammar which is ultimately compiled.
 
         Typechecking:
@@ -177,14 +199,17 @@ main() {
 
 						// Compile to a Flow parser?
 						if (flowparser != "") {
-							options = if (prefixRules == "") [] else [CswgoInnerFunctionsPrefix(prefixRules)];
-							output = compileSyntaxGrammarToFlow(actionless, options);
+							output = eitherMap(syntaxCompilerOptions(files, prefixRules),
+								\opts -> compileSyntaxGrammarToFlow(actionless, opts),
+								Pair("Invalid mnemonic table " + grammarfile + ".mnemonics", ""));
 							target = changeFileExt(flowparser, ".flow");
 							if (output.first != "") {
 								println("Error compiling to " + target + ": " + output.first);
+								quit(1);
+							} else {
+								re = setFileContent(target, output.second);
+								println(if (re) "Saved " + target else "ERROR: Could not save " + target)
 							}
-							re = setFileContent(target, output.second);
-							println(if (re) "Saved " + target else "ERROR: Could not save " + target)
 						}
 
 						// Inferred actions

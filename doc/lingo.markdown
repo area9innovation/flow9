@@ -752,18 +752,18 @@ See the flow AST for an example.
 When the ultimate parsing speed is required, you can compile a Lingo grammar to a flow program, 
 which parses the grammar efficiently.
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo flowparser=path/flow_parser.flow
+	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo flowparser=path/flow_parser.flow flowparserast=path/flow_ast.flow
 
 This will produce a parser for the flow grammar in the `flow_parser.flow` file. That file will
 expose exactly one function:
 
 	export {
-		parse_flow(t : string) -> SyntaxTree;
+		parse_flow(t : string) -> Pair<SyntaxTree, ExpectError>;
 	}
 
-This function takes a string, parses it, and returns a `SyntaxTree`. `SyntaxTree` is defined like this:
+The first element of the result is a `SyntaxTree`, defined like this:
 
-	SyntaxTree(rule : string, choice : int, start : int, end : int, children : [[SyntaxTree]]);
+	SyntaxTree(rule : int, choice : int, start : int, end : int, children : [[SyntaxTree]]);
 
 As you can see, for each rule, we will record what rule was matched, what choice in that rule was used,
 what was the starting and ending characters positions for the match, as well as the results of any
@@ -772,17 +772,42 @@ recursive rules matched in our rule.
 This compiler will thus ignore all bindings and actions of your grammar, and always produce
 a SyntaxTree-based AST.
 
-If there is a compile error, the "choice" field will be -1, and the "rule" string will contain a
-error message. You can use the `start` and `end` positions to find out where the parse error is.
+On parse failure `choice` is -1. The `rule` field is a numeric ID, not an error message;
+the parser also returns an `ExpectError` with the furthest expectation position.
 
-To make it easier to work with the SyntaxTree structure, you can use the `flowparserast=flow_ast.flow`
-switch:
+`flowparserast` writes the functions that extract each match and a sibling
+`flow_ast_mnemonics.flow` imported by both generated modules. Each normalized production `i`
+gets IDs `3*i` (matched), `3*i+1` (expected), and `3*i+2` (did not expect). By default the
+latter uses the first rule's name as its prefix, e.g. `st_DidNotExpectStart_Stop` for `!Stop`
+in a grammar starting with `Start`. `prefix_rules` renames the grammar itself, including its
+public entry point; it isn't needed to generate matching mnemonics.
 
-	flowcpp lingo/pegcode/pegcompiler.flow -- file=tools/flowc/flow.lingo flowparser=path/flow_parser.flow
-				flowparserast=flow_ast.flow
+To keep the names and negative IDs of a **published** parser, place a `<grammar>.lingo.mnemonics`
+file next to its grammar. For example, these three lines from the Java table:
 
-and now the compiler will also produce a file with a long list of functions, which help extract the
-results of each match. 
+```
+flow
+LetterOrDigit=-1
+COMMA=-12
+```
+
+keep the regular `st_DidNotExpectflow_*` exports (`3*i+2`), but tell the parser to use
+`st_DidNotExpectCompilation_LetterOrDigit` (`-1`) and `st_DidNotExpectCompilation_COMMA` (`-12`)
+for those two failures. Unlisted rules use their regular ID.
+
+- The first nonblank line is the prefix for the regular IDs. If there are overrides, this
+  prefix must differ from the parser's own prefix so the two sets of names do not collide.
+- Each remaining nonblank line is `RuleName=-N`, with no spaces around `=`. Each rule must
+  exist in the normalized grammar (`flowparserdebug=1`, with `$` written as `__`). Both prefix
+  and rule names must be identifiers. List each rule once and give it a distinct negative
+  decimal integer, with no leading zeros.
+- All exported mnemonic names must be distinct after prefixes are joined to rule names.
+  A collision is reported before the parser, AST or mnemonic file is written.
+- LF and CRLF line endings are accepted. Blank lines (including spaces and tabs) are ignored;
+  comments are not allowed.
+
+The table is an input, not previous generator output. It applies to a single unrenamed
+grammar, not one assembled with `prefix_rules` or a list of files.
 
 To extract the matching text of a SyntaxTree node, you can use `grabSTText` from 
 `lingo/compiler/syntaxtree_util`. You give it a SyntaxTree node, the original text that was
