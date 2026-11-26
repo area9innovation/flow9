@@ -4,65 +4,77 @@ import svg_colorname;
 import devmode;
 
 export {
+	// Returns def if the final rounded/scaled value is outside Flow's int range.
 	cssTerm2int(c : CssTerm, def : int) -> int;
 	cssTerm2double(c : CssTerm, def : double) -> double;
 	cssTerm2string(c : CssTerm, def : string) -> string;
 	cssTerm2color(c : CssTerm, def : int) -> int;
 }
 
-cssEmToPxInt = 16;
-cssEmToPxDouble = i2d(cssEmToPxInt);
-
 cssTerm2int(c : CssTerm, def : int) -> int {
-	switch (c : CssTerm) {
-		CssDouble(d): round(d);
-		CssInt(v): v;
-		CssHexInt(h): parseHex(h);
-		CssNegate(v): -cssTerm2int(v, def);
+	n = cssEvalNumber(makeList1(CssReadNumber(c, true)), 0.0, i2d(def));
+	if (i2d(intMin) <= n && n <= i2d(intMax)) trunc(n) else def;
+}
 
-		CssPt(v) : cssTerm2int(v, def);
-		CssPx(v) : cssTerm2int(v, def);
-		CssDeg(v) : cssTerm2int(v, def);
-		CssEm(v) : cssTerm2int(v, def) * cssEmToPxInt;
-		CssPercentage(v): round(i2d(def) * cssTerm2double(v, i2d(def)));
-		CssList(rgb): {
-			rgbValues = map(rgb, \_colorTerm -> cssTerm2int(_colorTerm, def));
-			foldi(rgb, 0, \i, res, item -> {
-				_colorItem = cssTerm2int(item, def);
-				if (_colorItem > 0 && i < 3) {
-					pow(256, 2-i)*_colorItem + res;
-				} else res
-			});
-		}
+cssTerm2double(c : CssTerm, def : double) -> double {
+	cssEvalNumber(makeList1(CssReadNumber(c, false)), 0.0, def);
+}
 
-		CssInherit() : -1;
+// A CssTerm can be constructed directly, with units and RGB lists nested inside one another.
+// Keep the operations to perform after a child on a list instead of the host call stack.
+CssNumberOp ::= CssReadNumber, CssScaleNumber, CssAddChannel;
+	CssReadNumber(term : CssTerm, asInt : bool);
+	CssScaleNumber(factor : double, rounded : bool);
+	CssAddChannel(terms : [CssTerm], index : int, packed : double);
 
-		default: {
-			devtrace("Expected int in CSS term: " + toString(c));
-			def
+cssEvalNumber(work : List<CssNumberOp>, value : double, def : double) -> double {
+	switch (work) {
+		EmptyList(): value;
+		Cons(op, rest): switch (op) {
+			CssReadNumber(c, asInt): switch (c : CssTerm) {
+				CssPt(v): cssEvalNumber(Cons(CssReadNumber(v, asInt), rest), value, def);
+				CssPx(v): cssEvalNumber(Cons(CssReadNumber(v, asInt), rest), value, def);
+				CssDeg(v): cssEvalNumber(Cons(CssReadNumber(v, asInt), rest), value, def);
+				CssNegate(v): cssEvalNumber(Cons(CssReadNumber(v, asInt), Cons(CssScaleNumber(-1.0, false), rest)), value, def);
+				CssEm(v): cssEvalNumber(Cons(CssReadNumber(v, asInt), Cons(CssScaleNumber(16.0, false), rest)), value, def);
+				CssPercentage(v): cssEvalNumber(Cons(CssReadNumber(v, false), Cons(CssScaleNumber(def, asInt), rest)), value, def);
+				CssList(rgb): if (asInt && length(rgb) > 0) {
+					cssEvalNumber(Cons(CssReadNumber(rgb[0], true), Cons(CssAddChannel(rgb, 0, 0.0), rest)), value, def);
+				} else {
+					cssEvalNumber(rest, if (asInt) 0.0 else cssNumberFallback(c, asInt, def), def);
+				}
+				CssDouble(d): cssEvalNumber(rest, if (asInt) cssRoundNumber(d) else d, def);
+				CssInt(v): cssEvalNumber(rest, i2d(v), def);
+				CssHexInt(h): cssEvalNumber(rest, i2d(parseHex(h)), def);
+				CssInherit(): cssEvalNumber(rest, if (asInt) -1.0 else 0.0, def);
+				default: cssEvalNumber(rest, cssNumberFallback(c, asInt, def), def);
+			}
+			CssScaleNumber(factor, rounded): {
+				x = value * factor;
+				cssEvalNumber(rest, if (rounded) cssRoundNumber(x) else x, def);
+			}
+			CssAddChannel(rgb, i, packed): {
+				n = if (value > 0.0 && i < 3) packed + value * i2d(pow(256, 2-i)) else packed;
+				if (i + 1 < length(rgb)) {
+					cssEvalNumber(Cons(CssReadNumber(rgb[i+1], true), Cons(CssAddChannel(rgb, i+1, n), rest)), value, def);
+				} else cssEvalNumber(rest, n, def);
+			}
 		}
 	}
 }
 
-cssTerm2double(c : CssTerm, def : double) -> double {
-	switch (c : CssTerm) {
-		CssDouble(d): d;
-		CssInt(v): i2d(v);
-		CssHexInt(h): i2d(parseHex(h));
-		CssNegate(v): -cssTerm2double(v, def);
+cssNumberFallback(c : CssTerm, asInt : bool, def : double) -> double {
+	devtraceLazy(\ -> "Expected " + (if (asInt) "int" else "double") + " in CSS term: " + c.structname);
+	def;
+}
 
-		CssPt(v) : cssTerm2double(v, def);
-		CssPx(v) : cssTerm2double(v, def);
-		CssDeg(v) : cssTerm2double(v, def);
-		CssEm(v) : cssTerm2double(v, def) * cssEmToPxDouble;
-		CssPercentage(v): def * cssTerm2double(v, def);
-
-		CssInherit() : 0.0;
-
-		default: {
-			devtrace("Expected double in CSS term: " + toString(c));
-			def
-		}
+// Preserve round() at the same points in a term, but keep a wide result for outer operations.
+// E.g. -(134217728em) fits in an int even though the inner positive pixel value doesn't.
+cssRoundNumber(n : double) -> double {
+	if (-2147483648.5 < n && n < 2147483647.5) i2d(round(n))
+	else {
+		r = n % 1.0;
+		if (r == r) (n - r) + i2d(round(r)) else n;
 	}
 }
 
@@ -74,7 +86,7 @@ cssTerm2string(c : CssTerm, def : string) -> string {
 		CssInherit() : "";
 
 		default: {
-			devtrace("Expected string in CSS term: " + toString(c));
+			devtraceLazy(\ -> "Expected string in CSS term: " + toString(c));
 			def
 		}
 	}
