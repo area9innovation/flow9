@@ -41,18 +41,19 @@ with tempfile.TemporaryDirectory() as tmp:
         def do_GET(self):
             if self.path == '/while-missing':
                 # A second producer finishes after the request starts, before its response.
-                with (out / 'peer').open('xb') as peer:
-                    peer.write(b'peer result')
+                with peer.open('xb') as writer:
+                    writer.write(b'peer result')
             super().do_GET()
 
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, directory=work))
     Thread(target=server.serve_forever, daemon=True).start()
 
-    def download(src, dest, headers=False, error=False, limit=False, defer_quit=False, legacy404=False, cache_target='', next_cwd=''):
+    def download(src, dest, headers=False, error=False, limit=False, defer_quit=False, legacy404=False, cache_target='', next_cwd='', cwd=work, fd_marker=''):
         cmd = [runner, '--batch', *([] if args.jit else ['--gc-stress-test']), bytecode, '--',
                f'url=http://127.0.0.1:{server.server_port}/{src.name}',
                f'dest={dest}', f'headers={int(headers)}', f'spool={spool}',
-               f'deferQuit={int(defer_quit)}', f'legacy404={int(legacy404)}', f'cacheTarget={cache_target}', f'nextCwd={next_cwd}']
+               f'deferQuit={int(defer_quit)}', f'legacy404={int(legacy404)}', f'cacheTarget={cache_target}', f'nextCwd={next_cwd}',
+               f'fdMarker={fd_marker}']
         if limit:
             # Limit ordinary files in the runner child only. Large responses hit
             # the HTTP spool limit; small ones hit the destination stage limit.
@@ -61,7 +62,7 @@ with tempfile.TemporaryDirectory() as tmp:
                        'resource.setrlimit(resource.RLIMIT_FSIZE, (1024, 1024)); '
                        'os.execv(sys.argv[1], sys.argv[1:])']
         result = subprocess.run(cmd, env=dict(os.environ, FLOW=str(root), TMPDIR=str(spool), TMP=str(spool), TEMP=str(spool)),
-                                cwd=work, capture_output=True, text=True, timeout=30)
+                                cwd=cwd, capture_output=True, text=True, timeout=30)
         events = [line for line in result.stdout.splitlines() if line.startswith('download:')]
         assert len(events) == 1, (result.returncode, result.stdout, result.stderr)
         if error is True:
@@ -112,6 +113,53 @@ with tempfile.TemporaryDirectory() as tmp:
         (work / 'shortcut').symlink_to(child)
         download(src, 'shortcut/../through-link', next_cwd=other)
         assert (child.parent / 'through-link').read_bytes() == src.read_bytes() and not (work / 'through-link').exists()
+
+        # Keep the test driver's own paths short via a directory alias halfway
+        # down the tree. The runner's physical cwd fits; cwd + '/' + leaf does not.
+        path_max = os.pathconf(work, 'PC_PATH_MAX')
+        if path_max > 0:
+            deep = short = work.resolve()
+            while len(os.fsencode(deep)) < path_max - 41:
+                component = 'd' * min(120, path_max - 40 - len(os.fsencode(deep)) - 1)
+                deep, short = deep / component, short / component
+                short.mkdir()
+                if deep == short and len(os.fsencode(deep)) >= path_max // 2:
+                    short = work / 'deep-alias'
+                    short.symlink_to(deep, target_is_directory=True)
+            leaf = 'result-' + 'r' * 80
+            alias = 'alias-' + 'a' * 80
+            assert all(len(os.fsencode(deep / name)) >= path_max for name in (leaf, alias))
+            marker = 'download-start-dir'
+            (short / marker).touch()
+            probe = marker if Path('/proc/self/fd').is_dir() else ''
+            location = dict(cwd=short, next_cwd=other, fd_marker=probe)
+            short.chmod(0o300)  # Search and create, but no directory listing.
+            try:
+                src.write_bytes(b'A' * 150000)
+                download(src, leaf, **location)
+                assert (short / leaf).read_bytes() == src.read_bytes() and not (other / leaf).exists()
+                (short / 'sub').mkdir()
+                (short / 'sub' / 'second').symlink_to('../' + leaf)
+                (short / alias).symlink_to('sub/second')
+                (other / alias).write_bytes(b'C' * 150000)
+                src.write_bytes(b'B' * 150000)
+                download(src, alias, headers=True, cache_target=short / leaf, **location)
+                assert (short / alias).is_symlink() and (short / leaf).read_bytes() == src.read_bytes()
+                assert (other / alias).read_bytes() == b'C' * 150000
+                download(work / 'absent', leaf, error=True, defer_quit=True, **location)
+                download(src, 'missing/result', error=save_error, **location)
+                assert not (other / 'missing/result').exists() and (short / leaf).read_bytes() == src.read_bytes()
+                (short / 'dangling').symlink_to('absent')
+                download(src, 'dangling', error=save_error, **location)
+                assert (short / 'dangling').is_symlink() and not (short / 'absent').exists()
+                peer = short / 'peer'
+                delayed = work / 'while-missing'
+                delayed.write_bytes(b'response')
+                download(delayed, peer.name, headers=True, error=save_error, **location)
+                assert peer.read_bytes() == b'peer result' and not (other / peer.name).exists()
+            finally:
+                short.chmod(0o700)
+            assert set(os.listdir(short)) == {leaf, alias, marker, 'sub', 'dangling', 'peer'}
     elif os.name == 'nt' and work.drive.endswith(':'):
         for leaf, spelling in [('drive-relative', work.drive + 'drive-relative'),
                                ('drive-rooted', str(work / 'drive-rooted')[len(work.drive):])]:

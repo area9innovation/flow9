@@ -2,6 +2,10 @@
 #define ABSTRACT_HTTP_SUPPORT_H
 
 #include "core/ByteCodeRunner.h"
+#ifndef _WIN32
+#include "core/ScopedFd.h"
+#include <fcntl.h>
+#endif
 
 #include "utils/flowfilestruct.h"
 
@@ -41,10 +45,11 @@ struct HttpRequest {
 
     bool save_to_file;
     bool create_only;
-    // Absolute destination captured at request start; empty if it could not be resolved.
 #ifdef _WIN32
     std::wstring result_filename;
 #else
+    // Relative spellings are interpreted at this directory, even after chdir.
+    ScopedFd result_dir{AT_FDCWD};
     std::string result_filename;
 #endif
 

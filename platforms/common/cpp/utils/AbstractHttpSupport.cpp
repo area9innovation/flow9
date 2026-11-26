@@ -249,26 +249,62 @@ static bool writeAndCloseDownload(const HttpRequest &rq, FILE *out)
     return fclose(out) == 0 && ok;
 }
 
+#ifndef _WIN32
+static int openSearchDirectory(int base, const char *path)
+{
+#if defined(O_PATH)
+    const int access = O_PATH;
+#elif defined(O_SEARCH)
+    const int access = O_SEARCH;
+#else
+    const int access = O_RDONLY;
+#endif
+    const int flags = O_DIRECTORY | O_CLOEXEC;
+    int fd = openat(base, path, access | flags);
+    if (fd < 0 && access != O_RDONLY && (errno == EINVAL || errno == ENOTSUP))
+        return openat(base, path, O_RDONLY | flags); // newer SDK, older kernel
+    return fd;
+}
+
+static bool anchorDownloadPath(ScopedFd &anchor, std::string &path)
+{
+    int fd = openSearchDirectory(AT_FDCWD, ".");
+    if (fd < 0) {
+        if (errno != EACCES) return false;
+        // Older kernels/SDKs may not provide search-only handles. Keep the
+        // unlistable components relative to the nearest openable ancestor.
+        std::vector<char> buf(256);
+        while (!getcwd(buf.data(), buf.size())) {
+            if (errno != ERANGE) return false;
+            buf.resize(buf.size() * 2);
+        }
+        std::string cwd = buf.data();
+        if (cwd.empty() || cwd[0] != '/') return false;
+        while (cwd.size() > 1) {
+            size_t slash = cwd.rfind('/');
+            path.insert(0, cwd.substr(slash + 1) + '/');
+            cwd.resize(slash ? slash : 1);
+            fd = openSearchDirectory(AT_FDCWD, cwd.c_str());
+            if (fd >= 0) break;
+            if (errno != EACCES && errno != ENAMETOOLONG) return false;
+        }
+        if (fd < 0) { path.insert(0, "/"); return true; } // even '/' is search-only
+    }
+    anchor.reset(fd);
+    return true;
+}
+#endif
+
 static void setDownloadDestination(HttpRequest &rq, const unicode_string &name)
 {
     rq.save_to_file = true;
     if (name.empty() || name.find(unicode_char(0)) != name.npos) return;
 #ifndef _WIN32
-    // Anchor the spelling, not the referent: the leaf may be missing and '..'
-    // following a symlink must still be interpreted by the filesystem.
-    if (name[0] != '/') {
-        std::vector<char> cwd(256);
-        while (!getcwd(cwd.data(), cwd.size())) {
-            if (errno != ERANGE) return;
-            cwd.resize(cwd.size() * 2);
-        }
-        if (cwd[0] != '/') return;
-        rq.result_filename = cwd.data();
-        if (rq.result_filename.back() != '/') rq.result_filename += '/';
-    }
-    rq.result_filename += encodeUtf8(name);
+    std::string path = encodeUtf8(name);
+    if (name[0] != '/' && !anchorDownloadPath(rq.result_dir, path)) return;
+    rq.result_filename.swap(path);
     struct stat st;
-    rq.create_only = lstat(rq.result_filename.c_str(), &st) != 0;
+    rq.create_only = fstatat(rq.result_dir.get(), rq.result_filename.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0;
 #else
     // Let Win32 resolve drive-relative and rooted names against the current
     // drive/directory. Retain the native spelling through publication.
@@ -288,33 +324,56 @@ static bool saveDownload(const HttpRequest &rq)
 {
     std::string path = rq.result_filename;
     if (path.empty()) return false;
+    int base = rq.result_dir.get();
+    ScopedFd parent;
     struct stat st;
-    bool existing = lstat(path.c_str(), &st) == 0;
-    if (existing) {
+    bool existing;
+    // Only the final link needs resolving for renameat; the kernel handles
+    // intermediate links and '..'. A dangling link is never a new file.
+    for (unsigned hops = 0; ; ++hops) {
+        size_t prefix = path.find_last_of('/') + 1;
+        if (prefix) {
+            if (prefix == path.size()) return false;
+            int next = openSearchDirectory(base, path.substr(0, prefix).c_str());
+            if (next >= 0) {
+                parent.reset(next);
+                base = next;
+                path.erase(0, prefix);
+                prefix = 0;
+            } else if (errno != EACCES) return false;
+        }
+        existing = fstatat(base, path.c_str(), &st, AT_SYMLINK_NOFOLLOW) == 0;
+        if (!existing) {
+            if (hops || errno != ENOENT) return false;
+            break;
+        }
         if (rq.create_only) return false;
-        // Follow an existing link, but never publish a regular file over the link.
-        if (S_ISLNK(st.st_mode)) {
-            char *target = realpath(path.c_str(), NULL);
-            if (!target) return false;
-            path = target;
-            free(target);
-            if (stat(path.c_str(), &st) != 0) return false;
+        if (!S_ISLNK(st.st_mode)) break;
+        // Check the original spelling against the filesystem's own link limit,
+        // including links in parent components, before walking the leaf links.
+        if (!hops && fstatat(rq.result_dir.get(), rq.result_filename.c_str(), &st, 0) != 0) return false;
+        if (hops == 40) return false;
+        std::vector<char> target(256);
+        ssize_t n;
+        while ((n = readlinkat(base, path.c_str(), target.data(), target.size())) == ssize_t(target.size()))
+            target.resize(target.size() * 2);
+        if (n <= 0) return false;
+        path.replace(target[0] == '/' ? 0 : prefix, path.npos, target.data(), size_t(n));
+    }
+    if (existing && !S_ISREG(st.st_mode)) {
+        if (!S_ISCHR(st.st_mode) && !S_ISFIFO(st.st_mode)) return false;
+        int fd = openat(base, path.c_str(), O_WRONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd == -1) return false;
+        if (fstat(fd, &st) == 0 && (S_ISCHR(st.st_mode) || S_ISFIFO(st.st_mode))) {
+            if (FILE *out = fdopen(fd, "wb")) return writeAndCloseDownload(rq, out);
         }
-        if (!S_ISREG(st.st_mode)) {
-            if (!S_ISCHR(st.st_mode) && !S_ISFIFO(st.st_mode)) return false;
-            int fd = open(path.c_str(), O_WRONLY | O_NOFOLLOW);
-            if (fd == -1) return false;
-            if (fstat(fd, &st) == 0 && (S_ISCHR(st.st_mode) || S_ISFIFO(st.st_mode))) {
-                if (FILE *out = fdopen(fd, "wb")) return writeAndCloseDownload(rq, out);
-            }
-            close(fd);
-            return false;
-        }
-    } else if (errno != ENOENT) return false;
-    return replaceRegularFile(path, existing ? &st : NULL, [&](FILE *out) { return writeDownload(rq, out); },
+        close(fd);
+        return false;
+    }
+    return replaceRegularFile(base, path, existing ? &st : NULL, [&](FILE *out) { return writeDownload(rq, out); },
         [&](int stage, const struct stat &expected) {
             // Authorize the update and inspect metadata; never read or truncate the original payload.
-            int source = open(path.c_str(), O_WRONLY | O_NOFOLLOW | O_NONBLOCK);
+            int source = openat(base, path.c_str(), O_WRONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
             if (source < 0) return false;
             bool ok = prepareDownloadFile(source, stage, expected);
             close(source);
@@ -445,6 +504,8 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
     if (rq && rq->save_to_file) {
         if (saveDownload(*rq)) {
 #ifdef FLOW_MMAP_HEAP
+            // This erases a spelling, not a file lookup against the current cwd.
+            // Both packed readers revalidate other spellings by open-file identity.
             RUNNER->InvalidateFileCache(rq->result_filename);
 #endif
             finishDownload(*rq, false, NULL, 0);
