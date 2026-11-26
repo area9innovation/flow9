@@ -10,13 +10,10 @@
 #include "DownloadFilePermissions.h"
 #else
 #include <windows.h>
-#include <sddl.h>
+#include <ktmw32.h>
 #include <io.h>
 #include <fcntl.h>
 #include <atomic>
-#ifdef _MSC_VER
-#pragma comment(lib, "advapi32.lib")
-#endif
 #endif
 
 // 
@@ -252,13 +249,28 @@ static bool writeAndCloseDownload(const HttpRequest &rq, FILE *out)
     return fclose(out) == 0 && ok;
 }
 
+static void setDownloadDestination(HttpRequest &rq, const unicode_string &name)
+{
+    rq.save_to_file = true;
+    rq.result_filename = encodeUtf8(name);
+    // Only permit replacement if a destination could be observed at request start.
+#ifndef _WIN32
+    struct stat st;
+    rq.create_only = lstat(rq.result_filename.c_str(), &st) != 0;
+#else
+    rq.create_only = GetFileAttributesW(std::wstring(name.begin(), name.end()).c_str()) == INVALID_FILE_ATTRIBUTES;
+#endif
+}
+
 #ifndef _WIN32
 static bool saveDownload(const HttpRequest &rq)
 {
     std::string path = rq.result_filename;
     if (path.empty() || path.find('\0') != path.npos) return false;
     struct stat st;
-    if (lstat(path.c_str(), &st) == 0) {
+    bool existing = lstat(path.c_str(), &st) == 0;
+    if (existing) {
+        if (rq.create_only) return false;
         // Follow an existing link, but never publish a regular file over the link.
         if (S_ISLNK(st.st_mode)) {
             char *target = realpath(path.c_str(), NULL);
@@ -277,11 +289,11 @@ static bool saveDownload(const HttpRequest &rq)
             close(fd);
             return false;
         }
-        if (access(path.c_str(), W_OK) != 0) return false;
     } else if (errno != ENOENT) return false;
-    return replaceRegularFile(path, [&](FILE *out) { return writeDownload(rq, out); },
+    return replaceRegularFile(path, existing ? &st : NULL, [&](FILE *out) { return writeDownload(rq, out); },
         [&](int stage, const struct stat &expected) {
-            int source = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+            // Authorize the update and inspect metadata; never read or truncate the original payload.
+            int source = open(path.c_str(), O_WRONLY | O_NOFOLLOW | O_NONBLOCK);
             if (source < 0) return false;
             bool ok = prepareDownloadFile(source, stage, expected);
             close(source);
@@ -304,40 +316,53 @@ static bool writeDownloadHandle(const HttpRequest &rq, HANDLE h)
 static bool onlyDefaultStream(HANDLE h)
 {
     const wchar_t unnamed[] = L"::$DATA";
-    alignas(FILE_STREAM_INFO) unsigned char buf[sizeof(FILE_STREAM_INFO) + sizeof(unnamed)];
+    alignas(FILE_STREAM_INFO) unsigned char buf[sizeof(FILE_STREAM_INFO) + sizeof(unnamed)] = {};
     if (!GetFileInformationByHandleEx(h, FileStreamInfo, buf, sizeof(buf))) return false;
     const FILE_STREAM_INFO *s = reinterpret_cast<const FILE_STREAM_INFO*>(buf);
     return !s->NextEntryOffset && s->StreamNameLength == sizeof(unnamed) - sizeof(wchar_t) &&
            !memcmp(s->StreamName, unnamed, s->StreamNameLength);
 }
 
-static bool downloadSecurity(HANDLE h, std::vector<unsigned char> &descriptor)
+static bool supportedDownloadFile(HANDLE h, BY_HANDLE_FILE_INFORMATION &info, DWORD &flags)
 {
-    const SECURITY_INFORMATION fields = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
-        DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION | ATTRIBUTE_SECURITY_INFORMATION | SCOPE_SECURITY_INFORMATION;
-    DWORD bytes = 0;
-    GetKernelObjectSecurity(h, fields, NULL, 0, &bytes);
-    if (!bytes) return false;
-    descriptor.resize(bytes);
-    return GetKernelObjectSecurity(h, fields, descriptor.data(), bytes, &bytes) != 0;
+    return GetFileType(h) == FILE_TYPE_DISK && GetFileInformationByHandle(h, &info) &&
+        !(info.dwFileAttributes & ~(FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_ARCHIVE)) &&
+        GetVolumeInformationByHandleW(h, NULL, 0, NULL, NULL, &flags, NULL, 0) &&
+        (!(flags & FILE_NAMED_STREAMS) || onlyDefaultStream(h));
 }
 
-static bool sameDownloadSecurity(std::vector<unsigned char> &wanted, HANDLE stage)
+// A caller may be allowed to write a file but not to read its audit policy.
+// Update the existing NTFS object in a transaction: neither the DACL nor the
+// SACL has to be read or recreated. TxF is optional; never fall back to a
+// partial-descriptor copy or a nontransactional truncate.
+static bool updateAclDownload(const HttpRequest &rq, const std::wstring &path, const BY_HANDLE_FILE_INFORMATION &expected)
 {
-    std::vector<unsigned char> actual;
-    if (!downloadSecurity(stage, actual)) return false;
-    if (wanted == actual) return true;
-    // Self-relative descriptors can have different offsets/defaulted flags.
-    // Compare their owner, group and ACLs (including the inherited/protected
-    // flags and the SACL entries returned by downloadSecurity).
-    const DWORD fields = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION;
-    LPWSTR a = NULL, b = NULL;
-    bool equal = ConvertSecurityDescriptorToStringSecurityDescriptorW(wanted.data(), SDDL_REVISION_1, fields, &a, NULL) &&
-                 ConvertSecurityDescriptorToStringSecurityDescriptorW(actual.data(), SDDL_REVISION_1, fields, &b, NULL) &&
-                 wcscmp(a, b) == 0;
-    LocalFree(a);
-    LocalFree(b);
-    return equal;
+    HMODULE ktm = LoadLibraryExW(L"KtmW32.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
+    if (!ktm) return false;
+    auto create = reinterpret_cast<decltype(&CreateTransaction)>(GetProcAddress(ktm, "CreateTransaction"));
+    auto commit = reinterpret_cast<decltype(&CommitTransaction)>(GetProcAddress(ktm, "CommitTransaction"));
+    auto openTx = reinterpret_cast<decltype(&CreateFileTransactedW)>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "CreateFileTransactedW"));
+    HANDLE tx = create && commit && openTx ? create(NULL, NULL, 0, 0, 0, 0, NULL) : INVALID_HANDLE_VALUE;
+    bool ok = false;
+    if (tx != INVALID_HANDLE_VALUE) {
+        HANDLE h = openTx(path.c_str(), GENERIC_WRITE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ, NULL,
+                          OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL, tx, NULL, NULL);
+        if (h != INVALID_HANDLE_VALUE) {
+            BY_HANDLE_FILE_INFORMATION info;
+            DWORD flags;
+            // Do not change other hard links. Recheck on the handle actually
+            // used to write; it starts at offset zero and is not truncated yet.
+            if (supportedDownloadFile(h, info, flags) && info.nNumberOfLinks == 1 &&
+                info.dwVolumeSerialNumber == expected.dwVolumeSerialNumber &&
+                info.nFileIndexHigh == expected.nFileIndexHigh && info.nFileIndexLow == expected.nFileIndexLow &&
+                SetEndOfFile(h)) {
+                ok = writeDownloadHandle(rq, h) && commit(tx); // writer closes h before commit
+            } else CloseHandle(h);
+        }
+        CloseHandle(tx); // closing the last handle rolls back an uncommitted transaction
+    }
+    FreeLibrary(ktm);
+    return ok;
 }
 
 static bool saveDownload(const HttpRequest &rq)
@@ -355,8 +380,6 @@ static bool saveDownload(const HttpRequest &rq)
 
     // Check the existing target without truncating it. A device/pipe is a
     // stream; a reparse point must not be replaced with a new directory entry.
-    std::vector<unsigned char> security;
-    SECURITY_ATTRIBUTES attrs = {sizeof(SECURITY_ATTRIBUTES), NULL, FALSE};
     HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     bool existing = h != INVALID_HANDLE_VALUE;
@@ -365,19 +388,15 @@ static bool saveDownload(const HttpRequest &rq)
     } else {
         DWORD type = GetFileType(h);
         if (type == FILE_TYPE_CHAR || type == FILE_TYPE_PIPE) return writeDownloadHandle(rq, h);
+        if (rq.create_only) { CloseHandle(h); return false; }
         BY_HANDLE_FILE_INFORMATION info;
         DWORD flags = 0;
         // In particular, never write plaintext staging data for an EFS file.
-        bool regular = type == FILE_TYPE_DISK && GetFileInformationByHandle(h, &info) &&
-            !(info.dwFileAttributes & ~(FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_ARCHIVE)) &&
-            GetVolumeInformationByHandleW(h, NULL, 0, NULL, NULL, &flags, NULL, 0) &&
-            (!(flags & FILE_NAMED_STREAMS) || onlyDefaultStream(h));
-        if (regular && (flags & FILE_PERSISTENT_ACLS)) {
-            regular = downloadSecurity(h, security);
-            if (regular) attrs.lpSecurityDescriptor = security.data();
-        }
+        bool regular = supportedDownloadFile(h, info, flags);
         CloseHandle(h);
         if (!regular) return false;
+        if (flags & FILE_PERSISTENT_ACLS)
+            return (flags & FILE_SUPPORTS_TRANSACTIONS) && updateAclDownload(rq, path, info);
     }
 
     static std::atomic<unsigned> sequence(0);
@@ -385,16 +404,12 @@ static bool saveDownload(const HttpRequest &rq)
     for (unsigned i = 0; i < 128; ++i) {
         stage = dir + L".flow-download-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(++sequence);
         if (_wcsicmp(path.c_str(), stage.c_str()) == 0) continue;
-        h = CreateFileW(stage.c_str(), GENERIC_WRITE, 0, &attrs, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+        h = CreateFileW(stage.c_str(), GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h == INVALID_HANDLE_VALUE) {
             if (GetLastError() == ERROR_FILE_EXISTS) continue;
             return false;
         }
-        // Inheritance can affect the descriptor assigned by CreateFile. Check
-        // the actual protection before writing a single byte to the stage.
-        if (!security.empty() && !sameDownloadSecurity(security, h)) {
-            CloseHandle(h);
-        } else if (writeDownloadHandle(rq, h) && MoveFileExW(stage.c_str(), path.c_str(), existing ? MOVEFILE_REPLACE_EXISTING : 0)) {
+        if (writeDownloadHandle(rq, h) && MoveFileExW(stage.c_str(), path.c_str(), existing ? MOVEFILE_REPLACE_EXISTING : 0)) {
             return true;
         }
         DeleteFileW(stage.c_str());
@@ -795,8 +810,7 @@ StackSlot AbstractHttpSupport::downloadFileBinary(RUNNER_ARGS)
     rq.method = parseUtf8("GET");
     rq.response_enc = ResponseEncodingByte;
     rq.url = RUNNER->GetString(url);
-    rq.save_to_file = true;
-    rq.result_filename = encodeUtf8(RUNNER->GetString(pathToSave));
+    setDownloadDestination(rq, RUNNER->GetString(pathToSave));
     rq.done_cb = onDone;
     rq.error_cb = onError;
 
@@ -821,8 +835,7 @@ StackSlot AbstractHttpSupport::downloadFileBinaryWithHeaders(RUNNER_ARGS)
     rq.method = parseUtf8("GET");
     rq.response_enc = ResponseEncodingByte;
     rq.url = RUNNER->GetString(url);
-    rq.save_to_file = true;
-    rq.result_filename = encodeUtf8(RUNNER->GetString(pathToSave));
+    setDownloadDestination(rq, RUNNER->GetString(pathToSave));
     rq.done_cb = onDone;
     rq.error_cb = onError;
 	

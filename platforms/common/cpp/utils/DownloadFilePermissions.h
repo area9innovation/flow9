@@ -17,7 +17,7 @@
 
 #if defined(__linux__)
 // Use the kernel's access ACL representation; Android does not ship libacl.
-// Don't discard unknown attributes (including filesystem-specific ACLs).
+// Reject unknown attributes visible to this caller (including filesystem-specific ACLs).
 static bool knownDownloadAttrs(int fd)
 {
     ssize_t n = flistxattr(fd, NULL, 0);

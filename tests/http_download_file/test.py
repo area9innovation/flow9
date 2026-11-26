@@ -1,5 +1,5 @@
 """Run with python3 and a Qt runner built from these sources (optionally FLOWCPP).
-Use an xattr-capable filesystem and setfacl on Linux, or NTFS on Windows.
+Use an xattr-capable filesystem and setfacl on Linux, or local transaction-capable NTFS on Windows.
 """
 import argparse
 import os
@@ -16,6 +16,7 @@ from threading import Thread
 
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--jit', action='store_true', help='use the default JIT instead of interpreter GC stress')
+parser.add_argument('--windows-audit', action='store_true', help='also check an explicit audit rule (requires SACL access on the disposable NTFS fixture)')
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[2]
 with tempfile.TemporaryDirectory() as tmp:
@@ -30,7 +31,15 @@ with tempfile.TemporaryDirectory() as tmp:
     subprocess.run([compiler, 'server=0', f'bytecode={bytecode}',
                     'tests/http_download_file/download.flow'], cwd=root, check=True)
 
-    server = ThreadingHTTPServer(('127.0.0.1', 0), partial(SimpleHTTPRequestHandler, directory=work))
+    class Handler(SimpleHTTPRequestHandler):
+        def do_GET(self):
+            if self.path == '/while-missing':
+                # A second producer finishes after the request starts, before its response.
+                with (out / 'peer').open('xb') as peer:
+                    peer.write(b'peer result')
+            super().do_GET()
+
+    server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, directory=work))
     Thread(target=server.serve_forever, daemon=True).start()
 
     def download(src, dest, headers=False, error=False, limit=False, defer_quit=False, legacy404=False, cache_target=''):
@@ -64,6 +73,12 @@ with tempfile.TemporaryDirectory() as tmp:
         download(src, dest, headers=bool(i % 2))
         assert dest.read_bytes() == data
     save_error = 'Could not save downloaded file'
+    delayed = work / 'while-missing'
+    delayed.write_bytes(b'response')
+    peer = out / 'peer'
+    download(delayed, peer, error=save_error)
+    assert peer.read_bytes() == b'peer result'
+    peer.unlink()
     download(src, work / 'missing' / 'result', error=save_error)
     # Qt still delivers a response notification after a network error. Let that
     # notification run before quitting and check the original file is untouched.
@@ -98,6 +113,26 @@ with tempfile.TemporaryDirectory() as tmp:
         download(src, link, cache_target=dest)
         assert link.is_symlink() and dest.read_bytes() == src.read_bytes()
     if sys.platform.startswith('linux'):
+        with tempfile.TemporaryDirectory(dir=out) as nested:
+            shared = Path(nested)
+            other = next((g for g in os.getgroups() if g != os.getegid()), None)
+            if other is not None:
+                os.chown(shared, -1, other)
+                shared.chmod(0o2700)
+                control, created = shared / 'ordinary', shared / 'download'
+                control.touch()
+                download(src, created)
+                assert created.read_bytes() == src.read_bytes() and control.stat().st_gid == created.stat().st_gid == other
+            else:
+                print('Skipping distinct setgid group case: no supplementary group')
+
+            write_only = shared / 'write-only'
+            write_only.write_bytes(b'old')
+            write_only.chmod(0o200)
+            download(src, write_only)
+            assert stat.S_IMODE(write_only.stat().st_mode) == 0o200
+            write_only.chmod(0o600)
+            assert write_only.read_bytes() == src.read_bytes()
         if shutil.which('setfacl'):
             subprocess.run(['setfacl', '-m', f'u:{os.getuid()}:rw-,m::r--', dest], check=True)
             acl = os.getxattr(dest, 'system.posix_acl_access')
@@ -127,6 +162,26 @@ with tempfile.TemporaryDirectory() as tmp:
         assert dest.read_bytes() == previous and os.getxattr(dest, 'user.flow-test') == b'keep'
         assert set(out.iterdir()) == {dest, link}
     if os.name == 'nt':
+        # No privilege is needed for this positive control: updating the same
+        # NTFS object retains even security information inaccessible to a caller.
+        before = dest.stat()
+        src.write_bytes(b'new payload')
+        download(src, dest)
+        assert dest.read_bytes() == src.read_bytes() and os.path.samestat(before, dest.stat())
+        alias = out / 'hardlink'
+        os.link(dest, alias)
+        src.write_bytes(b'not for the other link')
+        download(src, dest, error=save_error)
+        assert dest.samefile(alias) and alias.read_bytes() == b'new payload'
+        alias.unlink()
+
+        if args.windows_audit:
+            audit = ['powershell.exe', '-NoProfile', '-NonInteractive', '-File',
+                     str(root / 'tests/http_download_file/test_audit.ps1'), str(dest)]
+            expected = subprocess.check_output([*audit, '-Install'], text=True).strip()
+            assert expected.startswith('S:')
+            download(src, dest)
+            assert dest.read_bytes() == src.read_bytes() and subprocess.check_output(audit, text=True).strip() == expected
         # Run on NTFS. The secondary stream belongs to the existing destination.
         stream = Path(str(dest) + ':notes')
         stream.write_bytes(b'keep stream')

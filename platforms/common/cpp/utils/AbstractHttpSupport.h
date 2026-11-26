@@ -40,6 +40,7 @@ struct HttpRequest {
     FILE *tmp_file;
 
     bool save_to_file;
+    bool create_only;
     std::string result_filename;
 
     void *aux_data;
@@ -48,6 +49,7 @@ struct HttpRequest {
         req_id = 0;
         is_media_preload = false;
         save_to_file = false;
+        create_only = false;
         data_cb = error_cb = status_cb = done_cb = response_cb = StackSlot::MakeVoid();
         open_cb = progress_cb = StackSlot::MakeVoid();
         tmp_file = NULL;
