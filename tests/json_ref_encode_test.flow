@@ -1,0 +1,54 @@
+import formats/json/flow2json;
+
+JsonTestNode(mutable child : flow);
+
+// Follow the result iteratively too: comparing or printing the entire tree
+// would test the host stack of a different operation.
+checkNested(json : Json, depth : int) -> bool {
+	if (depth == 0) json == JsonString("leaf") else {
+		switch (json) {
+			JsonObject(fields): {
+				if (length(fields) != 2 || fields[0] != Pair("struct", JsonString("JsonTestNode")) || fields[1].first != "child") false
+				else switch (fields[1].second) {
+					JsonArray(xs): if (length(xs) != 1) false else checkNested(xs[0], depth - 1);
+					default: false;
+				}
+			}
+			default: false;
+		}
+	}
+}
+
+main() {
+	shared = ref flow("shared");
+	assert(flow2json([shared, shared]) == JsonArray([JsonString("shared"), JsonString("shared")]), "shared siblings");
+	assert(flow2json(Pair(shared, shared)) == flow2json(Pair("shared", "shared")), "shared struct fields");
+	// A chain has no visible nesting in JSON.
+	chain = fold(enumFromTo(1, 4096), shared, \r, __ -> ref flow(r));
+	assert(flow2json(chain) == JsonString("shared"), "consecutive refs");
+
+	cell = ref flow(false);
+	cell := flow(cell);
+	assert(flow2json(cell) == JsonNull(), "self reference");
+	other = ref flow(cell);
+	cell := flow(other);
+	assert(flow2json(cell) == JsonNull(), "two references");
+	cell := flow(Pair("label", [other]));
+	assert(flow2json([cell]) == JsonNull(), "cycle through a struct and array rejects the whole value");
+
+	cell := flow("leaf");
+	assert(flow2json(other) == JsonString("leaf"), "a later conversion starts a new path");
+	depth = 4096;
+	nested = fold(enumFromTo(1, depth), flow("leaf"), \v, __ -> flow(JsonTestNode(flow([v]))));
+	assert(checkNested(flow2json(nested), depth), "all nested structs and arrays are encoded");
+	node = JsonTestNode(flow(1));
+	node.child ::= flow(node);
+	assert(flow2json(node) == JsonNull(), "cycle through a mutable struct");
+	node.child ::= flow(2);
+	assert(flow2json([node, node]) == JsonArray([flow2json(node), flow2json(node)]), "shared acyclic struct");
+	assert(flow2json(Pair(\x : int -> x, [])) == JsonObject([
+		Pair("struct", JsonString("Pair")), Pair("first", JsonNull()), Pair("second", JsonArray([]))
+	]), "unsupported leaves, empty arrays and declaration order");
+	println("Reflective JSON encoding tests passed");
+	quit(0);
+}
