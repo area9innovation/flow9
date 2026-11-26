@@ -1286,21 +1286,29 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
 {
     StackSlot rv = StackSlot::MakeVoid();
 
-#ifdef FLOW_MMAP_HEAP
-    // Separate caches keep legacy write semantics off ordinary strings, and
-    // let reads of one file through both readers each reuse their mapping.
-    auto &cache = legacy_file ? LegacyMappedFiles : MappedFiles;
-    auto cached = cache.find(filename);
-    if (!temporary && !legacy_file && cached != cache.end())
-        return cached->second;
-#endif
-
     FILE *file = fopen(filename.c_str(), "rb");
     if (!file)
         return StackSlot::MakeVoid();
 
-    int64_t size = ReadFileLength(file);
+#ifdef FLOW_MMAP_HEAP
+    // A staged write replaces a directory entry. Its other spellings may still
+    // be cached; compare the open file, without disturbing live old strings.
+    struct stat st;
+    bool have_id = !temporary && fstat(fileno(file), &st) == 0 && S_ISREG(st.st_mode);
+    auto &cache = legacy_file ? LegacyMappedFiles : MappedFiles;
+    auto cached = cache.find(filename);
+    if (!temporary && cached != cache.end()) {
+        const auto &area = MappedAreas.at(GetStringAddr(cached->second));
+        if (have_id && area->file_device == uint64_t(st.st_dev) &&
+            area->file_inode == uint64_t(st.st_ino) && area->file_size == st.st_size) {
+            fclose(file);
+            return cached->second;
+        }
+        cache.erase(cached);
+    }
+#endif
 
+    int64_t size = ReadFileLength(file);
     if (size == 0)
     {
         rv = StackSlot::MakeEmptyString();
@@ -1311,20 +1319,6 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
         size_t bytes = length * FLOW_CHAR_SIZE;
 
 #ifdef FLOW_MMAP_HEAP
-        // A legacy copy must read the current source, even when a file at the
-        // same path was mapped earlier. Old string values retain the old mapping.
-        struct stat st;
-        bool have_id = legacy_file && bytes >= MIN_MMAP_SIZE && fstat(fileno(file), &st) == 0;
-        if (have_id && !temporary && cached != cache.end()) {
-            FlowPtr addr = GetStringAddr(cached->second);
-            auto old = LegacyFileBytes.find(addr);
-            const auto &area = MappedAreas.at(addr);
-            if (old != LegacyFileBytes.end() && old->second == size_t(size) &&
-                area->file_device == uint64_t(st.st_dev) && area->file_inode == uint64_t(st.st_ino)) {
-                fclose(file);
-                return cached->second;
-            }
-        }
         if (bytes >= MIN_MMAP_SIZE && MapStringPtr >= MapAreaBase &&
             bytes <= FlowPtrToInt(MapStringPtr) - FlowPtrToInt(MapAreaBase))
         {
@@ -1338,11 +1332,12 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
                     if (have_id) {
                         area->file_device = st.st_dev;
                         area->file_inode = st.st_ino;
+                        area->file_size = size;
                     }
                     MappedAreas[map_ptr] = area;
                     MapStringPtr = map_ptr;
 
-                    if (!temporary) {
+                    if (have_id) {
                         cache[filename] = rv;
                         area->filename = filename;
                     }

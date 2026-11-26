@@ -7,8 +7,10 @@
 #include <sstream>
 #ifndef _WIN32
 #include "core/ReplaceFile.h"
+#include "DownloadFilePermissions.h"
 #else
 #include <windows.h>
+#include <sddl.h>
 #include <io.h>
 #include <fcntl.h>
 #include <atomic>
@@ -277,7 +279,14 @@ static bool saveDownload(const HttpRequest &rq)
         }
         if (access(path.c_str(), W_OK) != 0) return false;
     } else if (errno != ENOENT) return false;
-    return replaceRegularFile(path, [&](FILE *out) { return writeDownload(rq, out); });
+    return replaceRegularFile(path, [&](FILE *out) { return writeDownload(rq, out); },
+        [&](int stage, const struct stat &expected) {
+            int source = open(path.c_str(), O_RDONLY | O_NOFOLLOW | O_NONBLOCK);
+            if (source < 0) return false;
+            bool ok = prepareDownloadFile(source, stage, expected);
+            close(source);
+            return ok;
+        });
 }
 #else
 static bool writeDownloadHandle(const HttpRequest &rq, HANDLE h)
@@ -287,6 +296,48 @@ static bool writeDownloadHandle(const HttpRequest &rq, HANDLE h)
     if (FILE *out = _fdopen(fd, "wb")) return writeAndCloseDownload(rq, out);
     _close(fd);
     return false;
+}
+
+// Query the open file, not a second pathname. A buffer large enough for just
+// the unnamed data stream suffices: more streams (or an unknown answer) veto
+// replacement. MoveFileEx does not merge streams like ReplaceFile does.
+static bool onlyDefaultStream(HANDLE h)
+{
+    const wchar_t unnamed[] = L"::$DATA";
+    alignas(FILE_STREAM_INFO) unsigned char buf[sizeof(FILE_STREAM_INFO) + sizeof(unnamed)];
+    if (!GetFileInformationByHandleEx(h, FileStreamInfo, buf, sizeof(buf))) return false;
+    const FILE_STREAM_INFO *s = reinterpret_cast<const FILE_STREAM_INFO*>(buf);
+    return !s->NextEntryOffset && s->StreamNameLength == sizeof(unnamed) - sizeof(wchar_t) &&
+           !memcmp(s->StreamName, unnamed, s->StreamNameLength);
+}
+
+static bool downloadSecurity(HANDLE h, std::vector<unsigned char> &descriptor)
+{
+    const SECURITY_INFORMATION fields = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION |
+        DACL_SECURITY_INFORMATION | LABEL_SECURITY_INFORMATION | ATTRIBUTE_SECURITY_INFORMATION | SCOPE_SECURITY_INFORMATION;
+    DWORD bytes = 0;
+    GetKernelObjectSecurity(h, fields, NULL, 0, &bytes);
+    if (!bytes) return false;
+    descriptor.resize(bytes);
+    return GetKernelObjectSecurity(h, fields, descriptor.data(), bytes, &bytes) != 0;
+}
+
+static bool sameDownloadSecurity(std::vector<unsigned char> &wanted, HANDLE stage)
+{
+    std::vector<unsigned char> actual;
+    if (!downloadSecurity(stage, actual)) return false;
+    if (wanted == actual) return true;
+    // Self-relative descriptors can have different offsets/defaulted flags.
+    // Compare their owner, group and ACLs (including the inherited/protected
+    // flags and the SACL entries returned by downloadSecurity).
+    const DWORD fields = OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION | SACL_SECURITY_INFORMATION;
+    LPWSTR a = NULL, b = NULL;
+    bool equal = ConvertSecurityDescriptorToStringSecurityDescriptorW(wanted.data(), SDDL_REVISION_1, fields, &a, NULL) &&
+                 ConvertSecurityDescriptorToStringSecurityDescriptorW(actual.data(), SDDL_REVISION_1, fields, &b, NULL) &&
+                 wcscmp(a, b) == 0;
+    LocalFree(a);
+    LocalFree(b);
+    return equal;
 }
 
 static bool saveDownload(const HttpRequest &rq)
@@ -299,14 +350,14 @@ static bool saveDownload(const HttpRequest &rq)
     std::vector<wchar_t> buffer(size);
     wchar_t *leaf = NULL;
     DWORD n = GetFullPathNameW(name.c_str(), size, buffer.data(), &leaf);
-    if (!n || n >= size || !leaf) return false;
+    if (!n || n >= size || !leaf || wcschr(leaf, L':')) return false;
     std::wstring path(buffer.data(), n), dir(buffer.data(), size_t(leaf - buffer.data()));
 
     // Check the existing target without truncating it. A device/pipe is a
     // stream; a reparse point must not be replaced with a new directory entry.
     std::vector<unsigned char> security;
     SECURITY_ATTRIBUTES attrs = {sizeof(SECURITY_ATTRIBUTES), NULL, FALSE};
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
     bool existing = h != INVALID_HANDLE_VALUE;
     if (!existing) {
@@ -315,22 +366,15 @@ static bool saveDownload(const HttpRequest &rq)
         DWORD type = GetFileType(h);
         if (type == FILE_TYPE_CHAR || type == FILE_TYPE_PIPE) return writeDownloadHandle(rq, h);
         BY_HANDLE_FILE_INFORMATION info;
+        DWORD flags = 0;
+        // In particular, never write plaintext staging data for an EFS file.
         bool regular = type == FILE_TYPE_DISK && GetFileInformationByHandle(h, &info) &&
-            !(info.dwFileAttributes & (FILE_ATTRIBUTE_DIRECTORY | FILE_ATTRIBUTE_REPARSE_POINT));
-        // A same-directory rename carries the stage's DACL. Do not create a
-        // more widely readable stage/replacement for an existing private file.
-        DWORD bytes = 0;
-        if (regular) {
-            GetKernelObjectSecurity(h, DACL_SECURITY_INFORMATION, NULL, 0, &bytes);
-            security.resize(bytes);
-            regular = bytes && GetKernelObjectSecurity(h, DACL_SECURITY_INFORMATION, security.data(), bytes, &bytes);
+            !(info.dwFileAttributes & ~(FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_ARCHIVE)) &&
+            GetVolumeInformationByHandleW(h, NULL, 0, NULL, NULL, &flags, NULL, 0) &&
+            (!(flags & FILE_NAMED_STREAMS) || onlyDefaultStream(h));
+        if (regular && (flags & FILE_PERSISTENT_ACLS)) {
+            regular = downloadSecurity(h, security);
             if (regular) attrs.lpSecurityDescriptor = security.data();
-            else {
-                // FAT/exFAT have no per-file ACL to copy.
-                DWORD flags = 0;
-                regular = GetVolumeInformationByHandleW(h, NULL, 0, NULL, NULL, &flags, NULL, 0) &&
-                          !(flags & FILE_PERSISTENT_ACLS);
-            }
         }
         CloseHandle(h);
         if (!regular) return false;
@@ -346,7 +390,13 @@ static bool saveDownload(const HttpRequest &rq)
             if (GetLastError() == ERROR_FILE_EXISTS) continue;
             return false;
         }
-        if (writeDownloadHandle(rq, h) && MoveFileExW(stage.c_str(), path.c_str(), existing ? MOVEFILE_REPLACE_EXISTING : 0)) return true;
+        // Inheritance can affect the descriptor assigned by CreateFile. Check
+        // the actual protection before writing a single byte to the stage.
+        if (!security.empty() && !sameDownloadSecurity(security, h)) {
+            CloseHandle(h);
+        } else if (writeDownloadHandle(rq, h) && MoveFileExW(stage.c_str(), path.c_str(), existing ? MOVEFILE_REPLACE_EXISTING : 0)) {
+            return true;
+        }
         DeleteFileW(stage.c_str());
         return false;
     }

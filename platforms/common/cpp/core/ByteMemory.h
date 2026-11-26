@@ -21,7 +21,7 @@ extern unsigned int MAX_HEAP_SIZE ;
 #define MAX_MEMORY_SIZE (MAX_HEAP_SIZE + FILE_MAP_MEMORY_SIZE)
 #endif
 
-#if !defined(WIN32)
+#if !defined(_WIN32) && !defined(WIN32)
 #define FLOW_MMAP_HEAP
 #endif
 

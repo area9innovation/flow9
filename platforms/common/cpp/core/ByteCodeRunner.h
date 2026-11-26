@@ -654,6 +654,7 @@ private:
         FlowPtr start;
         size_t length;
         uint64_t file_device = 0, file_inode = 0;
+        int64_t file_size = 0;
         std::string filename;
 
         // Binary decoding of a mapped file into a mapped area can produce refs.
