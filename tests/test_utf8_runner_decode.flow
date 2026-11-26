@@ -1,0 +1,69 @@
+import sys/target;
+import sys/system;
+import fs/filesystem;
+
+// Tests the C++ runner's UTF-8 decoder (parseUtf8) through getFileContent.
+// Other targets, cpp3 included, decode malformed bytes and lone surrogates their own way, so they skip.
+
+failures : ref int = ref 0;
+testFile = "test_utf8_runner_decode.bin";
+
+check(name : string, bytes : [int], expected : [int]) -> void {
+	setFileContentBytes(testFile, concatStrings(map(bytes, fromCharCode)));
+	actual = s2a(getFileContent(testFile));
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+r = 0xFFFD;
+
+testValid() -> void {
+	check("ASCII", [0x68, 0x69], [0x68, 0x69]);
+	check("2, 3 and 4 bytes", [0xC3, 0xA9, 0xE2, 0x82, 0xAC, 0xF0, 0x9F, 0x98, 0x80], [0xE9, 0x20AC, 0xD83D, 0xDE00]);
+	check("U+10FFFF", [0xF4, 0x8F, 0xBF, 0xBF], [0xDBFF, 0xDFFF]);
+	// WTF-8 (utf8_style_global_flag = false) writes surrogates one by one
+	check("WTF-8 lone surrogate", [0xED, 0xA0, 0x80], [0xD800]);
+}
+
+testMalformed() -> void {
+	// One U+FFFD per malformed part, and the characters after it are kept
+	check("stray continuation byte", [0x80, 0x41, 0x42], [r, 0x41, 0x42]);
+	check("lead byte without continuation", [0xE2, 0x41, 0x42, 0x43], [r, 0x41, 0x42, 0x43]);
+	check("cut 3-byte sequence", [0xE2, 0x82, 0x41], [r, 0x41]);
+	check("lead byte F7", [0xF7, 0xBF, 0xBF, 0xBF], [r, r, r, r]);
+	check("above U+10FFFF", [0xF4, 0x90, 0x80, 0x80], [r, r, r, r]);
+	check("overlong '/'", [0xC0, 0xAF], [r, r]);
+	check("NUL in Java's modified UTF-8", [0x41, 0xC0, 0x80, 0x42], [0x41, 0, 0x42]);
+	check("overlong 3 bytes", [0xE0, 0x80, 0xAF], [r, r, r]);
+	check("truncated at the end", [0x41, 0xF0, 0x9F, 0x98], [0x41, r]);
+}
+
+testFileReads() -> void {
+	check("UTF-16 with BOM", [0xFF, 0xFE, 0x41, 0x00, 0xAC, 0x20], [0x41, 0x20AC]);
+	check("empty file", [], []);
+	if (getFileContent(".") != "") {
+		failures := ^failures + 1;
+		println("FAIL: reading a directory should give an empty string");
+	}
+}
+
+main() {
+	if (cpp && !hasTargetName("cpp3")) {
+		testValid();
+		testMalformed();
+		testFileReads();
+		deleteFile(testFile);
+		if (^failures == 0) {
+			println("UTF-8 runner decode tests are OK in " + getTargetName());
+		} else {
+			println(i2s(^failures) + " UTF-8 runner decode tests FAILED in " + getTargetName());
+		}
+	} else {
+		println("UTF-8 runner decode tests skipped: they test the C++ runner, not " + getTargetName());
+	}
+	quit(^failures);
+}

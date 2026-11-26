@@ -1,0 +1,372 @@
+import text/binary;
+import dynamic;
+import math/bits;
+import math/math;
+import sys/target;
+
+// Tests of deserializeBinary (lib/text/binary.flow): values built by toBinary round-trip unchanged,
+// nesting up to 2048 containers decodes and can be printed/written again, deserializeBinary3 takes
+// another limit, and input that is too deep,
+// cut short, declares too many elements, has a footer of the wrong shape or a footer offset outside
+// the input yields the default value. Other damaged inputs are checked only on the Flow fallback.
+
+// A native that returns its input is not implemented, so deserializeBinary runs the flow fallback
+native nativeFromBinary : (s : string, default_ : flow, fixups : (string) -> Maybe<([flow]) -> flow>) -> flow = Native.fromBinary;
+
+BinTestDefault();
+BinTestLeaf(id : int, name : string, weight : double, flag : bool);
+BinTestNode(label : string, items : [flow], link : ref flow);
+BinTestChain(items : List<int>);
+BinTestBox(value : flow);
+BinTestEmpty();
+
+failures : ref int = ref 0;
+defaultValue = flow(BinTestDefault());
+
+// The default nesting limit of deserializeBinary and deserializeBinary2
+limit = 2048;
+
+failed(name : string, detail : string) -> void {
+	failures := ^failures + 1;
+	println("FAIL: " + name);
+	println("  " + detail);
+}
+
+check(name : string, actual : flow, expected : flow) -> void {
+	if (toString(actual) != toString(expected)) {
+		failed(name, "expected: " + strLeft(toString(expected), 200) + "\n  actual:   " + strLeft(toString(actual), 200));
+	}
+}
+
+checkRoundTrip(name : string, value : flow) -> void {
+	checkDecoded("round trip of " + name, toBinary(value), value);
+}
+
+// Exercise recursive printing and writing on accepted decoded values, not only the iterative reader
+checkDecoded(name : string, input : string, expected : flow) -> void {
+	actual = deserializeBinary(input, defaultValue);
+	if (strContains(toString(actual), "<native>")) {
+		failed(name, "runtime printer did not handle the entire decoded value");
+	}
+	check(name, actual, expected);
+	check(name + " writes again", flow(toBinary(actual)), flow(toBinary(expected)));
+}
+
+checkDamaged(name : string, input : string) -> void {
+	check("damaged " + name, deserializeBinary(input, defaultValue), defaultValue);
+}
+
+usesFlowFallback() -> bool {
+	sample = toBinary(flow([1, 2, 3]));
+	nativeFromBinary(sample, defaultValue, \__ -> None()) == flow(sample);
+}
+
+words2s(words : [int]) -> string {
+	concatStrings(map(words, fromCharCode));
+}
+
+// The two header words hold the footer offset the way toBinary writes it
+header(footerOffset : int) -> string {
+	words2s([bitAnd(footerOffset, 0xFFFF), bitUshr(footerOffset, 16)]);
+}
+
+footerOffsetOf(b : string) -> int {
+	stringbytes2int(strLeft(b, 2));
+}
+
+bodyOf(b : string) -> string {
+	substring(b, 2, footerOffsetOf(b) - 2);
+}
+
+footerOf(b : string) -> string {
+	strRight(b, footerOffsetOf(b));
+}
+
+assemble(body : string, footer : string) -> string {
+	header(strlen(body) + 2) + body + footer;
+}
+
+setWord(b : string, index : int, word : int) -> string {
+	strLeft(b, index) + fromCharCode(word) + strRight(b, index + 1);
+}
+
+setInt(b : string, index : int, value : int) -> string {
+	setWord(setWord(b, index, bitAnd(value, 0xFFFF)), index + 1, bitUshr(value, 16));
+}
+
+// The words of a string value shorter than 65536 characters
+stringWords(s : string) -> [int] {
+	concat([0xFFFA, strlen(s)], s2a(s));
+}
+
+nestedArrays(depth : int, inner : flow) -> flow {
+	fold(enumFromTo(1, depth), inner, \acc, __ -> flow([acc]));
+}
+
+nestedRefs(depth : int, inner : flow) -> flow {
+	fold(enumFromTo(1, depth), inner, \acc, __ -> flow(ref acc));
+}
+
+nestedStructs(depth : int, inner : flow) -> flow {
+	fold(enumFromTo(1, depth), inner, \acc, __ -> flow(BinTestBox(acc)));
+}
+
+// Each node adds two levels: the struct and its items array
+nestedNodes(count : int, inner : flow) -> flow {
+	fold(enumFromTo(1, count), inner, \acc, __ -> flow(BinTestNode("n", [acc], ref flow(0))));
+}
+
+sampleLeaf = flow(BinTestLeaf(2, "alpha", 1.5, false));
+sampleNode = flow(BinTestNode("root", [sampleLeaf, flow([flow(1), flow("beta")])], ref flow(7)));
+sampleMix = flow([sampleLeaf, flow([flow(1), flow("beta")]), flow(2.5), flow(true)]);
+
+// A footer entry: the arity and the name of a struct
+structDef(arity : int, name : string) -> [int] {
+	concat([0xFFF8, 2, arity], stringWords(name));
+}
+
+testRoundTrips() -> void {
+	emptyArray : [int] = [];
+	checkRoundTrip("int", flow(42));
+	checkRoundTrip("negative int", flow(-7));
+	checkRoundTrip("big int", flow(123456789));
+	checkRoundTrip("double", flow(3.25));
+	checkRoundTrip("true", flow(true));
+	checkRoundTrip("false", flow(false));
+	checkRoundTrip("string", flow("héllo, wörld"));
+	checkRoundTrip("empty string", flow(""));
+	checkRoundTrip("long string", flow(strRepeat("x", 70000)));
+	checkRoundTrip("empty array", flow(emptyArray));
+	checkRoundTrip("array", flow([1, 2, 3]));
+	checkRoundTrip("long array", flow(generate(0, 70000, \i -> i)));
+	checkRoundTrip("struct", sampleLeaf);
+	checkRoundTrip("zero-field struct", flow(BinTestEmpty()));
+	checkRoundTrip("arrays nested " + i2s(limit) + " deep", nestedArrays(limit, flow(1)));
+	checkRoundTrip("refs nested " + i2s(limit) + " deep", nestedRefs(limit, flow(1)));
+	checkRoundTrip("structs nested " + i2s(limit) + " deep", nestedStructs(limit, flow(1)));
+	checkRoundTrip("ref", flow(ref 5));
+	checkRoundTrip("nested value", sampleNode);
+	checkRoundTrip("nodes nested " + i2s(limit / 2) + " deep (" + i2s(limit) + " containers)", nestedNodes(limit / 2, flow(1)));
+	checkRoundTrip("siblings each use their own depth", flow([nestedArrays(limit - 1, flow(1)), nestedRefs(limit - 1, flow(1)), nestedStructs(limit - 1, flow(1))]));
+	// Each link of a List is a struct, and so is its EmptyList: a List of 2047 is as deep as the limit allows
+	checkRoundTrip("a List of " + i2s(limit - 1), flow(fold(enumFromTo(1, limit - 1), makeList(), \acc, i -> Cons(i, acc))));
+}
+
+// BinTestChain, 2046 Cons structs and EmptyList together use exactly 2048 containers.
+// Longer linked lists need deserializeBinary3, or a shallower representation such as an array.
+testChainDecoding() -> void {
+	name = "a struct holding a List of " + i2s(limit - 2) + " decodes";
+	items = enumFromTo(1, limit - 2);
+	// Struct tags 0xFFF4 with the footer indexes of BinTestChain, Cons and EmptyList
+	body = words2s(concat3([0xFFF4, 0], concatA(map(items, \i -> [0xFFF4, 1, i])), [0xFFF4, 2]));
+	footer = words2s(concat([0xFFF8, 3], concat3(structDef(1, "BinTestChain"), structDef(2, "Cons"), structDef(0, "EmptyList"))));
+	decoded = deserializeBinary(assemble(body, footer), defaultValue);
+	if (isSameStructType(decoded, BinTestChain(makeList()))) {
+		chain : BinTestChain = cast(decoded : flow -> BinTestChain);
+		// list2array yields the innermost Cons first
+		check(name, flow(list2array(chain.items)), flow(reverseA(items)));
+	} else {
+		failed(name, "actual: " + strLeft(toString(decoded), 200));
+	}
+	iter([limit - 1, 3000], \count -> {
+		longerBody = words2s(concat3([0xFFF4, 0], concatA(map(enumFromTo(1, count), \i -> [0xFFF4, 1, i])), [0xFFF4, 2]));
+		checkDamaged("a struct holding a List of " + i2s(count), assemble(longerBody, footer));
+	});
+}
+
+// Build nested input independently of the recursive writer, including values it cannot round-trip
+nestedBody(prefix : [int], depth : int, leaf : [int]) -> string {
+	words2s(concat(concatA(generate(0, depth, \__ -> prefix)), leaf));
+}
+
+testNestingLimit() -> void {
+	emptyFooter = fromCharCode(0xFFF7);
+	boxFooter = words2s(concat([0xFFF8, 1], structDef(1, "BinTestBox")));
+	emptyStructFooter = words2s(concat([0xFFF8, 1], structDef(0, "BinTestEmpty")));
+	iter([limit - 1, limit, limit + 1], \depth -> {
+		iter([[0xFFF8, 1], [0xFFF9, 1, 0]], \prefix -> {
+			input = assemble(nestedBody(prefix, depth, [5]), emptyFooter);
+			name = "array nesting " + i2s(depth) + " tag " + i2s(prefix[0]);
+			if (depth <= limit) checkDecoded(name, input, nestedArrays(depth, flow(5)))
+			else checkDamaged(name, input);
+		});
+		refs = assemble(nestedBody([0xFFF6], depth, [5]), emptyFooter);
+		structs = assemble(nestedBody([0xFFF4, 0], depth, [5]), boxFooter);
+		if (depth <= limit) {
+			checkDecoded("ref nesting " + i2s(depth), refs, nestedRefs(depth, flow(5)));
+			checkDecoded("struct nesting " + i2s(depth), structs, nestedStructs(depth, flow(5)));
+		} else {
+			checkDamaged("ref nesting " + i2s(depth), refs);
+			checkDamaged("struct nesting " + i2s(depth), structs);
+		}
+	});
+	// Empty containers still add one level, although they do not leave an open frame
+	iter([limit - 1, limit], \depth -> {
+		iter([[0xFFF7], [0xFFF8, 0], [0xFFF9, 0, 0]], \leaf -> {
+			input = assemble(nestedBody([0xFFF6], depth, leaf), emptyFooter);
+			empty : [flow] = [];
+			name = "empty array at " + i2s(depth + 1) + " tag " + i2s(leaf[0]);
+			if (depth < limit) checkDecoded(name, input, nestedRefs(depth, flow(empty)))
+			else checkDamaged(name, input);
+		});
+		input = assemble(nestedBody([0xFFF8, 1], depth, [0xFFF4, 0]), emptyStructFooter);
+		name = "empty struct at " + i2s(depth + 1);
+		if (depth < limit) checkDecoded(name, input, nestedArrays(depth, flow(BinTestEmpty())))
+		else checkDamaged(name, input);
+	});
+	// Scalar leaves do not count, and mixed container kinds share one budget
+	iter([flow(5), flow(123456789), flow(3.25), flow(true), flow(false), flow("s"), flow("")], \leaf -> {
+		checkRoundTrip("scalar below " + i2s(limit) + " containers", nestedArrays(limit, leaf));
+	});
+	third = limit / 3;
+	checkRoundTrip("mixed nesting " + i2s(limit), nestedArrays(limit - 2 * (third + 1), nestedRefs(third + 1, nestedStructs(third + 1, flow(5)))));
+	checkDamaged("mixed nesting " + i2s(limit + 1), toBinary(nestedArrays(limit + 1 - 2 * (third + 1), nestedRefs(third + 1, nestedStructs(third + 1, flow(5))))));
+	// No struct constructor fixup runs on a chain rejected before its innermost value
+	calls = ref 0;
+	fixups = setTree(makeTree(), "BinTestBox", \args -> {
+		calls := ^calls + 1;
+		flow(BinTestBox(args[0]));
+	});
+	accepted = assemble(nestedBody([0xFFF4, 0], limit, [5]), boxFooter);
+	check("fixups at depth " + i2s(limit), deserializeBinary2(accepted, fixups, defaultValue), nestedStructs(limit, flow(5)));
+	check(i2s(limit) + " fixup calls", flow(^calls), flow(limit));
+	calls := 0;
+	rejected = assemble(nestedBody([0xFFF4, 0], limit + 1, [5]), boxFooter);
+	check("fixups at depth " + i2s(limit + 1), deserializeBinary2(rejected, fixups, defaultValue), defaultValue);
+	check("no rejected fixup calls", flow(^calls), flow(0));
+	// Former unbounded-depth cases now exercise prompt default handling instead
+	checkDamaged("arrays nested 100000 deep", assemble(nestedBody([0xFFF8, 1], 100000, [5]), emptyFooter));
+	checkDamaged("refs nested 100000 deep", assemble(nestedBody([0xFFF6], 100000, [5]), emptyFooter));
+}
+
+// How many arrays of one element are nested around the int 5, or -1 for another leaf; a loop, as a
+// value this deep cannot be printed
+arrayDepth(v : flow, depth : int) -> int {
+	if (isArray(v) && length(cast(v : flow -> [flow])) == 1) arrayDepth(cast(v : flow -> [flow])[0], depth + 1)
+	else if (isSameObj(v, flow(5))) depth
+	else -1;
+}
+
+testCustomLimit() -> void {
+	emptyFooter = fromCharCode(0xFFF7);
+	noFixups : Tree<string, ([flow]) -> flow> = makeTree();
+	// A lower limit
+	iter([10, 11], \depth -> {
+		input = assemble(nestedBody([0xFFF8, 1], depth, [5]), emptyFooter);
+		expected = if (depth <= 10) nestedArrays(depth, flow(5)) else defaultValue;
+		check("arrays nested " + i2s(depth) + " deep with limit 10", deserializeBinary3(input, noFixups, defaultValue, 10), expected);
+	});
+	check("a scalar with limit 0", deserializeBinary3(toBinary(flow(5)), noFixups, defaultValue, 0), flow(5));
+	empty : [flow] = [];
+	check("an empty array with limit 0", deserializeBinary3(toBinary(flow(empty)), noFixups, defaultValue, 0), defaultValue);
+	// A higher limit, as a compiler reading its own cache passes
+	deep = 100000;
+	decoded = deserializeBinary3(assemble(nestedBody([0xFFF8, 1], deep, [5]), emptyFooter), noFixups, defaultValue, 1000000);
+	check("arrays nested " + i2s(deep) + " deep with limit 1000000", flow(arrayDepth(decoded, 0)), flow(deep));
+}
+
+testMoreElementsThanInput() -> void {
+	// The count word follows the array tag
+	b = toBinary(flow([1, 2, 3]));
+	checkDamaged("array count past the end", setWord(b, strIndexOf(b, fromCharCode(0xFFF8)) + 1, 60000));
+	l = toBinary(flow(generate(0, 70000, \i -> i)));
+	checkDamaged("long array count past the end", setInt(l, strIndexOf(l, fromCharCode(0xFFF9)) + 1, 1000000));
+	// The footer holds [[arity, name]] for each struct, the arity is its third word
+	s = toBinary(sampleLeaf);
+	checkDamaged("struct arity past the end", assemble(bodyOf(s), setWord(footerOf(s), 4, 50)));
+}
+
+testTruncated() -> void {
+	b = toBinary(sampleMix);
+	body = bodyOf(b);
+	footer = footerOf(b);
+	iter(enumFromTo(0, strlen(body) - 1), \n -> {
+		checkDamaged("body cut to " + i2s(n) + " words", assemble(strLeft(body, n), footer));
+	});
+	iter([1, 2, 5, strlen(b) / 2, strlen(b) - 1], \n -> {
+		checkDamaged("input cut to " + i2s(n) + " words", strLeft(b, n));
+	});
+	// A ref tag 0xFFF6 with no value after it; 0xFFF7 is an empty footer
+	checkDamaged("ref cut short", assemble(fromCharCode(0xFFF6), fromCharCode(0xFFF7)));
+}
+
+testFooterOffset() -> void {
+	b = toBinary(flow([1, 2, 3]));
+	rest = strRight(b, 2);
+	n = strlen(b);
+	checkDamaged("footer offset 0", header(0) + rest);
+	checkDamaged("footer offset at the body start", header(2) + rest);
+	checkDamaged("footer offset at the end", header(n) + rest);
+	checkDamaged("footer offset past the end", header(n + 10) + rest);
+	checkDamaged("footer offset far past the end", header(0x7FFFFFFF) + rest);
+	checkDamaged("negative footer offset", header(-5) + rest);
+	// A first int of 1 means the offset is split over the next two ints
+	checkDamaged("six word header with offset 0", header(1) + header(0) + header(0) + rest);
+	checkDamaged("six word header cut short", header(1) + fromCharCode(0));
+	checkDamaged("empty input", "");
+	checkDamaged("one word input", fromCharCode(0xFFF7));
+}
+
+// A footer entry is [arity, name]: an array of exactly an int and a string
+testFooterShape() -> void {
+	body = bodyOf(toBinary(sampleLeaf));
+	name = stringWords("BinTestLeaf");
+	footer = \entry : [int] -> words2s(concat([0xFFF8, 1], entry));
+	checkDamaged("footer entry of one element", assemble(body, footer([0xFFF8, 1, 4])));
+	checkDamaged("footer entry of three elements", assemble(body, footer(concat3([0xFFF8, 3, 4], name, [0]))));
+	checkDamaged("footer entry that is an int", assemble(body, footer([4])));
+	checkDamaged("footer arity that is a string", assemble(body, footer(concat3([0xFFF8, 2], stringWords("4"), name))));
+	checkDamaged("footer arity that is a double", assemble(body, footer(concat3([0xFFF8, 2], s2a(bodyOf(toBinary(flow(4.5)))), name))));
+	checkDamaged("negative footer arity", assemble(body, footer(concat([0xFFF8, 2, 0xFFF5, 0xFFFF, 0xFFFF], name))));
+	checkDamaged("footer name that is an int", assemble(body, footer([0xFFF8, 2, 4, 7])));
+	checkDamaged("footer name cut short", assemble(body, footer([0xFFF8, 2, 4, 0xFFFA, 11, 0x42])));
+	checkDamaged("footer that is an int", assemble(body, words2s([4])));
+	// A valid footer may hold entries the body does not use
+	unused = concat([0xFFF8, 2, 0], stringWords("BinTestDefault"));
+	twoEntries = words2s(concat3([0xFFF8, 2, 0xFFF8, 2, 4], name, unused));
+	check("footer with an unused entry", deserializeBinary(assemble(body, twoEntries), defaultValue), sampleLeaf);
+}
+
+testStructIndex() -> void {
+	// The struct index word follows the struct tag; only one struct is defined
+	b = toBinary(flow([flow(true), sampleLeaf, flow(false)]));
+	checkDamaged("struct index out of range", setWord(b, strIndexOf(b, fromCharCode(0xFFF4)) + 1, 7));
+}
+
+testNegativeCounts() -> void {
+	s = toBinary(flow(strRepeat("x", 70000)));
+	checkDamaged("negative long string length", setInt(s, strIndexOf(s, fromCharCode(0xFFFB)) + 1, -1));
+	l = toBinary(flow(generate(0, 70000, \i -> i)));
+	checkDamaged("negative long array count", setInt(l, strIndexOf(l, fromCharCode(0xFFF9)) + 1, -1));
+}
+
+testDamagedInputs() -> void {
+	start = timestamp();
+	testMoreElementsThanInput();
+	testTruncated();
+	testFooterOffset();
+	testFooterShape();
+	testStructIndex();
+	testNegativeCounts();
+	println("  damaged inputs handled in " + d2s(roundTo(timestamp() - start, 0.1)) + " ms");
+}
+
+main() {
+	testRoundTrips();
+	testChainDecoding();
+	testNestingLimit();
+	testCustomLimit();
+	if (usesFlowFallback()) {
+		testDamagedInputs();
+	} else {
+		println("  other damaged inputs are not checked: " + getTargetName() + " deserialises natively");
+	}
+
+	if (^failures == 0) {
+		println("Binary deserialize tests are OK in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " binary deserialize test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}

@@ -862,6 +862,13 @@ void iosGLRenderSupport::resolvePictureDataAsBitmap(unicode_string url, NSData *
     GLuint width = CGImageGetWidth(cg_image);
     GLuint height = CGImageGetHeight(cg_image);
 
+    // The bitmap is sized from the image, so refuse a size no bitmap may hold before drawing into it
+    if (GLTextureBitmap::bitmapBytes(ivec2(width, height), GL_RGBA) == 0) {
+        [image release];
+        resolvePictureError(url, NS2UNICODE(@"Image size out of range"));
+        return;
+    }
+
     GLTextureBitmap::Ptr bmp(new GLTextureBitmap(ivec2(width, height), GL_RGBA));
     void * imageData = bmp->getDataPtr();
     
@@ -1560,6 +1567,7 @@ void iosGLRenderSupport::callFlowFromJS(UIView * web_view, NSString * absolute_u
         ByteCodeRunner * RUNNER = getFlowRunner();
         RUNNER_DefSlots1(arr);
         arr = RUNNER->AllocateArray([args count] - 1);
+        if (RUNNER->IsErrorReported()) return;
         for (int i = 0; i < [args count] - 1; ++i) {
             RUNNER->SetArraySlot(arr, i, jsstring2stackslot([args objectAtIndex: i + 1]));
         }
@@ -2261,4 +2269,3 @@ void iosGLRenderSupport::doTakeAudioRecord() {
         getFlowRunner()->NotifyCameraEventAudio(5, "Nothing to save yet", lastCameraAdditionalArgs, -1, -1);
     }
 }
-

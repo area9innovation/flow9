@@ -1,7 +1,9 @@
 #include "TextFont.h"
 
+#include <cstring>
+
 bool TextFont::operator== (const TextFont &tf2) const {
-    return STL_HASH<TextFont>()(*this) == STL_HASH<TextFont>()(tf2);
+    return family == tf2.family && weight == tf2.weight && style == tf2.style;
 }
 
 std::size_t STL_HASH<TextFont>::operator()(const TextFont& tf) const {
@@ -49,7 +51,8 @@ bool endsWith(std::string const& text, std::string const& suffix) {
 }
 
 TextStyle TextFont::textStyleByName(std::string slope) {
-    slope[0] = (char)toupper(slope[0]);
+    if (!slope.empty())
+        slope[0] = (char)toupper((unsigned char)slope[0]);
     if (!slope.compare("Italic")) {
         return TextStyle::Italic;
     } else if (!slope.compare("Oblique")) {
@@ -63,54 +66,51 @@ TextFont TextFont::makeWithFamily(std::string family) {
     return makeWithParameters(family, TextWeight::Regular, "");
 }
 
+struct FamilySuffix {
+    const char *text;
+    bool isStyle;
+    TextWeight weight;
+    TextStyle style;
+};
+
+// Only names that weightSuffix() and styleSuffix() give back, because family + suffix()
+// is the font's asset path and its key: an alias such as ExtraLight would lose the name.
+static const FamilySuffix familySuffixes[] = {
+    { "Thin", false, TextWeight::Thin, TextStyle::Normal },
+    { "UltraLight", false, TextWeight::UltraLight, TextStyle::Normal },
+    { "Light", false, TextWeight::Light, TextStyle::Normal },
+    { "Regular", false, TextWeight::Regular, TextStyle::Normal },
+    { "Normal", false, TextWeight::Regular, TextStyle::Normal },
+    { "Medium", false, TextWeight::Medium, TextStyle::Normal },
+    { "SemiBold", false, TextWeight::SemiBold, TextStyle::Normal },
+    { "Bold", false, TextWeight::Bold, TextStyle::Normal },
+    { "ExtraBold", false, TextWeight::ExtraBold, TextStyle::Normal },
+    { "Black", false, TextWeight::Black, TextStyle::Normal },
+    { "Italic", true, TextWeight::Regular, TextStyle::Italic },
+    { "Oblique", true, TextWeight::Regular, TextStyle::Oblique },
+};
+
+// The longest match wins, so "ExtraBold" is never read as "Bold".
+static const FamilySuffix *longestFamilySuffix(const std::string &family) {
+    const FamilySuffix *best = nullptr;
+    for (const FamilySuffix &suffix : familySuffixes) {
+        if (endsWith(family, suffix.text) && (!best || strlen(suffix.text) > strlen(best->text)))
+            best = &suffix;
+    }
+    return best;
+}
+
 TextFont TextFont::makeWithParameters(std::string fontfamily, int weight, std::string slope){
     TextFont font = TextFont();
     font.weight = (TextWeight)weight;
     font.style = textStyleByName(slope);
 
-    while (true) {
-        size_t chopSize = 0;
-        if (endsWith(fontfamily, "Thin")) {
-            font.weight = TextWeight::Thin;
-            chopSize = 4;
-        } else if (endsWith(fontfamily, "UltraLight")) {
-            font.weight = TextWeight::UltraLight;
-            chopSize = 10;
-        } else if (endsWith(fontfamily, "Light")) {
-            font.weight = TextWeight::Light;
-            chopSize = 5;
-        } else if (endsWith(fontfamily, "Regular")) {
-            font.weight = TextWeight::Regular;
-            chopSize = 7;
-        } else if (endsWith(fontfamily, "Normal")) {
-            font.weight = TextWeight::Regular;
-            chopSize = 6;
-        } else if (endsWith(fontfamily, "Medium")) {
-            font.weight = TextWeight::Medium;
-            chopSize = 6;
-        } else if (endsWith(fontfamily, "SemiBold")) {
-            font.weight = TextWeight::SemiBold;
-            chopSize = 8;
-        } else if (endsWith(fontfamily, "Bold")) {
-            font.weight = TextWeight::Bold;
-            chopSize = 4;
-        } else if (endsWith(fontfamily, "ExtraBold")) {
-            font.weight = TextWeight::ExtraBold;
-            chopSize = 9;
-        } else if (endsWith(fontfamily, "Black")) {
-            font.weight = TextWeight::Black;
-            chopSize = 5;
-        } else if (endsWith(fontfamily, "Italic")) {
-            font.style = TextStyle::Italic;
-            chopSize = 6;
-        } else if (endsWith(fontfamily, "Oblique")) {
-            font.style = TextStyle::Oblique;
-            chopSize = 7;
-        } else {
-            break;
-        }
-
-        fontfamily = chop(fontfamily, chopSize);
+    while (const FamilySuffix *suffix = longestFamilySuffix(fontfamily)) {
+        if (suffix->isStyle)
+            font.style = suffix->style;
+        else
+            font.weight = suffix->weight;
+        fontfamily = chop(fontfamily, strlen(suffix->text));
     }
 
     font.family = fontfamily;

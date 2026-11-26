@@ -59,6 +59,8 @@ class RenderSupport {
 	public static var viewportScaleWorkaroundEnabled : Bool = Util.getParameter("viewport_scale_disabled") != "0" && isViewportScaleWorkaroundEnabled();
 	// Don't wait for fonts to load
 	public static var mainNoDelay : Bool = Util.getParameter("main_no_delay") != "0";
+	// Wait for pending timer(0) layout before window.print(). Disable with defer_queue_print=0.
+	public static var PrintWaitsForDeferQueue : Bool = Util.getParameter("defer_queue_print") != "0";
 	public static var HandlePointerTouchEvent : Bool = Util.getParameter("pointer_touch_event") != "0";
 	public static var TextClipWidthUpdateOptimizationEnabled : Bool = Util.getParameter("text_update_enabled") != "0";
 	public static var PinchToScaleEnabled : Bool = true;
@@ -302,6 +304,26 @@ class RenderSupport {
 				setAccessibilityZoom(Lambda.fold(accessibilityZoomValues, function(a, b) { return a > b && a < getAccessibilityZoom() ? a : b; }, 0.25));
 			}
 		}
+	}
+
+	private static var mouseWheelZoomClaims : Int = 0;
+	private static var mouseWheelZoomGesture : Bool = false;
+
+	// While claimed, Ctrl+wheel (Cmd+wheel or trackpad pinch on macOS) goes to flow wheel handlers instead of zooming the page
+	public static function claimMouseWheelZoom() : Void -> Void {
+		mouseWheelZoomClaims++;
+		var released = false;
+
+		return function() {
+			if (!released) {
+				released = true;
+				mouseWheelZoomClaims--;
+			}
+		};
+	}
+
+	public static function isMouseWheelZoomGesture() : Bool {
+		return mouseWheelZoomGesture;
 	}
 
 	private static var onMouseWheelAccessibilityZoomEnabled = true;
@@ -555,16 +577,29 @@ class RenderSupport {
 		emit("beforeprint");
 
 		var openPrintDialog = function () {
-			forceRender();
-			PixiStage.onImagesLoaded(function () {
-				if (forceOnAfterprint) {
-					// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI.
-					PixiStage.once("drawframe", function() {
-						emit("afterprint");
-					});
+			// Content mounted for printing may still have layout pending in timer(0) callbacks
+			// window.print() blocks the page, so those would only run after the snapshot.
+			// Wait for the defer queue to drain, bounded in case something keeps rescheduling timer(0) forever.
+			var settleDeadline = NativeTime.timestamp() + 2000.0;
+			var printWhenSettled : Void -> Void = null;
+			printWhenSettled = function () {
+				forceRender();
+				if (PrintWaitsForDeferQueue && !Native.isDeferQueueIdle() && NativeTime.timestamp() < settleDeadline) {
+					Browser.window.setTimeout(printWhenSettled, 10);
+					return;
 				}
-				Browser.window.print();
-			});
+
+				PixiStage.onImagesLoaded(function () {
+					if (forceOnAfterprint) {
+						// There is a bug in Chrome - it doesn't trigger 'afterprint' event in case of calling print dialog from code before you call it from UI.
+						PixiStage.once("drawframe", function() {
+							emit("afterprint");
+						});
+					}
+					Browser.window.print();
+				});
+			};
+			printWhenSettled();
 		};
 
 		PixiStage.once("drawframe", openPrintDialog);
@@ -1900,8 +1935,10 @@ class RenderSupport {
 			var sX = 0.0, sY = 0.0,	// spinX, spinY
 				pX = 0.0, pY = 0.0;	// pixelX, pixelY
 
+			mouseWheelZoomGesture = mouseWheelZoomClaims > 0 && (event.ctrlKey == true || Platform.isMacintosh && event.metaKey == true);
+
 			// prevents swipe back for Safari
-			if (isRenderRoot || Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+			if (isRenderRoot || mouseWheelZoomGesture || Platform.isSafari && event.deltaX < 0 && Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
 				event.preventDefault();
 			}
 			if (isRenderRoot) {
@@ -1936,6 +1973,12 @@ class RenderSupport {
 				}
 			}
 
+			// Claimed zoom keeps the gesture's sign and size: a mouse notch is about 100 px, one spin
+			if (mouseWheelZoomGesture) {
+				if (pX != 0.0 && sX == 0.0) { sX = pX / 100.0; }
+				if (pY != 0.0 && sY == 0.0) { sY = pY / 100.0; }
+			}
+
 			// Fall-back if spin cannot be determined
 			if (!ScrollCatcherEnabled) {
 				if (pX != 0.0 && sX == 0.0) { sX = (pX < 1.0) ? -1.0 : 1.0; }
@@ -1947,9 +1990,11 @@ class RenderSupport {
 				sY = 0.0;
 			}
 
-			if (RendererType != "html" || !onMouseWheelAccessibilityZoom(event, -sX, -sY)) {
+			if (mouseWheelZoomGesture || RendererType != "html" || !onMouseWheelAccessibilityZoom(event, -sX, -sY)) {
 				listener(new Point(-sX, -sY));
 			}
+
+			mouseWheelZoomGesture = false;
 
 			return false;
 		};

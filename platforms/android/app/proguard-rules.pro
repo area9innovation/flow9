@@ -27,19 +27,20 @@
 #   * reads the `c_ptr` long field (GetFieldID)
 #   * invokes all cb* callback methods (GetMethodID)
 #   * calls its native methods
-# Keep the class, the c_ptr field, and every cb* callback (including private ones).
+#
+# Keep the ENTIRE class (`*;`). Do NOT try to enumerate members by return type:
+# an earlier version of this file listed `void/boolean/int/long/String/Object`
+# cb* overloads and silently missed `byte[] cbLoadAssetData`, `int[]`, `float`
+# and `WebSocketClient` returning callbacks. R8 renamed those, and the app died
+# at startup with:
+#   java.lang.NoSuchMethodError: no non-static method
+#   "Ldk/area9/flowrunner/FlowRunnerWrapper;.cbLoadAssetData(Ljava/lang/String;)[B"
+#       at dk.area9.flowrunner.FlowRunnerWrapper.initLibrary(Native Method)
+# Because every member here is reachable only from C++, R8 can never prove
+# reachability itself -- keeping the whole class is the only safe option.
 # -----------------------------------------------------------------------------
 -keep class dk.area9.flowrunner.FlowRunnerWrapper {
-    long c_ptr;
-    private void cb*(...);
-    void cb*(...);
-    boolean cb*(...);
-    int cb*(...);
-    long cb*(...);
-    java.lang.String cb*(...);
-    java.lang.Object cb*(...);
-    <init>(...);
-    native <methods>;
+    *;
 }
 
 # -----------------------------------------------------------------------------
@@ -50,27 +51,19 @@
 
 # Constructed from native via FindClass + <init> (Ljava/lang/String;Ljava/lang/String;IIII)V
 -keep class dk.area9.flowrunner.FlowAccessibleClip {
-    <init>(...);
-    <fields>;
-    <methods>;
+    *;
 }
 
 # Nested object classes referenced from native (FindClass on the $-mangled name).
 # Their fields are read/written directly by C++, so keep all members.
 -keep class dk.area9.flowrunner.FlowMediaStreamSupport$FlowMediaStreamObject {
-    <fields>;
-    <methods>;
-    <init>(...);
+    *;
 }
 -keep class dk.area9.flowrunner.FlowMediaRecorderSupport$FlowMediaRecorderObject {
-    <fields>;
-    <methods>;
-    <init>(...);
+    *;
 }
 -keep class dk.area9.flowrunner.FlowWebRTCSupport$FlowMediaSenderObject {
-    <fields>;
-    <methods>;
-    <init>(...);
+    *;
 }
 
 # Keep the enclosing support classes (they hold the nested JNI object types and
@@ -137,3 +130,58 @@
 
 # org.json is provided by the Android platform (excluded from socket.io dep)
 -dontwarn org.json.**
+
+# -----------------------------------------------------------------------------
+# Resource lookup via reflection. The runner resolves app resources by name:
+#   Class.forName(getPackageName() + ".R$layout").getDeclaredField("debugview")
+#   Class.forName(getPackageName() + ".R$id").getField("log_view") ...
+# (FlowRunnerActivity.createContentView / showPopupMenu, LauncherActivity.onCreate)
+# R8 full mode inlines and REMOVES R classes because this code holds no static
+# references to them. Class.forName then throws ClassNotFoundException inside
+# createContentView, whose catch block swallows it -> mView stays null ->
+# NullPointerException at mView.addView(menu_anchor) in onCreate (Play crash on
+# dk.area9.light_reader). Keep R classes (app runtime package is per-app under
+# dk.area9.*, namespace is dk.area9.flowrunner) as real classes with fields.
+# -----------------------------------------------------------------------------
+# The R class is generated into the app's `namespace`, which this build sets to
+# PACKAGE_ID (app/build.gradle: `namespace = PACKAGE_ID`). That is a PER-APP id,
+# e.g. uk.harpercollins.collinshub or dk.area9.light_reader -- NOT dk.area9.**.
+# getPackageName() returns that same id, so the reflection resolves
+# "<PACKAGE_ID>.R$layout". A package-scoped rule such as `dk.area9.**.R$*` only
+# matches the library R class and silently misses the real one. Keep R classes
+# in EVERY package so the rules work for any PACKAGE_ID the runner is built with.
+-keep class **.R { *; }
+-keep class **.R$* { *; }
+
+# -----------------------------------------------------------------------------
+# WebView JavaScript bridge. WebWidget registers FlowJSInterface via
+# addJavascriptInterface(..., "flow"); JS calls flow.callflow(...). The method
+# is invoked by NAME from JavaScript, so R8 must not rename it. The default
+# proguard-android-optimize.txt does NOT cover @JavascriptInterface.
+# -----------------------------------------------------------------------------
+-keepclassmembers class * {
+    @android.webkit.JavascriptInterface <methods>;
+}
+-keep class dk.area9.flowrunner.FlowJSInterface { *; }
+
+# -----------------------------------------------------------------------------
+# androidx @Keep support. The default proguard-android-optimize.txt only honors
+# the legacy android.support.annotation.Keep, not androidx.annotation.Keep.
+# -----------------------------------------------------------------------------
+-keep class androidx.annotation.Keep
+-keep @androidx.annotation.Keep class * { *; }
+-keepclassmembers class * {
+    @androidx.annotation.Keep <methods>;
+    @androidx.annotation.Keep <fields>;
+    @androidx.annotation.Keep <init>(...);
+}
+
+# -----------------------------------------------------------------------------
+# Application class + optional Localytics, loaded reflectively by name from
+# FlowRunnerApp/FlowRunnerActivity (localytics.jar is a plain jar linked only
+# when LINK_LOCALYTICS=true, so it ships no consumer rules). The reflection is
+# wrapped in try/catch, but keep the names so it works when the jar IS linked.
+# -----------------------------------------------------------------------------
+-keep class dk.area9.flowrunner.FlowRunnerApp { *; }
+-keep class com.localytics.android.** { *; }
+-dontwarn com.localytics.android.**

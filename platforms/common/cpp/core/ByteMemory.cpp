@@ -18,9 +18,10 @@ unsigned int MAX_HEAP_SIZE = (1024 * 1048576);
 
 #define START_SHIFT alloc_step_size()
 
-ByteMemory::ByteMemory(size_t size)
+ByteMemory::ByteMemory(size_t size) : RangeLimit(align_down(MAX_MEMORY_SIZE, page_size()))
 {
-    if (!reserve(MAX_MEMORY_SIZE + 2*START_SHIFT))
+    const size_t limit = MAX_MEMORY_SIZE;
+    if (limit > SIZE_MAX - 2*START_SHIFT || !reserve(limit + 2*START_SHIFT))
     {
         cerr << "Could not allocate heap address space. Error: " << errno << endl;
         abort();
@@ -34,6 +35,8 @@ ByteMemory::ByteMemory(size_t size)
 
 void ByteMemory::SetSize(size_t size)
 {
+    if (size > RangeLimit)
+        ReportFailure(MakeFlowPtr(0), size, true);
     size = align_up(size, page_size());
     if (size > BufferSize)
         CommitRange(MakeFlowPtr(BufferSize), MakeFlowPtr(size));
@@ -44,14 +47,14 @@ void ByteMemory::SetSize(size_t size)
 
 void ByteMemory::CommitRange(FlowPtr start, FlowPtr end)
 {
-    size_t soff = align_down(FlowPtrToInt(start), page_size());
-    size_t eoff = align_up(FlowPtrToInt(end), page_size());
+    const size_t page = page_size();
+    if (start > end || FlowPtrToInt(end) > RangeLimit)
+        ReportFailure(start, 0, true);
+    if (start == end)
+        return;
 
-    if (eoff > MAX_MEMORY_SIZE)
-    {
-        cerr << "Trying to commit heap beyond hard limit: " << eoff << endl;
-        abort();
-    }
+    size_t soff = align_down(FlowPtrToInt(start), page);
+    size_t eoff = align_up(FlowPtrToInt(end), page);
 
 #ifdef DEBUG_FLOW
     cerr << "Commit(" << std::hex << soff << ".." << eoff << std::dec << ")" << endl;
@@ -62,11 +65,13 @@ void ByteMemory::CommitRange(FlowPtr start, FlowPtr end)
 
 void ByteMemory::DecommitRange(FlowPtr start, FlowPtr end)
 {
-    size_t soff = align_up(FlowPtrToInt(start), page_size());
-    size_t eoff = align_down(FlowPtrToInt(end), page_size());
-
-    if (eoff > MAX_MEMORY_SIZE)
-        eoff = MAX_MEMORY_SIZE;
+    const size_t page = page_size();
+    if (start > end || FlowPtrToInt(end) > MAX_MEMORY_SIZE)
+        ReportFailure(start, 0, true);
+    size_t eoff = align_down(FlowPtrToInt(end), page);
+    if (FlowPtrToInt(start) >= eoff)
+        return;
+    size_t soff = align_up(FlowPtrToInt(start), page);
 
 #ifdef DEBUG_FLOW
     cerr << "Decommit(" << std::hex << soff << ".." << eoff << std::dec << ")" << endl;
@@ -75,21 +80,12 @@ void ByteMemory::DecommitRange(FlowPtr start, FlowPtr end)
     decommit(soff + START_SHIFT, eoff + START_SHIFT);
 }
 
-bool ByteMemory::MapFile(FlowPtr start, size_t length, std::string filename, size_t offset, bool writable)
+bool ByteMemory::MapFile(FlowPtr start, size_t length, FILE *file, size_t offset, bool writable)
 {
-    size_t pos = FlowPtrToInt(start);
-    if (align_down(pos, alloc_step_size()) != pos)
-    {
-        cerr << "Could not map file at non-page address: " << pos << endl;
+    const size_t pos = FlowPtrToInt(start);
+    if (pos % alloc_step_size() || pos > RangeLimit || !length || length > RangeLimit - pos)
         return false;
-    }
-    if (align_up(pos+length, page_size()) > MAX_MEMORY_SIZE)
-    {
-        cerr << "Could not map file at too high address: (" << pos << ".." << (pos+length) << ")" << endl;
-        return false;
-    }
-
-    return map_file(pos + START_SHIFT, length, filename, offset, writable);
+    return map_file(pos + START_SHIFT, length, file, offset, writable);
 }
 
 ByteMemory::~ByteMemory()

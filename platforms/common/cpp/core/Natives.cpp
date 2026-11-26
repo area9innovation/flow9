@@ -1,6 +1,9 @@
 #include "ByteCodeRunner.h"
 #ifndef _WIN32
     #include <sys/time.h>
+    #include <sys/stat.h>
+    #include <fcntl.h>
+    #include <unistd.h>
 #else
     #include <Windows.h>
     #include <sys/timeb.h>
@@ -93,10 +96,7 @@ NativeMethodHost::~NativeMethodHost() {
 /* Utilities */
 
 static void ClipLenToRange(int pidx, unsigned *plen, unsigned size) {
-    // Range too long, or overflow even?
-    int end = pidx + int(*plen);
-    if (end > int(size) || end < 0)
-        *plen = size - pidx;
+    *plen = (std::min)(*plen, size - unsigned(pidx));
 }
 
 static void checkProperSubstringArguments(int *idx, int *len, int strLen)
@@ -392,6 +392,7 @@ StackSlot ByteCodeRunner::mapi(RUNNER_ARGS)
         fn_args[1].SetIntValue(i);
         fn_args[2] = RUNNER->GetArraySlot(arr, i);
         fn_args[2] = RUNNER->FastEvalFunction(fn_args, 2);
+        RUNNER_CheckError();
         RUNNER->SetArraySlot(retarr, i, fn_args[2]);
     }
 
@@ -417,6 +418,7 @@ StackSlot ByteCodeRunner::map(RUNNER_ARGS)
     {
         fn_args[1] = RUNNER->GetArraySlot(arr, i);
         fn_args[1] = RUNNER->FastEvalFunction(fn_args, 1);
+        RUNNER_CheckError();
         RUNNER->SetArraySlot(retarr, i, fn_args[1]);
     }
 
@@ -606,9 +608,7 @@ int ByteCodeRunner::strRangeIndexOf(const unicode_char *pstr, const unicode_char
 
     if (l2 == 0) {
         return 0;
-	} else if (!pstr) {
-		return -1;
-    } else if (l2 > end - start) {
+    } else if (!pstr || start > end || l2 > end - start) {
         return -1;
     } else if (l2 == 1) {
         unicode_char key = *psub;
@@ -649,20 +649,19 @@ StackSlot ByteCodeRunner::strContainsAt(RUNNER_ARGS)
     RUNNER_CheckTag2(TString, str, sub);
     RUNNER_CheckTag1(TInt, pos);
 
-    unsigned ppos = pos.GetInt();
-
+    const int ppos = pos.GetInt();
     unsigned lstr, lsub;
     const unicode_char *pstr = RUNNER->GetStringPtrSize(str, &lstr);
     const unicode_char *psub = RUNNER->GetStringPtrSize(sub, &lsub);
 
-    if (ppos + lsub > lstr) {
+    if (ppos < 0 || unsigned(ppos) > lstr || lsub > lstr - unsigned(ppos)) {
         return StackSlot::MakeBool(false);
     }
+    if (lsub == 0) {
+        return StackSlot::MakeBool(true);
+    }
 
-    const unicode_char *pstrpos = pstr + ppos;
-    unsigned size               = lsub * FLOW_CHAR_SIZE;
-
-    return StackSlot::MakeBool(memcmp(pstrpos, psub, size) == 0);
+    return StackSlot::MakeBool(memcmp(pstr + ppos, psub, lsub * sizeof(*psub)) == 0);
 }
 
 StackSlot ByteCodeRunner::strRangeIndexOf(RUNNER_ARGS)
@@ -701,6 +700,8 @@ bool ByteCodeRunner::DoSubstring(StackSlot *pdata, int idx, unsigned len)
 
     StackSlot tmp;
     FlowPtr *pp = AllocateStringRef(&tmp, len); // ALLOC
+    if (!pp)
+        return false;
 
     *pp = GetStringAddr(*pdata) + idx * FLOW_CHAR_SIZE;
     *pdata = tmp;
@@ -761,7 +762,7 @@ StackSlot ByteCodeRunner::generate(RUNNER_ARGS)
 
     int from = from_arg.GetInt();
     int to   = to_arg.GetInt();
-    int len  = to - from;
+    int64_t len = int64_t(to) - from;
 
     if (len <= 0) {
         return StackSlot::MakeEmptyArray();
@@ -772,11 +773,13 @@ StackSlot ByteCodeRunner::generate(RUNNER_ARGS)
 
     RUNNER_DefSlots1(retarr);
     retarr = RUNNER->AllocateArray(len);
+    RUNNER_CheckError();
 
     for (int i = 0; i < len; ++i)
     {
         fn_args[1] = StackSlot::MakeInt(from + i);
         fn_args[1] = RUNNER->FastEvalFunction(fn_args, 1);
+        RUNNER_CheckError();
         RUNNER->SetArraySlot(retarr, i, fn_args[1]);
     }
 
@@ -790,7 +793,7 @@ StackSlot ByteCodeRunner::enumFromTo(RUNNER_ARGS)
 
     int from = from_arg.GetInt();
     int to   = to_arg.GetInt();
-    int len  = to - from + 1;
+    int64_t len = int64_t(to) - from + 1;
 
     if (len <= 0) {
         return StackSlot::MakeEmptyArray();
@@ -814,10 +817,15 @@ StackSlot ByteCodeRunner::concat(RUNNER_ARGS)
     RUNNER_PopArgs2(arr1, arr2);
     RUNNER_CheckTag2(TArray, arr1, arr2);
 
-    int arr1_len = RUNNER->GetArraySize(arr1);
-    int arr2_len = RUNNER->GetArraySize(arr2);
+    const unsigned arr1_len = RUNNER->GetArraySize(arr1);
+    const unsigned arr2_len = RUNNER->GetArraySize(arr2);
+    const unsigned max_slots = (INT_MAX - 4u) / STACK_SLOT_SIZE;
+    if (arr1_len > max_slots || arr2_len > max_slots - arr1_len) {
+        RUNNER->ReportError(HeapFull, "Concatenated array is too large.");
+        return StackSlot::MakeVoid();
+    }
 
-    int len = arr1_len + arr2_len;
+    const unsigned len = arr1_len + arr2_len;
 
     if (len == 0) {
         return StackSlot::MakeEmptyArray();
@@ -898,7 +906,7 @@ StackSlot ByteCodeRunner::string2utf8(RUNNER_ARGS)
     RUNNER_CheckTag(TString, str);
 
     std::string utf8 = encodeUtf8(RUNNER->GetString(str));
-    int len = utf8.size();
+    size_t len = utf8.size();
 
     if (len == 0) {
         return StackSlot::MakeEmptyArray();
@@ -906,12 +914,12 @@ StackSlot ByteCodeRunner::string2utf8(RUNNER_ARGS)
 
     // Do not use safe wrappers for speed:
     StackSlot aptr = RUNNER->AllocateUninitializedArray(len); // ALLOC
-    StackSlot *arr_data = (StackSlot*)MEMORY->GetRawPointer(aptr.GetInternalArrayPtr(), len*STACK_SLOT_SIZE, true);
 
     if (RUNNER->IsErrorReported())
         return StackSlot::MakeVoid();
 
-    for (int i = 0; i < len; ++i)
+    StackSlot *arr_data = (StackSlot*)MEMORY->GetRawPointer(aptr.GetInternalArrayPtr(), len*STACK_SLOT_SIZE, true);
+    for (size_t i = 0; i < len; ++i)
         arr_data[i] = StackSlot::MakeInt(uint8_t(utf8[i]));
 
     return aptr;
@@ -1550,11 +1558,16 @@ StackSlot ByteCodeRunner::list2string(RUNNER_ARGS)
     RUNNER_DefSlots3(cur,str_item,string);
 
     // 1st pass: measure size
-    int size = 0;
+    unsigned size = 0;
     RUNNER_ForEachCons(cur, list) {
         str_item = RUNNER->GetConsItem(cur);
         RUNNER_CheckTag(TString, str_item);
-        size += RUNNER->GetStringSize(str_item);
+        unsigned item_size = RUNNER->GetStringSize(str_item);
+        if (item_size > FLOW_MAX_STRING_LENGTH - size) {
+            RUNNER->ReportError(HeapFull, "Concatenated string is too large.");
+            return StackSlot::MakeVoid();
+        }
+        size += item_size;
     }
 
     RUNNER_CheckEmptyList(cur, "list2string");
@@ -1569,7 +1582,7 @@ StackSlot ByteCodeRunner::list2string(RUNNER_ARGS)
 
     RUNNER_ForEachCons(cur, list) {
         str_item = RUNNER->GetConsItem(cur);
-        int item_size = RUNNER->GetStringSize(str_item);
+        unsigned item_size = RUNNER->GetStringSize(str_item);
         size -= item_size;
         MEMORY->Copy(RUNNER->GetStringAddr(str_item), dest_ptr + size * FLOW_CHAR_SIZE, item_size * FLOW_CHAR_SIZE);
     }
@@ -1617,9 +1630,86 @@ StackSlot ByteCodeRunner::getFileContentBinary(RUNNER_ARGS)
 
     std::string name = encodeUtf8(RUNNER->GetString(rawpath));
 
-    return RUNNER->LoadFileAsString(name, false);
+    return RUNNER->LoadFileAsString(name, false, true);
 }
 
+StackSlot ByteCodeRunner::readPackedFile(RUNNER_ARGS)
+{
+    RUNNER_PopArgs1(path);
+    RUNNER_CheckTag(TString, path);
+    return RUNNER->LoadFileAsString(encodeUtf8(RUNNER->GetString(path)));
+}
+
+#ifndef _WIN32
+template<class Write>
+static bool replaceCopy(const std::string &dest, Write write)
+{
+    struct stat st;
+    bool existing = stat(dest.c_str(), &st) == 0;
+    if (existing ? !S_ISREG(st.st_mode) : errno != ENOENT) return false;
+
+    // A private staging directory lets open apply the ordinary creation mode and
+    // the caller's umask without exposing intermediate data or changing the umask.
+    std::string dir = dest.substr(0, dest.find_last_of('/') + 1) + ".flowcopyXXXXXX";
+    if (!mkdtemp(&dir[0])) return false;
+    std::string tmp = dir + "/data";
+    struct stat stage;
+    bool ready = chmod(dir.c_str(), 0700) == 0 && stat(dir.c_str(), &stage) == 0 &&
+                 (stage.st_mode & 07777) == 0700;
+    int fd = ready ? open(tmp.c_str(), O_WRONLY | O_CREAT | O_EXCL, existing ? 0600 : 0666) : -1;
+    bool ok = false;
+    if (fd >= 0) {
+        if (FILE *out = fdopen(fd, "wb")) {
+            ok = write(out) && !ferror(out) && fflush(out) == 0 &&
+                 (!existing || fchmod(fd, st.st_mode & 0777) == 0);
+            if (fclose(out) != 0) ok = false;
+        } else {
+            close(fd);
+        }
+        if (ok) ok = rename(tmp.c_str(), dest.c_str()) == 0;
+    }
+    if (!ok && ready) unlink(tmp.c_str());
+    rmdir(dir.c_str());
+    return ok;
+}
+#endif
+
+StackSlot ByteCodeRunner::copyFile(RUNNER_ARGS)
+{
+    RUNNER_PopArgs2(from, to);
+    RUNNER_CheckTag2(TString, from, to);
+    std::string dest = encodeUtf8(RUNNER->GetString(to));
+#ifdef _WIN32
+    unicode_string src_name = RUNNER->GetString(from), dest_name = RUNNER->GetString(to);
+    bool ok = CopyFileW(std::wstring(src_name.begin(), src_name.end()).c_str(),
+                        std::wstring(dest_name.begin(), dest_name.end()).c_str(), FALSE) != 0;
+#else
+    std::string src = encodeUtf8(RUNNER->GetString(from));
+    FILE *in = fopen(src.c_str(), "rb");
+    if (!in) return StackSlot::MakeBool(false);
+    // As in cpp3 and Nim, a file is not copied onto itself or onto a hard link to it.
+    struct stat src_st, dest_st;
+    if (fstat(fileno(in), &src_st) != 0 || (stat(dest.c_str(), &dest_st) == 0 &&
+            src_st.st_dev == dest_st.st_dev && src_st.st_ino == dest_st.st_ino)) {
+        fclose(in);
+        return StackSlot::MakeBool(false);
+    }
+
+    bool ok = replaceCopy(dest, [&in](FILE *out) {
+        char buf[16384];
+        size_t n;
+        while ((n = fread(buf, 1, sizeof(buf), in)) != 0)
+            if (fwrite(buf, 1, n, out) != n) return false;
+        bool read = !ferror(in);
+        if (fclose(in) != 0) read = false;
+        in = nullptr;
+        return read;
+    });
+    if (in) fclose(in);
+#endif
+    if (ok) RUNNER->InvalidateFileCache(dest);
+    return StackSlot::MakeBool(ok);
+}
 
 StackSlot ByteCodeRunner::setFileContent(RUNNER_ARGS)
 {
@@ -1691,14 +1781,38 @@ void bytesProcessor(int nbytes, const unicode_char * pdata, uint8_t * bytes) {
 StackSlot ByteCodeRunner::setFileContentHelper(RUNNER_ARGS, void (*processor)(int nbytes, const unicode_char * pdata, uint8_t * bytes))
 {
     RUNNER_PopArgs2(key_str, value_str);
+    // A missing file in the old read-then-write copy has no string value.
+    if (value_str.IsVoid()) return StackSlot::MakeBool(false);
     RUNNER_CheckTag2(TString, key_str, value_str);
 
     std::string filename = encodeUtf8(RUNNER->GetString(key_str));
     unsigned nbytes;
     const unicode_char *pdata = RUNNER->GetStringPtrSize(value_str, &nbytes);
 
+    // Pre-copyFile libraries passed the whole packed read to a byte writer
+    // (local filesystem copies used the code-unit writer). Use the original
+    // byte count, never infer a trailing zero from the string contents.
+    auto file = RUNNER->LegacyFileBytes.find(RUNNER->GetStringAddr(value_str));
+    bool whole_file = file != RUNNER->LegacyFileBytes.end() && (file->second + 1) / 2 == nbytes;
+#ifndef _WIN32
+    if (whole_file || !nbytes) {
+        size_t size = whole_file ? file->second : 0;
+        bool ok = replaceCopy(filename, [&](FILE *out) { return !size || fwrite(pdata, 1, size, out) == size; });
+        if (ok) RUNNER->InvalidateFileCache(filename);
+        return StackSlot::MakeBool(ok);
+    }
+#else
+    // Windows writes the original bytes through the ordinary temporary file below.
+    if (whole_file) {
+        processor = NULL;
+        nbytes = unsigned(file->second);
+    }
+#endif
+
     uint8_t * bytes;
-    if (processor != NULL) {
+    if (whole_file) {
+        bytes = (uint8_t*)pdata;
+    } else if (processor != NULL) {
         bytes = new uint8_t[nbytes];
         processor(nbytes, pdata, bytes);
     } else {
@@ -1760,13 +1874,14 @@ StackSlot ByteCodeRunner::getAllUrlParameters(RUNNER_ARGS)
 {
     IGNORE_RUNNER_ARGS;
 
-    int i = RUNNER->UrlParameters.size();
-
     RUNNER_DefSlots1(array);
     array = RUNNER->AllocateArray(RUNNER->UrlParameters.size());
+    RUNNER_CheckError();
+    int i = RUNNER->GetArraySize(array);
     for (T_UrlParameters::iterator it = RUNNER->UrlParameters.begin(); it != RUNNER->UrlParameters.end(); ++it) {
         RUNNER_DefSlots1(keyvalue);
         keyvalue = RUNNER->AllocateArray(2);
+        RUNNER_CheckError();
         RUNNER->SetArraySlot(keyvalue, 0, RUNNER->AllocateString((*it).first));
         RUNNER->SetArraySlot(keyvalue, 1, RUNNER->AllocateString((*it).second));
 
@@ -2338,10 +2453,31 @@ class BinaryDeserializer
 
     void readStructIndex(const StackSlot &fixups);
 
+    // A container whose values are still being read; its slot is in openSlots
+    struct OpenValue {
+        enum Kind { ARRAY, STRUCT, REF } kind;
+        unsigned size, remaining, struct_idx;
+    };
+    std::vector<OpenValue> openValues;
+    std::vector<StackSlot> openSlots;
+
+    // Count every array, struct and ref, including empty containers, but not scalar leaves or the footer.
+    unsigned maxNestingDepth;
+
+    bool openValue(OpenValue::Kind kind, unsigned size, unsigned struct_idx, StackSlot &value);
+    void storeValue(const OpenValue &frame, const StackSlot &value);
+    StackSlot closeValue();
+    StackSlot closeStruct(unsigned idx, const StackSlot &fields, unsigned size);
+    bool readNextValue(StackSlot &value);
     StackSlot readValue();
 
+    StackSlot damagedInput();
+
 public:
-    BinaryDeserializer(RUNNER_VAR) : RUNNER(RUNNER) {
+    // The default nesting limit; keep in sync with lib/text/binary.flow and JSBinflowBuffer.
+    static const unsigned defaultMaxNestingDepth = 2048;
+
+    BinaryDeserializer(RUNNER_VAR, unsigned maxDepth = defaultMaxNestingDepth) : RUNNER(RUNNER), maxNestingDepth(maxDepth) {
         //
     }
 
@@ -2401,11 +2537,19 @@ FlowPtr BinaryDeserializer::NewBuffer(int bytes)
 #ifdef FLOW_MMAP_HEAP
     if (mapped)
     {
-        FlowPtr cur = hp, end = hp + bytes;
+        const uint64_t end_offset = uint64_t(FlowPtrToInt(hp)) + unsigned(bytes);
+        if (end_offset > FlowPtrToInt(RUNNER->MapStringPtr)) {
+            RUNNER->ReportError(HeapFull, "Mapped allocation exceeds the available space.");
+            error = true;
+            return MakeFlowPtr(0);
+        }
+        FlowPtr cur = hp, end = MakeFlowPtr(unsigned(end_offset));
 
         if (end > hplimit)
         {
-            hplimit = FlowPtrAlignUp(end, 1024*1024);
+            const uint64_t chunk = 1024*1024;
+            uint64_t limit = std::min<uint64_t>((end_offset + chunk - 1) & ~(chunk - 1), FlowPtrToInt(RUNNER->MapStringPtr));
+            hplimit = MakeFlowPtr(unsigned(limit));
             MEMORY->CommitRange(hp, hplimit);
         }
 
@@ -2414,12 +2558,16 @@ FlowPtr BinaryDeserializer::NewBuffer(int bytes)
     }
     else
 #endif
-        return RUNNER->Allocate(bytes);
+    {
+        FlowPtr ptr = RUNNER->Allocate(bytes);
+        error = RUNNER->IsErrorReported();
+        return ptr;
+    }
 }
 
 StackSlot BinaryDeserializer::NewArray(int size, bool do_map)
 {
-    if (error || size < 0 || (slot_budget -= size) < 0)
+    if (error || size < 0 || !FlowSlotsFit(size, 4) || (slot_budget -= size) < 0)
     {
         error = true;
         return StackSlot::MakeVoid();
@@ -2433,6 +2581,7 @@ StackSlot BinaryDeserializer::NewArray(int size, bool do_map)
     {
         int bytes = size * STACK_SLOT_SIZE;
         FlowPtr cur = NewBuffer(4 + bytes);
+        if (error) return StackSlot::MakeVoid();
 
         MEMORY->SetInt32(cur, size & 0xffffu);
         MEMORY->FillBytes(cur+4, -1, bytes);
@@ -2546,6 +2695,7 @@ StackSlot BinaryDeserializer::readString()
         if (len & 0xffff0000u)
         {
             FlowPtr ptr = NewBuffer(sizeof(FlowStringRef));
+            if (error) return StackSlot::MakeVoid();
             FlowStringRef *ref = (FlowStringRef*)MEMORY->GetRawPointer(ptr, sizeof(FlowStringRef), true);
 
             ref->header.IntVal = (len & 0xffff);
@@ -2563,6 +2713,10 @@ StackSlot BinaryDeserializer::readString()
 #endif
     {
         pp = RUNNER->AllocateStringRef(&rv, len); // ALLOC
+        if (!pp) {
+            error = true;
+            return StackSlot::MakeVoid();
+        }
     }
 
     *pp = RUNNER->GetStringAddr(*pinput) + start_idx*FLOW_CHAR_SIZE;
@@ -2589,6 +2743,13 @@ void BinaryDeserializer::readStructIndex(const StackSlot &fixups)
     char_idx = offset;
 
     int isize = readArraySize();
+
+    // Each definition takes at least one char, so a count past the end is out of range
+    if (error || isize < 0 || unsigned(isize) > ssize - char_idx)
+    {
+        error = true;
+        return;
+    }
 
     structIndex.resize(isize);
     structSize.resize(isize);
@@ -2630,44 +2791,150 @@ void BinaryDeserializer::readStructIndex(const StackSlot &fixups)
     ssize = offset;
 }
 
-StackSlot BinaryDeserializer::readValue()
+// Allocates a container and makes it the innermost open value.
+// An empty one is complete at once and comes back as `value`.
+bool BinaryDeserializer::openValue(OpenValue::Kind kind, unsigned size, unsigned struct_idx, StackSlot &value)
+{
+    if (openValues.size() >= maxNestingDepth)
+    {
+        error = true;
+        return false;
+    }
+
+    StackSlot slot;
+    switch (kind)
+    {
+    case OpenValue::REF:
+        slot = NewRef();
+        break;
+#ifdef FLOW_COMPACT_STRUCTS
+    case OpenValue::STRUCT:
+        slot = NewArray(size, false);
+        break;
+#endif
+    default:
+        slot = NewArray(size);
+    }
+    if (error || RUNNER->IsErrorReported()) {
+        error = true;
+        return false;
+    }
+
+    OpenValue frame = { kind, size, size, struct_idx };
+    openValues.push_back(frame);
+    openSlots.push_back(slot);
+
+    if (size > 0)
+        return false;
+    value = closeValue();
+    return !error;
+}
+
+// Puts a finished value into the next free slot of the innermost open container
+void BinaryDeserializer::storeValue(const OpenValue &frame, const StackSlot &value)
+{
+    const StackSlot &container = openSlots.back();
+    unsigned index = frame.size - frame.remaining;
+
+    switch (frame.kind)
+    {
+    case OpenValue::REF:
+        SetRefTarget(container, value);
+        break;
+#ifdef FLOW_COMPACT_STRUCTS
+    case OpenValue::STRUCT:
+        RUNNER->SetArraySlot(container, index, value);
+        break;
+#endif
+    default:
+        SetSlot(container, index, value);
+    }
+}
+
+// Closes the innermost open container and returns it as a value
+StackSlot BinaryDeserializer::closeValue()
+{
+    const OpenValue &frame = openValues.back();
+    StackSlot rv = openSlots.back();
+
+    if (frame.kind == OpenValue::STRUCT) {
+        rv = closeStruct(frame.struct_idx, openSlots.back(), frame.size);
+        if (RUNNER->IsErrorReported()) error = true;
+    }
+
+    openValues.pop_back();
+    openSlots.pop_back();
+    return rv;
+}
+
+StackSlot BinaryDeserializer::closeStruct(unsigned idx, const StackSlot &fields, unsigned size)
+{
+    // Apply fixup if any
+    if (!structFixups[idx].IsVoid())
+        return RUNNER->EvalFunction(structFixups[idx], 1, fields);
+
+    if (!RUNNER->VerifyStruct(fields, structIndex[idx])) {
+        return RUNNER->MakeStruct("IllegalStruct", 0, NULL);
+    }
+
+#ifdef FLOW_COMPACT_STRUCTS
+    const StructDef &def = RUNNER->GetStructDef(structIndex[idx]);
+    if (size == 0)
+        return StackSlot::MakeStruct(def.EmptyPtr, def.StructId);
+
+    StackSlot tmp = StackSlot::MakeStruct(NewBuffer(def.ByteSize), def.StructId);
+    if (error) return StackSlot::MakeVoid();
+    RUNNER->Memory.SetInt32(tmp.GetRawStructPtr(), def.StructId);
+    RUNNER->StructSlotPack(tmp, RUNNER->GetArraySlotPtr(fields, size), 0, size);
+    return tmp;
+#else
+    StackSlot rv = fields;
+    rv.Type = TStruct;
+    rv.IntValue2 = structIndex[idx];
+    return rv;
+#endif
+}
+
+// Reads the next value into `value`, or opens a container whose values follow
+bool BinaryDeserializer::readNextValue(StackSlot &value)
 {
     const unicode_char *pdata = readChars(1);
     if (error)
-        return *pdefault;
+        return false;
 
     switch (*pdata)
     {
     case 0xFFFF:
-        return StackSlot::MakeVoid();
+        value = StackSlot::MakeVoid();
+        return true;
     case 0xFFFC:
+    {
         pdata = readChars(4);
         if (!pdata)
-            return *pdefault;
+            return false;
 #ifdef FLOW_EMBEDDED
         // workaraund for ARMv7 alignment problem (both iOS and Android)
         FlowDouble d;
         memcpy(&d, pdata, sizeof(FlowDouble));
-        return StackSlot::MakeDouble(d);
+        value = StackSlot::MakeDouble(d);
 #else
-        return StackSlot::MakeDouble(*(FlowDouble*)pdata);
+        value = StackSlot::MakeDouble(*(FlowDouble*)pdata);
 #endif
+        return true;
+    }
     case 0xFFFD:
-        return StackSlot::MakeBool(false);
+        value = StackSlot::MakeBool(false);
+        return true;
     case 0xFFFE:
-        return StackSlot::MakeBool(true);
+        value = StackSlot::MakeBool(true);
+        return true;
     case 0xFFFA:
     case 0xFFFB:
         char_idx--;
-        return readString();
+        value = readString();
+        return !error;
     case 0xFFF6:
-    {
-        RUNNER_DefSlots1(ref);
-        ref = NewRef();
-        if (error) return *pdefault;
-        SetRefTarget(ref, readValue());
-        return ref;
-    }
+        return openValue(OpenValue::REF, 1, 0, value);
     case 0xFFF4:
     {
         unsigned idx = readChar();
@@ -2675,53 +2942,10 @@ StackSlot BinaryDeserializer::readValue()
         if (error || idx >= structIndex.size())
         {
             error = true;
-            return *pdefault;
+            return false;
         }
 
-        unsigned size = structSize[idx];
-
-        RUNNER_DefSlots1(arr);
-#ifdef FLOW_COMPACT_STRUCTS
-        arr = NewArray(size, false);
-        if (error) return *pdefault;
-        for (unsigned i = 0; i < size; i++)
-            RUNNER->SetArraySlot(arr, i, readValue());
-#else
-        arr = NewArray(size);
-        if (error) return *pdefault;
-        for (unsigned i = 0; i < size; i++)
-            SetSlot(arr, i, readValue());
-#endif
-
-        // Apply fixup if any
-        if (!structFixups[idx].IsVoid())
-            return RUNNER->EvalFunction(structFixups[idx], 1, arr);
-
-        if (!RUNNER->VerifyStruct(arr, structIndex[idx])) {
-            const StructDef &def = RUNNER->GetStructDef(structIndex[idx]);
-            cout << "struct name" << def.Name;
-            RUNNER->PrintData(RUNNER->flow_out, arr);
-
-            return RUNNER->MakeStruct("IllegalStruct", 0, NULL);
-        }
-
-#ifdef FLOW_COMPACT_STRUCTS
-        const StructDef &def = RUNNER->GetStructDef(structIndex[idx]);
-        if (size == 0)
-            arr = StackSlot::MakeStruct(def.EmptyPtr, def.StructId);
-        else
-        {
-            StackSlot tmp = StackSlot::MakeStruct(NewBuffer(def.ByteSize), def.StructId);
-            RUNNER->Memory.SetInt32(tmp.GetRawStructPtr(), def.StructId);
-            RUNNER->StructSlotPack(tmp, RUNNER->GetArraySlotPtr(arr, size), 0, size);
-            arr = tmp;
-        }
-#else
-        arr.Type = TStruct;
-        arr.IntValue2 = structIndex[idx];
-#endif
-
-        return arr;
+        return openValue(OpenValue::STRUCT, structSize[idx], idx, value);
     }
     case 0xFFF7:
     case 0xFFF8:
@@ -2730,25 +2954,67 @@ StackSlot BinaryDeserializer::readValue()
         char_idx--;
         unsigned size = readArraySize();
         if (error)
-            return *pdefault;
+            return false;
 
-        RUNNER_DefSlots1(arr);
-        arr = NewArray(size);
-        if (error) return *pdefault;
-        for (unsigned i = 0; i < size; i++)
-            SetSlot(arr, i, readValue());
-        return arr;
+        return openValue(OpenValue::ARRAY, size, 0, value);
     }
     case 0xFFF5:
-        return StackSlot::MakeInt(readInt32());
+        value = StackSlot::MakeInt(readInt32());
+        return !error;
     case 0xFFF3:
-        return StackSlot::MakeInt(readInt32() | readInt32());
+        value = StackSlot::MakeInt(readInt32() | readInt32());
+        return !error;
     default:
         if (*pdata <= 0x7FFF)
-            return StackSlot::MakeInt(*pdata);
+        {
+            value = StackSlot::MakeInt(*pdata);
+            return true;
+        }
         error = true;
-        return *pdefault;
+        return false;
     }
+}
+
+// Nesting is kept on openValues, not the call stack; openValue also bounds the decoded value's depth
+StackSlot BinaryDeserializer::readValue()
+{
+    openValues.clear();
+    openSlots.clear();
+
+    RUNNER_DefSlots1(value);
+
+    for (;;)
+    {
+        if (!readNextValue(value))
+        {
+            if (error)
+                return *pdefault;
+            continue;
+        }
+
+        // The value fills the innermost open container; close every container it completes
+        while (!openValues.empty())
+        {
+            OpenValue &top = openValues.back();
+            storeValue(top, value);
+            if (--top.remaining > 0)
+                break;
+
+            value = closeValue();
+            if (error)
+                return *pdefault;
+        }
+
+        if (openValues.empty())
+            return value;
+    }
+}
+
+// The input is not one complete, well-formed value: say so and give the default back
+StackSlot BinaryDeserializer::damagedInput()
+{
+    RUNNER->flow_out << "Binary file damaged!" << endl;
+    return *pdefault;
 }
 
 StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlot &defval, const StackSlot &fixups)
@@ -2763,17 +3029,25 @@ StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlo
     mapped = false;
 #endif
 
+    // An empty input is a missing file, not a damaged one: the default, and no message
+    if (ssize == 0)
+        return defval;
+
     RUNNER_RegisterNativeRoot(std::vector<StackSlot>, structFixups);
+    RUNNER_RegisterNativeRoot(std::vector<StackSlot>, openSlots);
 
     readStructIndex(fixups);
-    if (error || RUNNER->IsErrorReported())
+    if (RUNNER->IsErrorReported())
         return defval;
+    if (error)
+        return damagedInput();
 
     slot_budget = ssize + 1000;
 
 #ifdef FLOW_MMAP_HEAP
     bool input_mapped = RUNNER->IsMappedArea(RUNNER->GetStringAddr(input));
-    bool enough_free = unsigned(RUNNER->MapStringPtr - RUNNER->MapAreaBase) >= STACK_SLOT_SIZE * unsigned(slot_budget);
+    bool enough_free = RUNNER->MapStringPtr >= RUNNER->MapAreaBase &&
+        FlowSlotsFit(slot_budget, 0, FlowPtrToInt(RUNNER->MapStringPtr) - FlowPtrToInt(RUNNER->MapAreaBase));
 
     if (input_mapped && enough_free && !has_fixups)
     {
@@ -2792,7 +3066,13 @@ StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlo
     StackSlot rv = readValue();
 
 #ifdef FLOW_MMAP_HEAP
-    if (mapped)
+    if (mapped && error)
+    {
+        // Nothing refers to what was built, so the area is released instead of registered
+        if (area->start < hplimit)
+            MEMORY->DecommitRange(area->start, hplimit);
+    }
+    else if (mapped)
     {
         RUNNER->MapAreaBase = hp = FlowPtrAlignUp(hp, MEMORY->PageSize());
         area->length = hp - area->start;
@@ -2802,6 +3082,10 @@ StackSlot BinaryDeserializer::deserialize(const StackSlot &input, const StackSlo
     }
 #endif
 
+    if (RUNNER->IsErrorReported())
+        return defval;
+    if (error)
+        return damagedInput();
     if (char_idx < ssize)
         RUNNER->flow_out << "Did not understand all!";
     return rv;
@@ -2814,11 +3098,9 @@ StackSlot ByteCodeRunner::fromBinary2(RUNNER_ARGS)
     return fromBinary(RUNNER, new_args);
 }
 
-StackSlot ByteCodeRunner::fromBinary(RUNNER_ARGS)
+static StackSlot deserializeBinary(RUNNER_VAR, const StackSlot &value, const StackSlot &defval, const StackSlot &fixups, unsigned maxDepth)
 {
-    RUNNER_PopArgs3(value, defval, fixups);
-
-    BinaryDeserializer worker(RUNNER);
+    BinaryDeserializer worker(RUNNER, maxDepth);
 
 #ifdef DEBUG_FLOW
     double start_time = GetCurrentTime();
@@ -2831,6 +3113,20 @@ StackSlot ByteCodeRunner::fromBinary(RUNNER_ARGS)
 #endif
 
     return rv;
+}
+
+StackSlot ByteCodeRunner::fromBinary(RUNNER_ARGS)
+{
+    RUNNER_PopArgs3(value, defval, fixups);
+    return deserializeBinary(RUNNER, value, defval, fixups, BinaryDeserializer::defaultMaxNestingDepth);
+}
+
+// A negative depth allows only a scalar value
+StackSlot ByteCodeRunner::fromBinaryWithDepth(RUNNER_ARGS)
+{
+    RUNNER_PopArgs4(value, defval, fixups, depth);
+    RUNNER_CheckTag(TInt, depth);
+    return deserializeBinary(RUNNER, value, defval, fixups, depth.GetInt() < 0 ? 0 : unsigned(depth.GetInt()));
 }
 
 // Read 8 bytes of the string in UTF-16 and converts to a double

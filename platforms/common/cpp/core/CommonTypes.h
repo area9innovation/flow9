@@ -2,6 +2,7 @@
 #define _COMMON_TYPES_H_
 
 #include <stdlib.h>
+#include <limits.h>
 
 #include "STLHelpers.h"
 
@@ -11,6 +12,13 @@
 #endif
 
 #define STACK_SLOT_SIZE 8
+
+// Keep object sizes (including their headers) representable by GC's byte counts.
+inline bool FlowSlotsFit(uint64_t count, unsigned header_bytes, unsigned byte_limit = INT_MAX) {
+    return header_bytes <= byte_limit && count <= (byte_limit - header_bytes) / STACK_SLOT_SIZE;
+}
+
+static const unsigned FLOW_MAX_STRING_LENGTH = (INT_MAX - 8u) / FLOW_CHAR_SIZE;
 
 #if defined(_WIN64)
 #ifndef FLOW_JIT
@@ -557,7 +565,7 @@ struct StructDef
 #endif
     std::vector<std::string> FieldNames; // array of char * pointers to zerro strings
     std::vector< std::vector<FieldType> > FieldTypes;
-    std::vector<short> FieldIds;
+    std::vector<int> FieldIds; // Field offsets, independent of the 16-bit name cache key.
     std::vector<char> IsMutable;
 #ifdef FLOW_COMPACT_STRUCTS
     const FlowStructFieldDef *FieldDefs;
@@ -759,18 +767,19 @@ class FlowStack
         while (new_sz > limit) {
             limit *= 2;
         }
-        T* new_buf = new T[sizeof(T) * limit];
+        T* new_buf = new T[limit];
         for (unsigned i = 0; i < pos; ++ i) {
         	new_buf[i] = buf[i];
         }
-        delete buf;
+        delete[] buf;
         buf = new_buf;
-        //buf = (T*)realloc(buf, sizeof(T)*limit);
     }
 
 public:
     FlowStack() : buf(nullptr) { clear(); }
-    ~FlowStack() { free(buf); }
+    FlowStack(const FlowStack &) = delete;
+    FlowStack &operator=(const FlowStack &) = delete;
+    ~FlowStack() { delete[] buf; }
 
     void swap(FlowStack<T,MinSize> &other) {
         std::swap(buf, other.buf);
@@ -779,8 +788,10 @@ public:
     }
 
     void clear() {
-    	delete buf;
-        buf = new T[sizeof(T) * MinSize];
+        // Allocate first: if that throws, the stack keeps its buffer and frees it once.
+        T *new_buf = new T[MinSize];
+        delete[] buf;
+        buf = new_buf;
         pos = 0; limit = MinSize;
     }
 

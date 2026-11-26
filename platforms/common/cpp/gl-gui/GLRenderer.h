@@ -427,6 +427,12 @@ public:
 
     static unsigned getBytesPerPixel(GLenum format);
 
+    // The most pixels one bitmap may hold: 64 M, 256 MB as RGBA. Content images are far below it.
+    static const size_t MAX_PIXELS = size_t(64) * 1024 * 1024;
+    // The byte count of a bitmap of this size and format, computed without overflow;
+    // 0 when it holds no data or is past MAX_PIXELS.
+    static size_t bitmapBytes(ivec2 size, GLenum format);
+
     GLenum getDataFormat() { return format; }
     unsigned getBytesPerPixel() { return bytes_per_pixel; }
 

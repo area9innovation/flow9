@@ -928,6 +928,7 @@ StackSlot GLTextClip::getTextMetrics(RUNNER_ARGS)
     }
 
     ret_array = RUNNER->AllocateArray(3);
+    RUNNER_CheckError();
     RUNNER->SetArraySlot(ret_array, 0, StackSlot::MakeDouble(ascent));
     RUNNER->SetArraySlot(ret_array, 1, StackSlot::MakeDouble(descent));
     RUNNER->SetArraySlot(ret_array, 2, StackSlot::MakeDouble(leading));

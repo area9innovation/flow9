@@ -2230,6 +2230,11 @@ Native.memoryLeakReset();
 			untyped __js__("setTimeout(fn, 0);");
 		}
 	}
+
+	// True when no timer(0) callback (see interruptibleTimer) is waiting in the defer queue.
+	public static function isDeferQueueIdle() : Bool {
+		return !deferActive && DeferQueue.length == 0;
+	}
 	#end
 
 	public static function setInterval(ms : Int, cb : Void -> Void) : Void -> Void {
@@ -2759,8 +2764,10 @@ Native.memoryLeakReset();
 		// stub
 	}
 
+	static inline var failurePrefix = "Runtime failure: ";
+
 	public static function failWithError(e : String) : Void {
-		throw ("Runtime failure: " + e);
+		throw (failurePrefix + e);
 	}
 
 	public static inline function makeStructValue(name : String, args : Array<Dynamic>, default_value : Dynamic) : Dynamic {
@@ -3326,10 +3333,30 @@ Native.memoryLeakReset();
 		return ret;
 	}
 
+	// A fail() is thrown on, as it stops the program on Java too. It is rethrown as caught, so its stack still shows where it failed
+	public static function catchDecodeError(fn : Void -> Dynamic, onError : String -> Dynamic) : Dynamic {
+		try {
+			return fn();
+		} catch (e : haxe.Exception) {
+			var value : Dynamic = Std.isOfType(e, haxe.ValueException) ? (cast e : haxe.ValueException).value : e.native;
+			if (Std.isOfType(value, String) && StringTools.startsWith(value, failurePrefix)) throw e;
+			return onError(Std.string(value));
+		}
+	}
+
 	public static function fromBinary(string : Dynamic, defvalue : Dynamic, fixups : Dynamic) : Dynamic {
 		#if js
+		return fromBinaryWithDepth(string, defvalue, fixups, JSBinflowBuffer.defaultMaxNestingDepth);
+		#else
+		return string;
+		#end
+	}
+
+	// A string comes back unchanged, for the flow decoder to read
+	public static function fromBinaryWithDepth(string : Dynamic, defvalue : Dynamic, fixups : Dynamic, maxDepth : Int) : Dynamic {
+		#if js
 		if (Type.getClass(string) == JSBinflowBuffer) {
-			return string.deserialise(defvalue, fixups);
+			return string.deserialise(defvalue, fixups, maxDepth);
 		} else
 		#end
 		{

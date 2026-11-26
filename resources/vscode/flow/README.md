@@ -123,8 +123,19 @@ Flow language tools configured in a standard layout - i.e. c:\flow9. There is a 
 See https://code.visualstudio.com/docs/extensions/example-hello-world .
 
 ## Build
-1. Make sure Node.js, NPM is installed and all packages are installed (`npm install`)
+1. Make sure Node.js 22 or newer (required by `@vscode/vsce`), NPM is installed and all packages are installed (`npm install`)
 2. Run `build.cmd` or `build.sh` to update the `flow.vsix` package
+
+## Dependency security checks
+Run `npm ci`, `npm run test:security`, and `npm audit` from this directory.
+The security tests compile the extension and exercise the resolved dependency
+tree without network access or Azure credentials.
+
+The `minimatch` override forces every package onto minimatch 11, the first
+release patched for GHSA-g3hv-75wg-m249. vscode-languageclient still calls
+`Minimatch#makeRe()`, which 11 removed, so `src/minimatchCompat.ts` puts it back.
+Remove both once vscode-languageclient and `@vscode/vsce` require minimatch 11
+themselves.
 
 ## Release Notes
 See [Changelog](https://github.com/area9innovation/flow9/blob/master/resources/vscode/flow/CHANGELOG.md).

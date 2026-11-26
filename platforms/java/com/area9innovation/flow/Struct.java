@@ -5,6 +5,8 @@ public abstract class Struct implements Comparable<Struct>, Cloneable {
 	public abstract String getTypeName();
 	public abstract String[] getFieldNames();
 	public abstract RuntimeType[] getFieldTypes();
+	// Older generated classes have only shallow RuntimeType metadata.
+	public FieldType[] getFieldTypeDescriptors() { return null; }
 	public abstract Object[] getFields();
 	public abstract void setFields(Object[] val);
 

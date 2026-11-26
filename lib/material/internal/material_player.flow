@@ -975,7 +975,7 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 		contains(controls, FullScreenPlayer()) |> b2i |> i2s
 	);
 
-	makeExternalApiPlayer("yt_player.html", wh, style, false, false, \ -> JsonObject([
+	makeExternalApiPlayer("yt_player.html", wh, style, false, false, false, \ -> JsonObject([
 		Pair("videoId", JsonString(videoId)),
 		Pair("params", JsonObject(concatA([
 			if (startParam == "") [] else [Pair("start", JsonString(startParam))],
@@ -997,7 +997,8 @@ MVideoYoutubePlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPl
 
 // The wrapper page hosting the provider JS API: takes {loadVideo}/{playerState}, mirrors the player state back as {playerState}.
 // restoreStateOnReload needs a page that queues a state arriving before its player is ready.
-makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle], honourRealHtmlStyles : bool, restoreStateOnReload : bool, loadMessage : () -> Json) -> Material {
+// useIntrinsicSize enables Vimeo's intrinsic-size protocol and one-shot fallback; other players keep legacy sizing.
+makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle], honourRealHtmlStyles : bool, restoreStateOnReload : bool, useIntrinsicSize : bool, loadMessage : () -> Json) -> Material {
 	STATUS_PLAYING = "PLAYING";
 	STATUS_BUFFERING = "BUFFERING";
 	STATUS_PAUSED = "PAUSED";
@@ -1008,21 +1009,48 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	positionB = extractStruct(style, FVideoPosition(make(0.0))).position;
 	volumeB = extractStruct(style, FVideoVolume(make(1.0))).volume;
 	realSizeWH = extractStruct(style, FVideoRealSize(makeWH())).size;
+	sizeInitialized = ref false;
+	fallbackRequested = ref false;
+	// A caller may compute wh from FVideoRealSize (including its own control bar).
+	// Feeding wh back on every duration/ready message repeatedly scales that size.
+	// Vimeo without intrinsic dimensions gets one fallback, retained across iframe reloads.
+	// The video URL is fixed for this material; switching videos creates a new instance.
+	initializeSize = \ -> {
+		if (!useIntrinsicSize) {
+			// Preserve the other providers' existing per-message layout-size reporting.
+			nextDistinct(realSizeWH, fgetValue(wh));
+		} else if (!^sizeInitialized) {
+			fallbackRequested := true;
+			size = fgetValue(wh);
+			if (size.width > 0.0 && size.height > 0.0) {
+				sizeInitialized := true;
+				nextDistinct(realSizeWH, size);
+			}
+		}
+	};
 
 	sendB = make("");
 	receiveB = make("");
+	wrapperLoaded = ref false;
+	pendingState : ref Tree<string, Json> = ref TreeEmpty();
 	// the page leaves the volume out until it has read a real one (iOS has no getVolume), and volumeB is its
 	// default until then: restoring that default would unmute a url-muted player
 	volumeSeen = ref false;
 
-	sendState = \s -> next(sendB,
-		JsonObject([Pair("playerState", JsonObject(s))]) |> json2string
-	);
+	sendState = \s -> {
+		if (^wrapperLoaded) {
+			next(sendB, JsonObject([Pair("playerState", JsonObject(s))]) |> json2string);
+		} else {
+			// Keep the latest command per field while the wrapper cannot receive messages.
+			pendingState := fold(s, ^pendingState, \acc, field -> setTree(acc, field.first, field.second));
+		}
+	};
 	fselectFromStateM = \name -> fselectLift(receiveB, \r -> {
 		v = getJsonFieldValueCustom(parseJson(r), "playerState." + name, JsonNull(), [JsonFieldTreatAsPath(".")]);
 		if (v == JsonNull()) None() else Some(v)
 	});
 	onLoaded = \ -> {
+		wrapperLoaded := true;
 		next(sendB, JsonObject([Pair("loadVideo", loadMessage())]) |> json2string);
 		// a state sent before the page (re)loaded is lost, repeat it. The page has reported nothing yet on the very
 		// first load, and there the url's own autoplay/muted parameters rule: only an explicit play is worth sending
@@ -1035,10 +1063,16 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 			// the reloaded player is back at its own default, so the volume goes back as it is, mute and unmute alike
 			if (reloaded && ^volumeSeen) [Pair("volume", JsonDouble(getValue(volumeB) * 100.0))] else []
 		]));
+		// Explicit changes made during loading take precedence over restored/default state.
+		queued = convertTreeToArray(^pendingState, \name, value -> Pair(name, value));
+		pendingState := TreeEmpty();
+		if (queued != []) sendState(queued);
 	}
 
 	sendToJS = ref nop1;
 	getHostCall = \hc -> {
+		// A replacement clip has its own load lifecycle, even for the same material.
+		wrapperLoaded := false;
 		sendToJS := \msg -> hc("postMessage", [msg, "*"]) |> ignore;
 	}
 	flowCallBack = \args -> {
@@ -1047,14 +1081,21 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 	}
 
 	MConstruct(
-		concat(
+		concatA([
 			if (isUrlParameterTrue("dev")) [
 				makeSubscribe2(sendB, \s -> println("to " + page + " -> " + s)),
 				makeSubscribe2(receiveB, \s -> println("from " + page + " -> " + s)),
 			] else [],
 			[
-				makeSubscribe(sendB, \m -> ^sendToJS(m)),
-				\ -> fBidirectionalLink(playB, fselectFromStateM("status"),
+				// Commands are events: identical loadVideo messages must reach a reloaded iframe.
+				\ -> subscribe2(sendB, \m -> if (^wrapperLoaded) ^sendToJS(m)),
+				\ -> \ -> {
+					wrapperLoaded := false;
+					sendToJS := nop1;
+					pendingState := TreeEmpty();
+				},
+				// Subscribe to changes only: initial defaults must not override URL autoplay/mute/start.
+				\ -> fBidirectionalLink2(playB, fselectFromStateM("status"),
 					\external -> sendState([Pair("status", JsonString(if (external) STATUS_PLAYING else STATUS_PAUSED))]),
 					\internalM -> maybeApply(internalM,
 						\internal -> {
@@ -1063,13 +1104,13 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 						}
 					)
 				),
-				\ -> fBidirectionalLink(positionB, fselectFromStateM("currentTime"),
+				\ -> fBidirectionalLink2(positionB, fselectFromStateM("currentTime"),
 					\external -> sendState([Pair("currentTime", JsonDouble(external))]),
 					\internalM -> maybeApply(internalM,
 						\internal -> nextDistinct(positionB, getJsonDoubleValue(internal, 0.0))
 					)
 				),
-				\ -> fBidirectionalLink(volumeB, fselectFromStateM("volume"),
+				\ -> fBidirectionalLink2(volumeB, fselectFromStateM("volume"),
 					\external -> sendState([Pair("volume", JsonDouble(external * 100.0))]),
 					\internalM -> maybeApply(internalM,
 						\internal -> {
@@ -1080,20 +1121,35 @@ makeExternalApiPlayer(page : string, wh : Transform<WidthHeight>, style : [MVide
 				),
 				// the loop was baked into loadVideo and never sent again, so flipping FVideoLoop at runtime did nothing
 				makeSubscribe2(loopB, \l -> sendState([Pair("loop", JsonBool(l))])),
+			],
+			if (useIntrinsicSize) [
+				makeSubscribe2(fselectFromStateM("videoSize"),
+					\sizeM -> maybeApply(sizeM, \size -> {
+						width = getJsonDoubleField(size, "width", 0.0);
+						height = getJsonDoubleField(size, "height", 0.0);
+						if (width > 0.0 && height > 0.0) {
+							sizeInitialized := true;
+							nextDistinct(realSizeWH, WidthHeight(width, height));
+						}
+					})
+				),
+				// Ready may precede a usable layout. Wait for its first positive size without
+				// feeding later layout changes back into intrinsic size or affecting YouTube.
+				makeSubscribe2(wh, \__ -> if (^fallbackRequested && !^sizeInitialized) initializeSize())
+			] else [],
+			[
 				makeSubscribe2(fselectFromStateM("duration"),
 					\durationM -> maybeApply(durationM, \d -> {
 						nextDistinct(lengthB, getJsonDoubleValue(d, 0.0));
-						if (getValue(lengthB) > 0.) {
-							nextDistinct(realSizeWH, fgetValue(wh))
-						}
+						if (getValue(lengthB) > 0.0) initializeSize();
 					})
 				),
 				// ready comes even without the SDK, so the consumer's spinner does not hang
 				makeSubscribe2(fselectFromStateM("ready"),
-					\readyM -> maybeApply(readyM, \r -> if (getJsonBoolValue(r, false)) nextDistinct(realSizeWH, fgetValue(wh)))
+					\readyM -> maybeApply(readyM, \r -> if (getJsonBoolValue(r, false)) initializeSize())
 				)
 			]
-		),
+		]),
 		MRealHTML(appendUrl(getAppUrl(), page), wh, concatA([
 			[
 				FlowCallback(flowCallBack),
@@ -1126,10 +1182,14 @@ MVideoExternalApiPlayer(url : string, wh : Transform<WidthHeight>, style : [MVid
 	else MVideoVimeoPlayer(url, wh, style)
 }
 
+// Bump this revision when www/vimeo_player.html or its wrapper protocol changes.
+// A new URL bypasses older cached wrappers, including copies without cache headers.
+_VIMEO_PLAYER_REVISION = "1";
+
 // unlike yt_player, the embed url with its parameters (autoplay, muted, controls, start) goes to the page as is
 MVideoVimeoPlayer(url : string, wh : Transform<WidthHeight>, style : [MVideoPlayerStyle]) -> Material {
 	loopB = extractStruct(style, FVideoLoop(make(false))).loop;
-	makeExternalApiPlayer("vimeo_player.html", wh, style, true, true, \ -> JsonObject([
+	makeExternalApiPlayer("vimeo_player.html?v=" + _VIMEO_PLAYER_REVISION, wh, style, true, true, true, \ -> JsonObject([
 		Pair("url", JsonString(either(getVimeoURL(url), url))),
 		Pair("params", JsonObject([Pair("loop", JsonBool(fgetValue(loopB)))]))
 	]))

@@ -125,13 +125,17 @@ void iosMediaStreamSupport::getVideoInputDevices(int OnDeviceInfoReadyRoot)
 void iosMediaStreamSupport::returnDevices(int callbackRoot, NSArray<AVCaptureDevice*>  *devices)
 {
     RUNNER_VAR = owner;
-    StackSlot devicesArray = RUNNER->AllocateArray([devices count]);
-    [devices enumerateObjectsUsingBlock:^(AVCaptureDevice *avDevice, NSUInteger idx, BOOL *stop) {
-        StackSlot device = RUNNER->AllocateArray(2);
+    RUNNER_DefSlots2(devicesArray, device);
+    devicesArray = RUNNER->AllocateArray([devices count]);
+    if (RUNNER->IsErrorReported()) return;
+    int idx = 0;
+    for (AVCaptureDevice *avDevice in devices) {
+        device = RUNNER->AllocateArray(2);
+        if (RUNNER->IsErrorReported()) return;
         RUNNER->SetArraySlot(device, 0, RUNNER->AllocateString(NS2UNICODE(avDevice.uniqueID)));
         RUNNER->SetArraySlot(device, 1, RUNNER->AllocateString(NS2UNICODE(avDevice.localizedName)));
-        RUNNER->SetArraySlot(devicesArray, idx, device);
-    }];
+        RUNNER->SetArraySlot(devicesArray, idx++, device);
+    }
     RUNNER->EvalFunction(RUNNER->LookupRoot(callbackRoot), 1, devicesArray);
 }
 

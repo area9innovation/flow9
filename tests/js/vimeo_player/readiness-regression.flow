@@ -1,0 +1,77 @@
+// Appended to the production player by flow-size.test.js; no browser/SDK required.
+testWrapperReadiness(vimeo : bool, initiallyPlaying : bool) -> void {
+	play = make(initiallyPlaying);
+	position = make(0.0);
+	volume = make(1.0);
+	loop = make(false);
+	style : [MVideoPlayerStyle] = [FVideoPlay(play), FVideoPosition(position), FVideoVolume(volume), FVideoLoop(loop)];
+	material = if (vimeo) MVideoVimeoPlayer("https://player.vimeo.com/video/1?autoplay=1&muted=1", const(WidthHeight(640.0, 360.0)), style)
+		else MVideoYoutubePlayer("https://www.youtube.com/watch?v=test&autoplay=1&mute=1", const(WidthHeight(640.0, 360.0)), style);
+	messages : ref [Json] = ref [];
+	hostCall = \name, args -> {
+		assert(name == "postMessage", "Only postMessage is expected");
+		messages := arrayPush(^messages, parseJson(args[0]));
+		""
+	};
+	switch (material : Material) {
+		MConstruct(constructors, child): {
+			disposers = map(constructors, \constructor -> constructor());
+			switch (child) {
+				MRealHTML(__, __, styles): {
+					setter = extractStruct(styles, PageHostcallSetter(\__ -> {})).fn;
+					loaded = extractStruct(styles, OnPageLoaded(nop)).fn;
+					receive = extractStruct(styles, FlowCallback(\__ -> "")).fn;
+					setter(hostCall);
+					assert(^messages == [], "Installing a host call must not send before iframe load");
+					loaded();
+					assert(getJsonFieldValue(^messages[0], "loadVideo", JsonNull()) != JsonNull(), "loadVideo must be the first message");
+					iter(tail(^messages), \m -> {
+						initial = getJsonFieldValue(m, "playerState", JsonNull());
+						expected = if (vimeo && initiallyPlaying) JsonObject([Pair("status", JsonString("PLAYING"))]) else JsonObject([]);
+						assert(initial == expected, "Initial play is retained without overriding URL mute/start/default autoplay");
+					});
+
+					// A newly supplied host call represents a recreated iframe.
+					setter(hostCall);
+					messages := [];
+					next(play, true);
+					next(play, false);
+					next(position, 12.0);
+					next(position, 0.0);
+					next(volume, 0.25);
+					next(loop, true);
+					assert(^messages == [], "Commands must wait for the replacement iframe to load");
+					loaded();
+					assert(getJsonFieldValue(^messages[0], "loadVideo", JsonNull()) != JsonNull(), "Reload must initialize before replaying commands");
+					state = getJsonFieldValue(^messages[length(^messages) - 1], "playerState", JsonNull());
+					assert(getJsonStringField(state, "status", "") == "PAUSED", "Latest play/pause command wins");
+					assert(getJsonDoubleField(state, "currentTime", -1.0) == 0.0, "An explicit seek to zero must survive loading");
+					assert(getJsonDoubleField(state, "volume", -1.0) == 25.0, "Volume changes must survive loading");
+					assert(getJsonBoolField(state, "loop", false), "Loop changes must survive loading");
+
+					messages := [];
+					next(play, true);
+					assert(length(^messages) == 1, "Commands must forward normally after loading");
+					receive(["postMessage", "{\"playerState\":{\"status\":\"PAUSED\",\"currentTime\":9,\"volume\":50}}"]);
+					assert(length(^messages) == 1, "Incoming player state must not echo back");
+					assert(!getValue(play) && getValue(position) == 9.0 && getValue(volume) == 0.5, "Incoming state still updates controls");
+					messages := [];
+					loaded();
+					assert(getJsonFieldValue(^messages[0], "loadVideo", JsonNull()) != JsonNull(), "Same-clip reload starts with loadVideo");
+					if (vimeo) {
+						restored = getJsonFieldValue(^messages[length(^messages) - 1], "playerState", JsonNull());
+						assert(getJsonDoubleField(restored, "currentTime", -1.0) == 9.0, "Vimeo reload restores reported position");
+						assert(getJsonDoubleField(restored, "volume", -1.0) == 50.0, "Vimeo reload restores observed volume");
+					} else assert(length(^messages) == 1, "YouTube keeps its existing reload policy");
+					messages := [];
+					iter(disposers, \dispose -> dispose());
+					next(play, true);
+					next(volume, 0.75);
+					assert(^messages == [], "Disposed players must not send commands");
+				}
+				default: assert(false, "Expected MRealHTML");
+			}
+		}
+		default: assert(false, "Expected MConstruct");
+	}
+}

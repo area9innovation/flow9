@@ -127,9 +127,9 @@ bool AddrIntervalSet::listIntervals(FlowPtr start, FlowPtr end, std::vector<rang
     return !output->empty();
 }
 
-int AddrIntervalSet::getTotalSize(int align)
+int64_t AddrIntervalSet::getTotalSize(int align)
 {
-    int size = 0;
+    int64_t size = 0;
 
     T_bounds::const_iterator icur = bounds.begin();
 
@@ -137,7 +137,8 @@ int AddrIntervalSet::getTotalSize(int align)
     {
         FlowPtr start = icur->first;
         ++icur;
-        size += (icur->first - start + align - 1) & ~(align - 1);
+        int64_t span = int64_t(FlowPtrToInt(icur->first)) - FlowPtrToInt(start);
+        size += (span + align - 1) & ~int64_t(align - 1);
         ++icur;
     }
 
@@ -209,17 +210,18 @@ GarbageCollector::GarbageCollector(ByteCodeRunner *rnr)
     Memory = rnr->GetMemory();
 
     StructDefs = Runner->StructDefs.data();
-    StructSizes = &Runner->StructSizes[0];
+    StructSizes = Runner->StructSizes.empty() ? NULL : &Runner->StructSizes[0];
     NumStructDefs = Runner->StructDefs.size();
 }
 
 /*
  * Compute the amount of memory required to hold all live objects.
  */
-int GarbageCollector::ComputeLiveBytes()
+int64_t GarbageCollector::ComputeLiveBytes()
 {
-    int strbytes = StringRanges.getTotalSize(4);
-    int live_bytes = NumRefs * sizeof(FlowHeapRef) + NumSlots * STACK_SLOT_SIZE + NumLongStrings * sizeof(FlowStringRef) + NumObjects * 4 + NumClosures * 4 + strbytes;
+    int64_t strbytes = StringRanges.getTotalSize(4);
+    int64_t live_bytes = int64_t(NumRefs) * sizeof(FlowHeapRef) + int64_t(NumSlots) * STACK_SLOT_SIZE
+        + int64_t(NumLongStrings) * sizeof(FlowStringRef) + int64_t(NumObjects) * 4 + int64_t(NumClosures) * 4 + strbytes;
 
 #ifdef FLOW_COMPACT_STRUCTS
     live_bytes += NumStructBytes;
@@ -244,7 +246,8 @@ int GarbageCollector::ComputeLiveBytes()
  */
 int GarbageCollector::ComputeNativeBudget()
 {
-    return 1000 + (NumRefs + NumSlots + NumLongStrings + NumObjects) * 100 /*per mb*/ / 88000 + NativeValuesAlive.size();
+    int64_t budget = 1000 + (NumRefs + NumSlots + NumLongStrings + NumObjects) * 100 /*per mb*/ / 88000 + NativeValuesAlive.size();
+    return int(std::min<int64_t>(budget, INT_MAX));
 }
 
 /*
@@ -279,8 +282,8 @@ bool GarbageCollector::CollectFast()
     FlushArrays();
 
     // Check if enough size to do fast gc
-    int live_bytes = ComputeLiveBytes();
-    if (live_bytes >= int(hp_big_pos - hp_ref_end))
+    int64_t live_bytes = ComputeLiveBytes();
+    if (live_bytes > FlowPtrToInt(hp_big_pos) - FlowPtrToInt(hp_ref_end))
         return false;
 
     Runner->DataStack.readonly(Runner->NumFrozenDataStack, false);
@@ -295,6 +298,7 @@ bool GarbageCollector::CollectFast()
     FlushArrays();
 
     Runner->DataStack.readonly(Runner->NumFrozenDataStack, true);
+    RelocateLegacyFileBytes();
 
 #ifdef DEBUG_FLOW
     cerr << "Max GC stack depth: " << MaxStackDepth << endl;
@@ -312,44 +316,29 @@ bool GarbageCollector::CollectFast()
 }
 
 /*
- * Double the heap if there is still space to do it.
+ * Install a larger heap with the high semispace as the copy destination.
  */
-bool GarbageCollector::DoubleHeap()
+void GarbageCollector::GrowHeap(unsigned size)
 {
-    unsigned size = Runner->HeapEnd - Runner->HeapStart;
-    if (size >= MAX_HEAP_SIZE)
-        return false;
-
 #ifdef DEBUG_FLOW
-    Runner->flow_err << "Doubling flow heap to " << size*2 << " bytes." << endl;
+    Runner->flow_err << "Growing flow heap to " << size << " bytes." << endl;
 #endif
 
-    // Double the heap area
-    Runner->HeapEnd = Runner->HeapStart + size*2;
+    Runner->HeapEnd = MakeFlowPtr(FlowPtrToInt(Runner->HeapStart) + size);
     Memory->SetSize(FlowPtrToInt(Runner->HeapEnd));
-    //Runner->Code.Update();
-
-    // Adjust the heap limits. The current heap
-    // contents always end up in the low half.
-    Runner->highHeap = false;
-
-    // Reinitialize fields
     NewLimits = Runner->GetHeapLimits(true);
+    assert(OldLimits.Start <= NewLimits.Bound);
 
     hp_ref_end = NewLimits.Ephemeral;
     hp_big_pos = NewLimits.Start;
 
     MemoryBuffer = (char*)Memory->GetRawPointer(MakeFlowPtr(0), FlowPtrToInt(Runner->HeapEnd), true);
-
-    return true;
 }
 
 /*
- * Do a full collection, possibly doubling the heap. The ensure_space parameter
- * can be used to force heap doubling if after collection there won't be enough
- * free space.
+ * Do a full collection, reserving old space for survivors and any pending big allocation.
  */
-bool GarbageCollector::Collect(unsigned ensure_space)
+bool GarbageCollector::Collect(unsigned ensure_old_space)
 {
     bool currentIsHigh = Runner->highHeap;
 
@@ -378,18 +367,30 @@ bool GarbageCollector::Collect(unsigned ensure_space)
     ProcessFullRoots();
     FlushArrays();
 
-    // Check if need to double the heap
-    int live_bytes = ComputeLiveBytes() + ensure_space;
-    int heap_bytes = hp_big_pos - hp_ref_end;
-    int ehlimit = heap_bytes - EPHEMERAL_HEAP_SIZE*3;
+    const int64_t needed = ComputeLiveBytes() + ((int64_t(ensure_old_space) + 3) & ~int64_t(3));
+    const int64_t available = FlowPtrToInt(hp_big_pos) - FlowPtrToInt(hp_ref_end);
+    if (needed > int64_t(MAX_HEAP_SIZE / 2) - EPHEMERAL_HEAP_SIZE)
+        return false;
 
-    if (live_bytes >= heap_bytes)
-    {
-        if (!DoubleHeap())
-            return false;
+    const unsigned size = FlowPtrToInt(Runner->HeapEnd) - FlowPtrToInt(Runner->HeapStart);
+    bool dest_high = !currentIsHigh;
+    if (size < MAX_HEAP_SIZE) {
+        uint64_t target = size;
+        if (needed >= std::max(available * 3 / 4, available - int64_t(EPHEMERAL_HEAP_SIZE) * 3)) {
+            do {
+                target *= 2;
+            } while (int64_t(target / 2) - EPHEMERAL_HEAP_SIZE < needed);
+        }
+        // Once copying into the high half, a later resize needs at least twice
+        // its size to leave the source intact. Take the final step now if a
+        // further doubling wouldn't fit. Such an initial heap starts low.
+        if (target > MAX_HEAP_SIZE / 2)
+            target = MAX_HEAP_SIZE;
+        if (target > size) {
+            GrowHeap(unsigned(target));
+            dest_high = true;
+        }
     }
-    else if (live_bytes >= std::max(heap_bytes*3/4, ehlimit))
-        DoubleHeap();
 
     // Move objects to the new half-heap
     Memory->CommitRange(NewLimits.Bound, NewLimits.Start);
@@ -409,12 +410,31 @@ bool GarbageCollector::Collect(unsigned ensure_space)
 #endif
 	
     Memory->DecommitRange(OldLimits.Bound, OldLimits.Start);
+    RelocateLegacyFileBytes();
     Runner->DataStack.readonly(Runner->NumFrozenDataStack, true);
 
     // Flip the runner state
-    Runner->UpdateHeapLimits(!Runner->highHeap);
+    Runner->UpdateHeapLimits(dest_high);
     Runner->ResetRefMask(hp_ref_end, hp_big_pos);
     return true;
+}
+
+// Follow complete file buffers through the same interval relocation as substrings,
+// without retaining the file (or turning a surviving slice into a whole file).
+void GarbageCollector::RelocateLegacyFileBytes()
+{
+    auto &files = Runner->LegacyFileBytes;
+    auto it = files.lower_bound(HeapStart);
+    while (it != files.end() && it->first < HeapEnd) {
+        FlowPtr addr = it->first;
+        size_t bytes = it->second;
+        it = files.erase(it);
+        AddrIntervalSet::range_type range;
+        if (StringRanges.getInterval(addr, &range) && size_t(range.second - addr) >= bytes) {
+            FlowPtr dest = AddressMap.at(range.first) + (addr - range.first);
+            files[dest] = bytes;
+        }
+    }
 }
 
 #ifdef FLOW_GARBAGE_PROFILING
@@ -553,8 +573,8 @@ void GarbageCollector::PrintStats(ostream &out, std::string fname, int FirstNewI
     }
 
     int heap_bytes = NewLimits.Start - NewLimits.Ephemeral - (hp_big_pos - hp_ref_end);
-    int strbytes = StringRanges.getTotalSize(4);
-    int known_bytes = NumRefs * sizeof(FlowHeapRef) + NumSlots * STACK_SLOT_SIZE + NumLongStrings * sizeof(FlowStringRef) + NumClosures * 4 + NumObjects * 4 + strbytes;
+    int64_t strbytes = StringRanges.getTotalSize(4);
+    int64_t known_bytes = NumRefs * sizeof(FlowHeapRef) + NumSlots * STACK_SLOT_SIZE + NumLongStrings * sizeof(FlowStringRef) + int64_t(NumClosures) * 4 + int64_t(NumObjects) * 4 + strbytes;
 
 #ifdef FLOW_COMPACT_STRUCTS
     known_bytes += NumStructBytes;
@@ -640,7 +660,7 @@ void GarbageCollector::ProcessRoots()
     if (Runner->closurepointer != 0)
     {
         FlowPtr ptr = Runner->closurepointer - 4;
-        StackSlot closure = StackSlot::InternalMakeClosurePointer(ptr, *HEADER_PTR(unsigned short, ptr));
+        StackSlot closure = StackSlot::InternalMakeClosurePointer(ptr, Runner->ClosureSlotCount(Runner->closurepointer));
 
         if (inEnumPhase)
             Enumerate(closure);
@@ -658,7 +678,7 @@ void GarbageCollector::ProcessRoots()
         if (a == 0)
             continue;
 
-        StackSlot closure = StackSlot::InternalMakeClosurePointer(a-4, *HEADER_PTR(unsigned short, a-4));
+        StackSlot closure = StackSlot::InternalMakeClosurePointer(a-4, Runner->ClosureSlotCount(a));
 
         if (inEnumPhase)
             Enumerate(closure);
@@ -702,6 +722,7 @@ void GarbageCollector::ProcessRoots()
 #ifdef FLOW_MMAP_HEAP
     // Memory mapped files
     fn << Runner->MappedFiles;
+    fn << Runner->LegacyMappedFiles;
 #endif
 
     // Local root stack
@@ -880,6 +901,25 @@ void GarbageCollector::ReportTagError(int tag)
     abort();
 }
 
+void GarbageCollector::CheckStructId(unsigned id)
+{
+    if (unlikely(id >= NumStructDefs || StructDefs[id].Name.empty())) {
+        Runner->ReportError(GCFailure, "Invalid struct ID in garbage collector: %u", id);
+        abort();
+    }
+}
+
+void GarbageCollector::CheckArrayBytes(FlowPtr ptr, unsigned count, bool closure)
+{
+    const unsigned prefix = closure ? 4 : 0;
+    if (unlikely(!FlowSlotsFit(count, 4 + prefix) ||
+                 FlowPtrToInt(ptr) - FlowPtrToInt(HeapStart) < prefix ||
+                 !FlowSlotsFit(count, 4, FlowPtrToInt(HeapEnd) - FlowPtrToInt(ptr)))) {
+        Runner->ReportError(GCFailure, "Invalid slot count in garbage collector: %u", count);
+        abort();
+    }
+}
+
 /*
  * Main function of the enumeration phase.
  */
@@ -912,6 +952,7 @@ void GarbageCollector::Enumerate(const StackSlot &value)
         {
             FlowPtr ptr = value.slot_private.PtrValue;
 
+            // The slot's type ID is distinct from the compact object's layout ID.
             if (unlikely(unsigned(value.GetStructId()) >= NumStructDefs))
                 abort();
 
@@ -946,7 +987,7 @@ void GarbageCollector::Enumerate(const StackSlot &value)
                 {
 #ifdef FLOW_COMPACT_STRUCTS
                     // Closures based on struct layouts are used by the generated C++ code target
-                    if (func_id < Runner->NumCompactNativeFNs)
+                    if (Runner->UsesCompactClosureLayout(func_id))
                         EnumerateStruct(ptr, true);
                     else
 #endif
@@ -1032,6 +1073,7 @@ void GarbageCollector::EnumerateArray(FlowPtr ptr, unsigned len, bool closure)
     if (!IsHeapPtr(ptr))
         return;
 
+    CheckArrayBytes(ptr, len, closure);
     FlowHeapArray *obj = HEADER_PTR(FlowHeapArray, ptr);
 
     // Check tag
@@ -1093,10 +1135,10 @@ void GarbageCollector::EnumerateStruct(FlowPtr ptr, bool closure)
     if (unlikely(!(obj->header.GC_Tag < MaxOKTag || obj->header.GC_Tag == LastTag)))
         ReportTagError(obj->header.GC_Tag);
 
-    obj->header.GC_Tag = CurTag;
-
     // Register
+    CheckStructId(obj->header.DataValue);
     StructDef &def = StructDefs[obj->header.DataValue];
+    obj->header.GC_Tag = CurTag;
 
     if (def.GCFieldCount > 0)
     {
@@ -1207,8 +1249,7 @@ void GarbageCollector::Collect(StackSlot &value)
             FlowPtr ptr = value.slot_private.PtrValue;
 
 #ifdef DEBUG_FLOW
-            if (unlikely(unsigned(value.GetStructId()) >= NumStructDefs))
-                abort();
+            CheckStructId(value.GetStructId());
 #endif
 
             if (IsHeapPtr(ptr))
@@ -1242,7 +1283,7 @@ void GarbageCollector::Collect(StackSlot &value)
                 {
 #ifdef FLOW_COMPACT_STRUCTS
                     // Closures based on struct layouts are used by the generated C++ code target
-                    if (func_id < Runner->NumCompactNativeFNs)
+                    if (Runner->UsesCompactClosureLayout(func_id))
                         value.slot_private.PtrValue = CollectStruct(ptr, true);
                     else
 #endif
@@ -1489,12 +1530,12 @@ FlowPtr GarbageCollector::CollectArray(FlowPtr ptr, unsigned len, bool closure)
 
     // Allocate and copy
     unsigned prefix = closure ? 4 : 0;
-    unsigned bytes = len * STACK_SLOT_SIZE + 4 + prefix;
+    unsigned bytes = len * STACK_SLOT_SIZE + 4 + prefix; // checked during enumeration
 
     FlowPtr new_base = Allocate(bytes);
     FlowPtr old_base = ptr - prefix;
 
-    memcpy(MEMORY_PTR(new_base, bytes, true), MEMORY_PTR(old_base, bytes, false), bytes);
+    Memory->Copy(old_base, new_base, bytes);
 
     FlowPtr newptr = new_base + prefix;
 
@@ -1576,10 +1617,9 @@ FlowPtr GarbageCollector::CollectStruct(FlowPtr ptr, bool closure)
     if (unlikely(!(obj->header.GC_Tag < MaxOKTag || obj->header.GC_Tag == LastTag)))
         ReportTagError(obj->header.GC_Tag);
 
-    obj->header.GC_Tag = CurTag;
-
     // Copy
     StructDef &def = StructDefs[obj->header.DataValue];
+    obj->header.GC_Tag = CurTag;
     assert(unsigned(def.ByteSize) >= sizeof(FlowHeapStruct));
 
     unsigned prefix = closure ? 4 : 0;

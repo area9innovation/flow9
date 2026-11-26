@@ -104,7 +104,7 @@ public:
     bool getInterval(FlowPtr point, range_type *output) const;
     bool listIntervals(FlowPtr start, FlowPtr end, std::vector<range_type> *output) const;
 
-    int getTotalSize(int align = 1);
+    int64_t getTotalSize(int align = 1);
 
     void addInterval(FlowPtr start, FlowPtr end);
 };
@@ -229,6 +229,7 @@ public:
         FlowPtr last_pc;
         FlowPtr last_closure;
         int last_frame;
+        unsigned last_local_end;
 #ifdef FLOW_DEBUGGER
         FlowPtr impersonate_pc;
         bool is_closure;
@@ -254,6 +255,7 @@ private:
     friend class HeapWalker;
 
     void Reset(bool inDestructor);
+    int PrepareBytecode(const char *filename, int64_t length, bool &mapped);
     void DoInit(const char *bytecode_buffer_or_fn, int bytecode_length, bool from_file);
 
     // Byterunner initialization flag
@@ -307,7 +309,27 @@ private:
 
     // Stacks
     unsigned                   FramePointer;
+    unsigned                   LocalEnd; // Exclusive end of arguments and locals, below temporaries.
     TCallStack                 CallStack;
+    std::vector<bool>          InstructionStarts;
+    bool PrepareInterpreter();
+    bool IsInstructionStart(FlowPtr address) const;
+    bool IsCallableAddress(FlowPtr address) const;
+
+    bool HasOperands(unsigned count) const {
+        // One comparison on the hot path. The 64-bit sum cannot wrap, so a count from a
+        // negative operand fails, and so does a frame whose LocalEnd is above the stack top.
+        return uint64_t(LocalEnd) + count <= DataStack.size();
+    }
+
+    bool HasLocal(unsigned index) const {
+        // Calls and frame reservation maintain FramePointer <= LocalEnd.
+        return index < LocalEnd - FramePointer && LocalEnd <= DataStack.size();
+    }
+
+    unsigned short ClosureSlotCount(FlowPtr data) {
+        return Memory.GetObjectPointer(data - 4, false)->DataValue;
+    }
 
     // The overall memory layout
     FlowPtr HeapStart;
@@ -442,7 +464,6 @@ private:
 #undef STRUCT
 
     // For optimization of opcodes that access fields by name
-    std::vector<std::string> FieldRefNames;
     std::map<std::string,int> FieldRefIds;
 
     // Debugger data
@@ -473,6 +494,7 @@ private:
 #ifdef FLOW_INSTRUCTION_PROFILING
     bool ProfileCodeCoverage;
     std::vector<char> CoverageCodeBackup;
+    void SetCoverageOpcode(FlowPtr address, OpCode opcode);
 
     unsigned ProfileMemStep, ProfileICStep;
 
@@ -538,9 +560,9 @@ private:
     _INLINE_FORCE(void DoDouble2Int());
     _INLINE_FORCE(void DoField(int i));
     _INLINE_FORCE(void DoSetMutable(int i));
-    int LookupFieldName(const StackSlot &struct_ref, char const * n, int length, short *idx, StructDef **pdef);
-    void DoFieldName(char const * n, int length, short *idx);
-    void DoSetMutableName(char const * n, int length, short *idx);
+    int LookupFieldName(const StackSlot &struct_ref, char const * n, int length, void *idx, StructDef **pdef);
+    void DoFieldName(char const * n, int length, void *idx);
+    void DoSetMutableName(char const * n, int length, void *idx);
 
 public:
     void DoPlus(StackSlot &inout, const StackSlot &in2);
@@ -566,6 +588,7 @@ public:
 
 private:
     bool is_raw_bytecode;
+    bool has_interpreter_code = false; // Excludes JIT and native constant buffers.
     std::string BytecodeFilename;
 
     std::string LastErrorDescr;
@@ -618,6 +641,10 @@ public:
 private:
     friend class BinaryDeserializer;
 
+    // Old file readers returned a packed string to both kinds of file writer.
+    // Weak entries: the key is the start of a complete, nonempty file value.
+    std::map<FlowPtr, size_t> LegacyFileBytes;
+
 #ifdef FLOW_MMAP_HEAP
     // Memory mapped areas
     typedef std::pair<FlowPtr,int> RootExtentInfo;
@@ -626,6 +653,7 @@ private:
 
         FlowPtr start;
         size_t length;
+        uint64_t file_device = 0, file_inode = 0;
         std::string filename;
 
         // Binary decoding of a mapped file into a mapped area can produce refs.
@@ -650,6 +678,8 @@ private:
     FlowPtr MapStringPtr;
     FlowPtr MapAreaBase;
     std::map<std::string, StackSlot> MappedFiles;
+    // Legacy reads carry their byte count, so they are cached apart from current reads.
+    std::map<std::string, StackSlot> LegacyMappedFiles;
 #endif
 
     FlowPtr AllocateInner(unsigned size); // called if out of heap
@@ -680,7 +710,7 @@ private:
     unicode_char *AllocateStringBuffer(StackSlot *out, unsigned length);
     FlowPtr *AllocateStringRef(StackSlot *out, unsigned length);
 
-    StackSlot AllocateUninitializedArray(unsigned length);
+    StackSlot AllocateUninitializedArray(uint64_t length);
     StackSlot AllocateUninitializedClosure(unsigned short length, FlowPtr code);
 
 public:
@@ -719,7 +749,7 @@ public:
     }
 #endif
 
-    StackSlot AllocateString(const unicode_char *str, int length);
+    StackSlot AllocateString(const unicode_char *str, size_t length);
     StackSlot AllocateString(const unicode_string &str) {
         return AllocateString(str.data(), str.size());
     }
@@ -732,11 +762,12 @@ public:
     StackSlot AllocateString(const QString& str);
 #endif
 
-    StackSlot LoadFileAsString(std::string filename, bool temporary = false);
+    StackSlot LoadFileAsString(std::string filename, bool temporary = false, bool legacy_file = false);
     void InvalidateFileCache(std::string filename);
 
     StackSlot AllocateRef(const StackSlot &value);
-    StackSlot AllocateArray(int length, StackSlot *data = NULL);
+    StackSlot AllocateArray(int64_t length, StackSlot *data = NULL);
+    StackSlot AllocateStringArray(const std::vector<std::string> &utf8);
     StackSlot AllocateStruct(const char *name, unsigned size);
 
     unsigned GetStringSize(const StackSlot &str) {
@@ -816,25 +847,48 @@ public:
         return GetSplitAuxValue(ref);
     }
 
+    bool CheckSlotCopy(unsigned count) {
+        if (likely(FlowSlotsFit(count, 0))) return true;
+        ReportError(InvalidArgument, "Slot copy is too large.");
+        return false;
+    }
+    bool OffsetSlotCopy(FlowPtr *ptr, int offset) {
+        if (unlikely(offset < 0 || !FlowSlotsFit(offset, 0) ||
+                     uint64_t(FlowPtrToInt(*ptr)) + uint64_t(offset) * STACK_SLOT_SIZE > UINT32_MAX)) {
+            ReportError(InvalidArgument, "Slot copy offset is out of range.");
+            return false;
+        }
+        *ptr += offset * STACK_SLOT_SIZE;
+        return true;
+    }
     void CopySlots(FlowPtr target, FlowPtr src, unsigned count) {
+        if (!count) return;
+        if (!CheckSlotCopy(count)) return;
         Memory.Copy(src, target, count*STACK_SLOT_SIZE);
         if (unlikely(target >= hp_big_pos)) RegisterWrite(target, count);
     }
     void CopySlots(FlowPtr target, const StackSlot *src, unsigned count) {
+        if (!count) return;
+        if (!CheckSlotCopy(count)) return;
         Memory.SetBytes(target, src, count*STACK_SLOT_SIZE);
         if (unlikely(target >= hp_big_pos)) RegisterWrite(target, count);
     }
     void CopyArraySlots(const StackSlot &target, int toff, const StackSlot &src, int soff, unsigned count) {
-        CopySlots(target.GetInternalArrayPtr() + toff*STACK_SLOT_SIZE, src.GetInternalArrayPtr() + soff*STACK_SLOT_SIZE, count);
+        if (!count) return;
+        FlowPtr to = target.GetInternalArrayPtr(), from = src.GetInternalArrayPtr();
+        if (OffsetSlotCopy(&to, toff) && OffsetSlotCopy(&from, soff))
+            CopySlots(to, from, count);
     }
     void CopyArraySlots(const StackSlot &target, int toff, const StackSlot *src, unsigned count) {
-        CopySlots(target.GetInternalArrayPtr() + toff*STACK_SLOT_SIZE, src, count);
+        if (!count) return;
+        FlowPtr to = target.GetInternalArrayPtr();
+        if (OffsetSlotCopy(&to, toff))
+            CopySlots(to, src, count);
     }
 
     // These are type-specific:
     inline int GetClosureSize(const StackSlot &arr) {
-        FlowPtr ptr = arr.GetClosureDataPtr();
-        return ptr != MakeFlowPtr(0) ? Memory.GetInt32(ptr - 4) : 0;
+        return ClosureSlotCount(arr.GetClosureDataPtr());
     }
     inline unsigned GetArraySize(const StackSlot &arr) {
         assert(arr.IsArray());
@@ -1081,6 +1135,7 @@ private:
 #ifdef FLOW_COMPACT_STRUCTS
     // Native functions at the start of the list that use struct-like layouts
     unsigned NumCompactNativeFNs;
+    bool UsesCompactClosureLayout(unsigned func_id) const { return func_id < NumCompactNativeFNs; }
 #endif
     // Number of data stack entries that are made read-only to protect globals
     unsigned NumFrozenDataStack;
@@ -1119,17 +1174,13 @@ public:
     // Copy the closure reference
     StackSlot AllocateClosure(const StackSlot &base, unsigned short num_upvals, StackSlot *upval_data = NULL)
     {
-        if (base.IsNativeFn())
-        {
-            FlowPtr arr = AllocateClosureBuffer(GetNativeFnId(base), num_upvals, upval_data); // ALLOC
-            return StackSlot::InternalMakeNativeClosure(arr, num_upvals);
-        }
-        else
-        {
-            assert(base.IsFlowCode());
-            FlowPtr arr = AllocateClosureBuffer(FlowPtrToInt(GetCodePointer(base)), num_upvals, upval_data); // ALLOC
-            return StackSlot::InternalMakeClosurePointer(arr, num_upvals);
-        }
+        const bool native = base.IsNativeFn();
+        assert(native || base.IsFlowCode());
+        int code = native ? GetNativeFnId(base) : int(FlowPtrToInt(GetCodePointer(base)));
+        FlowPtr arr = AllocateClosureBuffer(code, num_upvals, upval_data); // ALLOC
+        if (unlikely(arr == 0)) return StackSlot::MakeVoid();
+        return native ? StackSlot::InternalMakeNativeClosure(arr, num_upvals)
+                      : StackSlot::InternalMakeClosurePointer(arr, num_upvals);
     }
 
     // Stop GC of currently allocated native functions
@@ -1212,7 +1263,7 @@ public:
     void PrintCallStack(ostream &out, bool with_args = false);
     void PrintCallStackLine(ostream &out, const FlowStackFrame &frame, bool with_args);
 
-    void ForceGC(unsigned ensure_space = 0, bool full = false);
+    void ForceGC(unsigned ensure_old_space = 0, bool full = false);
     void PrintDataStack();
 
     bool PrintData(ostream &out, const StackSlot &slot, int max_depth = -1, int max_count = -1);
@@ -1323,6 +1374,8 @@ private:
     static StackSlot setFileContent(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentUTF16(ByteCodeRunner*,StackSlot*);
     static StackSlot getFileContentBinary(ByteCodeRunner*,StackSlot*);
+    static StackSlot readPackedFile(ByteCodeRunner*,StackSlot*);
+    static StackSlot copyFile(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentBinary(ByteCodeRunner*,StackSlot*);
     static StackSlot setFileContentBytes(ByteCodeRunner*,StackSlot*);
     static StackSlot getBytecodeFilename(ByteCodeRunner*,StackSlot*);
@@ -1348,6 +1401,7 @@ private:
     static StackSlot toBinary(ByteCodeRunner*,StackSlot*);
     static StackSlot fromBinary(ByteCodeRunner*,StackSlot*);
     static StackSlot fromBinary2(ByteCodeRunner*,StackSlot*);
+    static StackSlot fromBinaryWithDepth(ByteCodeRunner*,StackSlot*);
     static StackSlot stringbytes2double(ByteCodeRunner*,StackSlot*);
     static StackSlot stringbytes2int(ByteCodeRunner*,StackSlot*);
     static StackSlot getCurrentDate(ByteCodeRunner*,StackSlot*);

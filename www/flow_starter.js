@@ -10,7 +10,7 @@ const scripts = [
 	"webfont.js",
 	"pixi-4.8.2.min.js?2",
 	"pixi.filters.js?10",
-	"purify/purify.min.js?1",
+	"purify/purify.min.js?2",
 	"jscommon.js?14"
 ];
 

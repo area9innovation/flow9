@@ -820,6 +820,7 @@ void QGLRenderSupport::callflow(QWebEngineView * web_view, QVariantList args) {
         RUNNER_VAR = getFlowRunner();
         RUNNER_DefSlots1(arg);
         arg = RUNNER->AllocateArray(args.length());
+        if (RUNNER->IsErrorReported()) return;
         for (int i = 0; i < args.length(); i++) {
             RUNNER->SetArraySlot(arg, i, variant2slot(args[i]));
         }
@@ -1623,6 +1624,7 @@ void QGLRenderSupport::dropEvent(QDropEvent *event)
 
             RUNNER_DefSlots1(fileArray);
             fileArray = RUNNER->AllocateArray(filesLimit);
+            if (RUNNER->IsErrorReported()) return;
 
             for (int i = 0; i < filesLimit; ++i) {
                 QString path = urlList.at(i).toLocalFile();

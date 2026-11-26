@@ -128,8 +128,12 @@ void AbstractHttpSupport::deliverPartialData(int id, const void *buffer, unsigne
             return;
         }
 
-        if (rq->is_utf && !rq->tmp_parser.is_complete())
-            fwrite("?\0", 1, 2, rq->tmp_file);
+        if (rq->is_utf && rq->response_enc != ResponseEncodingByte)
+        {
+            unicode_string tail;
+            rq->tmp_parser.finish(tail);
+            fwrite(tail.data(), sizeof(unicode_char), tail.size(), rq->tmp_file);
+        }
 
         fclose(rq->tmp_file);
         rq->tmp_file = NULL;
@@ -244,9 +248,12 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
         }
 
         int i = 0;
-        StackSlot headersArray = RUNNER->AllocateArray(headers.size());
+        RUNNER_DefSlots2(headersArray, headerPair);
+        headersArray = RUNNER->AllocateArray(headers.size());
         for (std::map<unicode_string, unicode_string>::iterator it = headers.begin(); it != headers.end(); ++it) {
-            StackSlot headerPair = RUNNER->AllocateArray(2);
+            if (RUNNER->IsErrorReported()) break;
+            headerPair = RUNNER->AllocateArray(2);
+            if (RUNNER->IsErrorReported()) break;
 
             RUNNER->SetArraySlot(headerPair, 0, RUNNER->AllocateString(it->first));
             RUNNER->SetArraySlot(headerPair, 1, RUNNER->AllocateString(it->second));
@@ -254,7 +261,8 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
             RUNNER->SetArraySlot(headersArray, i++, headerPair);
         }
 
-        RUNNER->EvalFunction(rq->response_cb, 3, StackSlot::MakeInt(status), data, headersArray);
+        if (!RUNNER->IsErrorReported())
+            RUNNER->EvalFunction(rq->response_cb, 3, StackSlot::MakeInt(status), data, headersArray);
     }
 
     if (rq && !rq->done_cb.IsVoid()) {

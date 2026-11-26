@@ -1,0 +1,131 @@
+import material/material2tropic;
+import material/material_print;
+
+// Manual JS test for RenderSupport.showPrintDialog waiting for pending timer(0) layout
+// before calling window.print() (url flag defer_queue_print, see platforms/js/RenderSupport.hx).
+//
+// The print page is mounted only when print mode turns on (MIfPrint), i.e. inside showPrintDialog(),
+// like book export does. Its table is then built row by row in a timer chain, each step taking
+// STEP_MS, so the whole chain is longer than Native.defer tolerance (250ms) and spans several ticks.
+//
+// Press a PRINT button and check the browser print preview:
+//   - timer(0):          footer says "DONE", all ROWS rows present.
+//                        With ?defer_queue_print=0 the table is expected to be empty or incomplete.
+//   - timer(10):         not covered by the fix (setTimeout, not the defer queue).
+//                        Shows whether such layout is still cut off.
+//   - endless timer(0):  a timer(0) loop never stops. Print must still open after ~2s,
+//                        with the table complete.
+
+ROWS = 40;
+STEP_MS = 10.0;
+
+main() {
+	setRendererType("html");
+	manager = makeMaterialManager([]);
+	mrender(manager, true, testPrintDeferredLayoutGui());
+}
+
+testPrintDeferredLayoutGui() -> Material {
+	// 0 - timer(0), 1 - timer(10), 2 - timer(0) with endless timer(0) loop
+	modeB = make(0);
+
+	printWithMode = \mode -> {
+		next(modeB, mode);
+		showPrintDialog();
+	};
+
+	MLines([
+		MText("Press a button and check the print preview. Footer must say DONE.", [])
+		|> MBorderBottom(16.0),
+		MCols([
+			MTextButton("PRINT timer(0)", \ -> printWithMode(0), [MButtonRaised()], []),
+			MTextButton("PRINT timer(10)", \ -> printWithMode(1), [MButtonRaised()], []) |> MBorderLeft(8.0),
+			MTextButton("PRINT endless timer(0)", \ -> printWithMode(2), [MButtonRaised()], []) |> MBorderLeft(8.0),
+		]),
+		MCropSize(
+			TFixed(0.0, 0.0),
+			MPrintPages(const([
+				MIfPrint(
+					MSelect(modeB, \mode ->
+						if (mode == 1) {
+							deferredTablePage("timer(10) chain", \fn -> timer(10, fn), false)
+						} else {
+							deferredTablePage(if (mode == 2) "timer(0) chain + endless timer(0)" else "timer(0) chain", deferred, mode == 2)
+						}
+					),
+					MEmpty()
+				)
+			]))
+		)
+	])
+	|> MBorderLeftRight(16.0)
+	|> MBorderTop(16.0)
+}
+
+deferredTablePage(title : string, schedule : (() -> void) -> void, endlessTimer : bool) -> Material {
+	rowsB = make([]);
+
+	MConstruct(
+		[
+			\ -> {
+				alive = ref true;
+				next(rowsB, []);
+				buildRowsChain(rowsB, schedule, alive);
+				if (endlessTimer) endlessDeferred(alive);
+				\ -> alive := false
+			}
+		],
+		MLines([
+			MText(title, [MTitle()]) |> MBorderBottom(8.0),
+			MSelect(rowsB, \rows -> MLines(map(rows, tableRow))),
+			MSelect(rowsB, \rows -> {
+				n = length(rows);
+				MText(
+					if (n == ROWS) "DONE: " + i2s(ROWS) + " rows" else "INCOMPLETE: " + i2s(n) + " / " + i2s(ROWS) + " rows",
+					[MSubheading()]
+				)
+			})
+			|> MBorderTop(8.0)
+		])
+	)
+}
+
+tableRow(i : int) -> Material {
+	MCols([
+		tableCell("Row " + i2s(i + 1)),
+		tableCell("cell A" + i2s(i + 1)),
+		tableCell("cell B" + i2s(i + 1)),
+	])
+	|> MBorderBottom(2.0)
+}
+
+tableCell(text : string) -> Material {
+	MGroup2(TFixed(120.0, 0.0), MText(text, []))
+}
+
+// Adds one row per scheduled callback until ROWS are present
+buildRowsChain(rowsB : DynamicBehaviour<[int]>, schedule : (() -> void) -> void, alive : ref bool) -> void {
+	n = length(getValue(rowsB));
+	if (^alive && n < ROWS) {
+		schedule(\ -> if (^alive) {
+			// Simulates layout cost of a real table row
+			busyWait(timestamp(), STEP_MS);
+			next(rowsB, arrayPush(getValue(rowsB), n));
+			buildRowsChain(rowsB, schedule, alive);
+		});
+	}
+}
+
+endlessDeferred(alive : ref bool) -> void {
+	deferred(\ -> if (^alive) endlessDeferred(alive));
+}
+
+busyWaitChunk = enumFromTo(1, 10000);
+
+// Spins in chunks so the recursion depth stays small even without tail call optimization
+busyWait(t0 : double, ms : double) -> void {
+	if (timestamp() - t0 < ms) {
+		fold(busyWaitChunk, 0, \acc, i -> acc + i) |> ignore;
+		busyWait(t0, ms);
+	}
+}

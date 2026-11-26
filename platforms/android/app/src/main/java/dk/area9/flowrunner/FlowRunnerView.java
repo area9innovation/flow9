@@ -158,6 +158,13 @@ class FlowRunnerView extends GLSurfaceView {
         private static int EGL_CONTEXT_CLIENT_VERSION = 0x3098;
         public EGLContext createContext(@NonNull EGL10 egl, EGLDisplay display, EGLConfig eglConfig) {
             Log.w(Utils.LOG_TAG, "creating OpenGL ES 3.0 context");
+            if (eglConfig == null) {
+                // GLSurfaceView does not null-check the result of EGLConfigChooser.chooseConfig(),
+                // and eglCreateContext() throws a message-less IllegalArgumentException on a null
+                // config, which kills the GL thread and the whole process. Fail loudly instead.
+                Log.e(Utils.LOG_TAG, "No EGLConfig was chosen - cannot create a GL context");
+                return null;
+            }
             checkEglError("Before eglCreateContext", egl);
             int[] attrib_list = {EGL_CONTEXT_CLIENT_VERSION, 3, EGL10.EGL_NONE };
             EGLContext context = egl.eglCreateContext(display, eglConfig, EGL10.EGL_NO_CONTEXT, attrib_list);
@@ -220,7 +227,10 @@ class FlowRunnerView extends GLSurfaceView {
             /* Get the number of minimally matching EGL configurations
              */
             int[] num_config = new int[1];
-            egl.eglChooseConfig(display, s_configAttribs2, null, 0, num_config);
+            if (!egl.eglChooseConfig(display, s_configAttribs2, null, 0, num_config)) {
+                throw new IllegalArgumentException("eglChooseConfig failed: 0x"
+                        + Integer.toHexString(egl.eglGetError()));
+            }
 
             int numConfigs = num_config[0];
 
@@ -231,7 +241,10 @@ class FlowRunnerView extends GLSurfaceView {
             /* Allocate then read the array of minimally matching EGL configs
              */
             EGLConfig[] configs = new EGLConfig[numConfigs];
-            egl.eglChooseConfig(display, s_configAttribs2, configs, numConfigs, num_config);
+            if (!egl.eglChooseConfig(display, s_configAttribs2, configs, numConfigs, num_config)) {
+                throw new IllegalArgumentException("eglChooseConfig(list) failed: 0x"
+                        + Integer.toHexString(egl.eglGetError()));
+            }
 
             /* Now return the "best" one
              */
@@ -241,7 +254,101 @@ class FlowRunnerView extends GLSurfaceView {
         @Nullable
         public EGLConfig chooseConfig(@NonNull EGL10 egl, EGLDisplay display,
                                       @NonNull EGLConfig[] configs) {
-            for(EGLConfig config : configs) {
+            // Pass 1: exact red/green/blue/alpha match (the historically preferred config).
+            EGLConfig config = findConfig(egl, display, configs, MATCH_EXACT);
+            if (config != null)
+                return config;
+
+            // Nothing matched exactly. Dump what the driver actually offered - this is the only
+            // way to tell an unusual colour layout apart from a missing stencil buffer.
+            dumpConfigs(egl, display, configs);
+
+            // Pass 2: deeper colour channels are acceptable, but keep the requested alpha so an
+            // opaque surface does not silently become translucent (or vice versa). Virtualized
+            // GPUs (e.g. the Play Console test devices) expose only RGBA8888/RGBX8888 and would
+            // otherwise fail the RGB565 exact match entirely.
+            config = findConfig(egl, display, configs, MATCH_DEEPER_EXACT_ALPHA);
+            if (config != null) {
+                Log.w(Utils.LOG_TAG, "No exact EGLConfig for RGBA " + mRedSize + "/" + mGreenSize
+                        + "/" + mBlueSize + "/" + mAlphaSize + " - using a deeper colour config");
+                return config;
+            }
+
+            // Pass 3: at least the requested colour precision, ignoring the alpha size.
+            config = findConfig(egl, display, configs, MATCH_DEEPER);
+            if (config != null) {
+                Log.w(Utils.LOG_TAG, "Falling back to an EGLConfig with a different alpha size");
+                return config;
+            }
+
+            // Last resort: no config has the requested depth/stencil. Do NOT just take
+            // configs[0] - the list usually starts with stencil=0 entries, and the renderer
+            // needs MIN_STENCIL_BITS for concave fills and rotated crop (GLGraphics.cpp).
+            // Pick the config with the most stencil (then depth) bits so clipping degrades
+            // as little as possible.
+            EGLConfig best = null;
+            int bestStencil = -1;
+            int bestDepth = -1;
+            for (EGLConfig candidate : configs) {
+                int s = findConfigAttrib(egl, display, candidate, EGL10.EGL_STENCIL_SIZE, 0);
+                int d = findConfigAttrib(egl, display, candidate, EGL10.EGL_DEPTH_SIZE, 0);
+                if (s > bestStencil || (s == bestStencil && d > bestDepth)) {
+                    best = candidate;
+                    bestStencil = s;
+                    bestDepth = d;
+                }
+            }
+
+            if (best != null) {
+                if (bestStencil < MIN_STENCIL_BITS) {
+                    Log.e(Utils.LOG_TAG, "No EGLConfig has the " + MIN_STENCIL_BITS
+                            + " stencil bits the renderer needs (best is " + bestStencil
+                            + ") - clipping and concave fills will render incorrectly");
+                } else {
+                    Log.w(Utils.LOG_TAG, "No EGLConfig with depth>=" + mDepthSize + " stencil>="
+                            + mStencilSize + " - using stencil=" + bestStencil
+                            + " depth=" + bestDepth);
+                }
+                return best;
+            }
+
+            Log.e(Utils.LOG_TAG, "The EGL driver returned an empty config list");
+            return null;
+        }
+
+        /**
+         * Stencil bits the Flow renderer relies on: GLRenderer.StencilCropBits (0xf)
+         * plus StencilDrawFill (0x10) and StencilDrawLine (0x20) == 0x3f.
+         */
+        private static final int MIN_STENCIL_BITS = 6;
+
+        private void dumpConfigs(@NonNull EGL10 egl, EGLDisplay display,
+                                 @NonNull EGLConfig[] configs) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("No exact EGLConfig for r").append(mRedSize).append("g").append(mGreenSize)
+              .append("b").append(mBlueSize).append("a").append(mAlphaSize)
+              .append(" d").append(mDepthSize).append("s").append(mStencilSize)
+              .append("; driver offered ").append(configs.length).append(":");
+            for (EGLConfig config : configs) {
+                sb.append(" [r").append(findConfigAttrib(egl, display, config, EGL10.EGL_RED_SIZE, 0))
+                  .append("g").append(findConfigAttrib(egl, display, config, EGL10.EGL_GREEN_SIZE, 0))
+                  .append("b").append(findConfigAttrib(egl, display, config, EGL10.EGL_BLUE_SIZE, 0))
+                  .append("a").append(findConfigAttrib(egl, display, config, EGL10.EGL_ALPHA_SIZE, 0))
+                  .append("d").append(findConfigAttrib(egl, display, config, EGL10.EGL_DEPTH_SIZE, 0))
+                  .append("s").append(findConfigAttrib(egl, display, config, EGL10.EGL_STENCIL_SIZE, 0))
+                  .append("]");
+            }
+            Log.w(Utils.LOG_TAG, sb.toString());
+        }
+
+        private static final int MATCH_EXACT = 0;
+        private static final int MATCH_DEEPER_EXACT_ALPHA = 1;
+        private static final int MATCH_DEEPER = 2;
+
+        @Nullable
+        private EGLConfig findConfig(@NonNull EGL10 egl, EGLDisplay display,
+                                     @NonNull EGLConfig[] configs, int mode) {
+            for (EGLConfig config : configs) {
                 int d = findConfigAttrib(egl, display, config,
                         EGL10.EGL_DEPTH_SIZE, 0);
                 int s = findConfigAttrib(egl, display, config,
@@ -251,7 +358,6 @@ class FlowRunnerView extends GLSurfaceView {
                 if (d < mDepthSize || s < mStencilSize)
                     continue;
 
-                // We want an *exact* match for red/green/blue/alpha
                 int r = findConfigAttrib(egl, display, config,
                         EGL10.EGL_RED_SIZE, 0);
                 int g = findConfigAttrib(egl, display, config,
@@ -261,8 +367,13 @@ class FlowRunnerView extends GLSurfaceView {
                 int a = findConfigAttrib(egl, display, config,
                         EGL10.EGL_ALPHA_SIZE, 0);
 
-                if (r == mRedSize && g == mGreenSize && b == mBlueSize && a == mAlphaSize)
-                    return config;
+                if (mode == MATCH_EXACT) {
+                    if (r == mRedSize && g == mGreenSize && b == mBlueSize && a == mAlphaSize)
+                        return config;
+                } else if (r >= mRedSize && g >= mGreenSize && b >= mBlueSize) {
+                    if (mode == MATCH_DEEPER || a == mAlphaSize)
+                        return config;
+                }
             }
             return null;
         }

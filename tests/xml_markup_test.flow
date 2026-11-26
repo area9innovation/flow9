@@ -1,0 +1,86 @@
+import formats/xml;
+import sys/target;
+
+// Tests of where markup ends in the XML parser (lib/formats/xml.flow): a comment or CDATA section
+// ends where it is closed, and one that is never closed takes the rest of the input, so nothing in
+// it is read as markup; a quoted attribute value ends only at its own kind of quote.
+
+failures : ref int = ref 0;
+
+check(name : string, actual : flow, expected : flow) -> void {
+	if (actual != expected) {
+		failures := ^failures + 1;
+		println("FAIL: " + name);
+		println("  expected: " + toString(expected));
+		println("  actual:   " + toString(actual));
+	}
+}
+
+events(s : string) -> [XmlEvent] {
+	acc = ref makeList();
+	b : DynamicBehaviour<XmlEvent> = make(XmlEndEvent());
+	u = subscribe2(b, \e -> acc := Cons(e, ^acc));
+	parseXml(s, b);
+	u();
+	list2array(^acc);
+}
+
+testClosed() -> void {
+	check("comment", events("a<!-- c -->b"), [XmlTextEvent("a"), XmlCommentEvent(" c "), XmlTextEvent("b"), XmlEndEvent()]);
+	check("empty comment", events("<!---->x"), [XmlCommentEvent(""), XmlTextEvent("x"), XmlEndEvent()]);
+	check("markup inside a comment", events("<!-- <b>t</b> --><i/>"), [XmlCommentEvent(" <b>t</b> "), XmlEmptyElement("i", []), XmlEndEvent()]);
+	check("CDATA", events("a<![CDATA[<b>&lt;]]>c"), [XmlTextEvent("a"), XmlTextEvent("<b>&lt;"), XmlTextEvent("c"), XmlEndEvent()]);
+	check("empty CDATA", events("<![CDATA[]]>x"), [XmlTextEvent(""), XmlTextEvent("x"), XmlEndEvent()]);
+	check("DOM with a comment kept", parseXml3WithStrategy("<a><!-- c --><b/></a>", [XmlKeepComments()]),
+		[XmlElement2("a", [], [XmlComment(" c "), XmlElement2("b", [], [])])]);
+}
+
+testUnterminated() -> void {
+	check("comment takes the rest", events("a<!-- open <b x='1'>t</b>"), [XmlTextEvent("a"), XmlCommentEvent(" open <b x='1'>t</b>"), XmlEndEvent()]);
+	check("comment with only its opening", events("<!--"), [XmlCommentEvent(""), XmlEndEvent()]);
+	check("comment cut inside its closing", events("<!-- c --"), [XmlCommentEvent(" c --"), XmlEndEvent()]);
+	// With no --> later, <!--> and <!---> are an empty comment, as in HTML5;
+	// with a later -->, they open a comment that ends there, as in XML
+	check("<!--> is an empty comment", events("<!-->x<b/>"), [XmlCommentEvent(""), XmlTextEvent("x"), XmlEmptyElement("b", []), XmlEndEvent()]);
+	check("<!---> is an empty comment", events("<!--->y<b/>"), [XmlCommentEvent(""), XmlTextEvent("y"), XmlEmptyElement("b", []), XmlEndEvent()]);
+	check("DOM after <!--->", parseXml3WithStrategy("<r><!--->y</r><s/>", [XmlKeepComments()]),
+		[XmlElement2("r", [], [XmlComment(""), XmlText("y")]), XmlElement2("s", [], [])]);
+	check("<!--> before a later -->", events("<!-->a-->b"), [XmlCommentEvent(">a"), XmlTextEvent("b"), XmlEndEvent()]);
+	check("<!---> before a later -->", events("<!--->a-->b"), [XmlCommentEvent("->a"), XmlTextEvent("b"), XmlEndEvent()]);
+	check("DOM with <!--> before a later -->", parseXml3WithStrategy("<r><!-->a--></r>", [XmlKeepComments()]),
+		[XmlElement2("r", [], [XmlComment(">a")])]);
+	check("CDATA takes the rest", events("a<![CDATA[ open <b>t</b>"), [XmlTextEvent("a"), XmlTextEvent(" open <b>t</b>"), XmlEndEvent()]);
+	check("CDATA with only its opening", events("<![CDATA["), [XmlTextEvent(""), XmlEndEvent()]);
+	check("CDATA cut inside its closing", events("<![CDATA[x]]"), [XmlTextEvent("x]]"), XmlEndEvent()]);
+	check("DOM after an unterminated comment", parseXml3WithStrategy("<a>t<!-- <b/>", [XmlKeepComments()]),
+		[XmlElement2("a", [], [XmlText("t"), XmlComment(" <b/>")])]);
+	check("DOM after an unterminated CDATA", parseXml3("<a><![CDATA[<b/>"), [XmlElement("a", [], [XmlText("<b/>")])]);
+}
+
+testAttributeQuotes() -> void {
+	check("apostrophe inside double quotes", parseXml3("<a title=\"it's\">x</a><b/>"),
+		[XmlElement("a", [XmlAttribute("title", "it's")], [XmlText("x")]), XmlElement("b", [], [])]);
+	check("double quote inside apostrophes", parseXml3("<a t='say \"hi'>x</a><b/>"),
+		[XmlElement("a", [XmlAttribute("t", "say \"hi")], [XmlText("x")]), XmlElement("b", [], [])]);
+	check("> inside values", parseXml3("<a t=\"x>y\" u='p>q'>z</a>"),
+		[XmlElement("a", [XmlAttribute("t", "x>y"), XmlAttribute("u", "p>q")], [XmlText("z")])]);
+	check("markup inside a value", parseXml3("<span data-mathml=\"<math xmlns='u'><mi>x</mi></math>\">y</span>"),
+		[XmlElement("span", [XmlAttribute("data-mathml", "<math xmlns='u'><mi>x</mi></math>")], [XmlText("y")])]);
+	check("backslash before the quote of the value", parseXml3("<a t=\"a\\\"b\">x</a>"),
+		[XmlElement("a", [XmlAttribute("t", "a\"b")], [XmlText("x")])]);
+	check("value never closed: the tag is text", parseXml3("<a t='x>y"), [XmlText("<a t='x>y")]);
+}
+
+main() {
+	testClosed();
+	testUnterminated();
+	testAttributeQuotes();
+
+	if (^failures == 0) {
+		println("XML markup tests: all passed in " + getTargetName());
+		quit(0);
+	} else {
+		println(i2s(^failures) + " XML markup test(s) failed in " + getTargetName());
+		quit(1);
+	}
+}

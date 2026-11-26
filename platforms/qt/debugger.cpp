@@ -1651,13 +1651,11 @@ protected:
     }
 
 #ifdef FLOW_COMPACT_STRUCTS
-    void VisitStruct(StackSlot &ref, FlowStructHeader *data, int size, StructDef *def)
+    void VisitCompactFields(FlowStructHeader *data, StructDef *def) override
     {
-        HeapWalker::VisitStruct(ref, data, size, def);
-
         if (!in_child)
         {
-            for (int i = 0; i < size; i++)
+            for (int i = 0; i < def->FieldsCount; i++)
                 children.push_back(FlowVarReference(getFlowRunner(), data, &def->FieldDefs[i]));
         }
     }

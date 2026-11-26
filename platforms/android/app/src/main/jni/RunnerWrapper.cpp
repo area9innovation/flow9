@@ -1817,6 +1817,7 @@ void AndroidRenderSupport::callFlowFromWebView(jlong clip, jobjectArray args)
     RUNNER_VAR = getFlowRunner();
     RUNNER_DefSlots1(arr);
     arr = RUNNER->AllocateArray(anum);
+    if (RUNNER->IsErrorReported()) return;
 
     for (int i = 0; i < anum; i++) {
         jobject obj = env->GetObjectArrayElement(args, i);
@@ -2405,12 +2406,15 @@ void AndroidMediaStreamSupport::deliverDevices(jint cb_root, jobjectArray ids, j
     RUNNER_VAR = getFlowRunner();
 
     int length = env->GetArrayLength(ids);
-    StackSlot devicesArray = RUNNER->AllocateArray(length);
+    RUNNER_DefSlots2(devicesArray, device);
+    devicesArray = RUNNER->AllocateArray(length);
+    if (RUNNER->IsErrorReported()) return;
     for (int i = 0; i < length; i++) {
+        device = RUNNER->AllocateArray(2);
+        if (RUNNER->IsErrorReported()) return;
         jstring id = (jstring)env->GetObjectArrayElement(ids, i);
         jstring name = (jstring)env->GetObjectArrayElement(names, i);
 
-        StackSlot device = RUNNER->AllocateArray(2);
         RUNNER->SetArraySlot(device, 0, RUNNER->AllocateString(jni2unicode(env, id)));
         RUNNER->SetArraySlot(device, 1, RUNNER->AllocateString(jni2unicode(env, name)));
 
@@ -2691,7 +2695,7 @@ void AndroidFileSystemInterface::deliverOpenFileDialogCallback(jint callbackRoot
     int length = env->GetArrayLength(filePaths);
     flowFilesArray = RUNNER->AllocateArray(length);
 
-    for (int i = 0; i < length; ++i) {
+    for (int i = 0; !RUNNER->IsErrorReported() && i < length; ++i) {
         jstring path = (jstring)env->GetObjectArrayElement(filePaths, i);
 
         FlowFile *file = new FlowFile(RUNNER, jni2string(env, path));
@@ -2700,7 +2704,8 @@ void AndroidFileSystemInterface::deliverOpenFileDialogCallback(jint callbackRoot
         env->DeleteLocalRef(path);
     }
 
-    RUNNER->EvalFunction(RUNNER->LookupRoot(callbackRoot), 1, flowFilesArray);
+    if (!RUNNER->IsErrorReported())
+        RUNNER->EvalFunction(RUNNER->LookupRoot(callbackRoot), 1, flowFilesArray);
 
     RUNNER->ReleaseRoot(callbackRoot);
 }
@@ -2755,4 +2760,3 @@ void AndroidPrintingSupport::doPrintDocumentFromURL(unicode_string url)
     env->DeleteLocalRef(url_s);
     owner->eatExceptions();
 }
-
