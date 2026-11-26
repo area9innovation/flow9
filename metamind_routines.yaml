@@ -26,11 +26,14 @@ routines:
     base: master
     prTitle: 'fix: compile errors'
     engine: { cli: claude-code, model: claude-opus-5, effort: medium }
-    prelude:
-      - run: mise trust --quiet && mise install --yes java
-    verify: >-
-      mise exec java -- bin/flowc1 server=0 tools/flowc/flowc.flow &&
-      mise exec java -- bin/flowc1 server=0 lib/material/material.flow
+    verify: |
+      set -e
+      bin/flowc1 tools/flowc/flowc.flow
+      bin/flowc1 lib/material/material.flow
+      set -- platforms/qt/bin platforms/common/cpp/gl-gui/shaders/code.inc
+      git diff --exit-code --name-status origin/master...HEAD -- "$@"
+      qt_changes=$(git status --porcelain --untracked-files=all -- "$@")
+      if [ -n "$qt_changes" ]; then printf '%s\n' "$qt_changes"; exit 1; fi
     limits: { runMinutes: 120 }
     prompt: |
       This repository is PUBLIC. Nothing you commit, write in a pull request or
@@ -40,21 +43,28 @@ routines:
       several for a list) lands in a run log only the people this routine is
       shared with can read.
 
-      From the worktree root, compile each file in the foreground with
-      `mise exec java -- bin/flowc1 server=0 <file>`:
+      Note the initial `git status --short --untracked-files=all` in the routine
+      worktree so you can distinguish your build outputs from existing work.
+      Compile with `bin/flowc1 <file>` (Java only: nothing native, no LFS):
 
         tools/flowc/flowc.flow          the compiler
         lib/material/material.flow      the UI library, which pulls in most of lib/
         every .flow file changed in {{sinceSha}}..{{headSha}} (recent history
         when that reads empty), outside tools/flowc/tests/
 
-      Use that same command for diagnosis, bisect probes and verification. Only
-      compile: do not run the program or start `flowc`, `flowcpp` or
-      `QtByteRunner`. If you started a runner by mistake, stop that specific
-      process and wait for it to exit before reporting. If the Java compiler
-      cannot start, report `failed` and stop.
+      Use the same Java compiler for bisect probes. Do not rebuild QtByteRunner
+      for these checks: `platforms/qt/build.sh` overwrites the tracked runner in
+      `platforms/qt/bin/` and regenerates `platforms/common/cpp/gl-gui/shaders/code.inc`.
 
-      `flowc1` exits nonzero on a compile error. Do not use `unittests=1`: it writes
+      Before staging a fix and before every report (including `nothing-to-do`
+      and `failed`), compare git status with the initial status. If a build
+      changed a previously clean tracked output, restore that file with
+      `git restore --source=HEAD --staged --worktree -- <path>`. Remove only
+      untracked build outputs created by this run. Recheck that the only changes
+      since the initial status are intended fixes; never reset the whole tree
+      or commit rebuilt binaries.
+
+      `flowc1` exits 1 on any error. Do not use `unittests=1`: it writes
       tools/flowc/tests/out/ into the tree and exits 0 whatever it finds. Do not
       compile the fixtures under tools/flowc/tests/: some are meant to fail.
 
