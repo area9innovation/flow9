@@ -7,6 +7,9 @@ root=$(cd "$here/../../../.." && pwd -P)
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 cd "$root"
+"${CXX:-c++}" -std=c++11 "$here/publish_new_file_test.cpp" -o "$work/publish-new"
+mkdir "$work/publication"
+(cd "$work/publication" && "$work/publish-new" && [[ $(ls -A) == result && $(cat result) == first ]])
 "$root/bin/flowc1" "$here/file_contracts.flow" bytecode="$work/test.bytecode"
 "$root/bin/flowc1" "$here/local_file_contracts.flow" bytecode="$work/local.bytecode"
 "$root/bin/flowc1" "$here/fixtures/legacy_copy.flow" bytecode="$work/copy.bytecode"

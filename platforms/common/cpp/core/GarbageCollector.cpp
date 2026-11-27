@@ -336,7 +336,8 @@ void GarbageCollector::GrowHeap(unsigned size)
 }
 
 /*
- * Do a full collection, reserving old space for survivors and any pending big allocation.
+ * Do a full collection. A pending old allocation is a growth hint, not a
+ * condition for finishing the collection. Callers check the resulting space.
  */
 bool GarbageCollector::Collect(unsigned ensure_old_space)
 {
@@ -367,10 +368,14 @@ bool GarbageCollector::Collect(unsigned ensure_old_space)
     ProcessFullRoots();
     FlushArrays();
 
-    const int64_t needed = ComputeLiveBytes() + ((int64_t(ensure_old_space) + 3) & ~int64_t(3));
+    const int64_t live = ComputeLiveBytes();
+    const int64_t capacity = int64_t(MAX_HEAP_SIZE / 2) - EPHEMERAL_HEAP_SIZE;
+    if (live > capacity) return false;
+    // Enumeration has already marked the survivors. If the additional object
+    // won't fit even at the cap, still copy the survivors and advance the tag.
+    const int64_t pending = (int64_t(ensure_old_space) + 3) & ~int64_t(3);
+    const int64_t needed = pending <= capacity - live ? live + pending : live;
     const int64_t available = FlowPtrToInt(hp_big_pos) - FlowPtrToInt(hp_ref_end);
-    if (needed > int64_t(MAX_HEAP_SIZE / 2) - EPHEMERAL_HEAP_SIZE)
-        return false;
 
     const unsigned size = FlowPtrToInt(Runner->HeapEnd) - FlowPtrToInt(Runner->HeapStart);
     bool dest_high = !currentIsHigh;

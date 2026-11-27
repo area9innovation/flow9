@@ -654,6 +654,7 @@ private:
         FlowPtr start;
         size_t length;
         uint64_t file_device = 0, file_inode = 0;
+        int64_t file_size = 0;
         std::string filename;
 
         // Binary decoding of a mapped file into a mapped area can produce refs.
@@ -1263,6 +1264,8 @@ public:
     void PrintCallStack(ostream &out, bool with_args = false);
     void PrintCallStackLine(ostream &out, const FlowStackFrame &frame, bool with_args);
 
+    // A full GC tries to leave ensure_old_space bytes free. Check the actual
+    // space afterwards; failure to collect the live set is a runtime error.
     void ForceGC(unsigned ensure_old_space = 0, bool full = false);
     void PrintDataStack();
 

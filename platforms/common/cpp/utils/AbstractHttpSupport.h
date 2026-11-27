@@ -2,6 +2,10 @@
 #define ABSTRACT_HTTP_SUPPORT_H
 
 #include "core/ByteCodeRunner.h"
+#ifndef _WIN32
+#include "core/ScopedFd.h"
+#include <fcntl.h>
+#endif
 
 #include "utils/flowfilestruct.h"
 
@@ -39,13 +43,24 @@ struct HttpRequest {
     IncrementalUtf8Parser tmp_parser;
     FILE *tmp_file;
 
+    bool save_to_file;
+    bool create_only;
+#ifdef _WIN32
+    std::wstring result_filename;
+#else
+    // Relative spellings are interpreted at this directory, even after chdir.
+    ScopedFd result_dir{AT_FDCWD};
     std::string result_filename;
+    size_t result_split = std::string::npos; // optional bounded lookup via the retained ancestor
+#endif
 
     void *aux_data;
 
     HttpRequest() {
         req_id = 0;
         is_media_preload = false;
+        save_to_file = false;
+        create_only = false;
         data_cb = error_cb = status_cb = done_cb = response_cb = StackSlot::MakeVoid();
         open_cb = progress_cb = StackSlot::MakeVoid();
         tmp_file = NULL;
@@ -76,6 +91,7 @@ class AbstractHttpSupport : public NativeMethodHost {
     void cancelRequest(int id);
 
     unicode_string parseDataBytes(const void * buffer, size_t count);
+    void finishDownload(HttpRequest &rq, bool failed, const void *message, size_t length);
     unicode_string urlencode(const unicode_string &url);
 
 

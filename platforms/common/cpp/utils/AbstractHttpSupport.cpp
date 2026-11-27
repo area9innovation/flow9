@@ -5,6 +5,15 @@
 #include <stdlib.h>
 #include <fstream>
 #include <sstream>
+#ifndef _WIN32
+#include "core/ReplaceFile.h"
+#include "DownloadFilePermissions.h"
+#else
+#include <windows.h>
+#include <io.h>
+#include <fcntl.h>
+#include <atomic>
+#endif
 
 // 
 ResponseEncoding defaultResponseEncoding = ResponseEncodingAuto;
@@ -43,6 +52,7 @@ void AbstractHttpSupport::deliverDataBytes(int id, const void *buffer, unsigned 
 {
     HttpRequest *rq = getRequestById(id);
 
+    if (!rq) return;
     if (rq->response_enc != ResponseEncodingByte)
         deliverData(id, parseDataBytes(buffer, count));
     else
@@ -80,30 +90,38 @@ void AbstractHttpSupport::deliverPartialData(int id, const void *buffer, unsigne
     {
         size_t pos = rq->tmp_buffer.size();
         rq->tmp_buffer.resize(pos+count);
-        memcpy(rq->tmp_buffer.data()+pos, buffer, count);
+        if (count) memcpy(rq->tmp_buffer.data()+pos, buffer, count);
 
         if (rq->tmp_buffer.size() >= MIN_MMAP_SIZE)
         {
-            char fnbuf[1024];
-#if defined(WIN32)
-            rq->tmp_filename = tmpnam(fnbuf);
-#else
-            rq->tmp_filename = mkstemp(fnbuf);
-#endif
             rq->tmp_file = MakeTemporaryFile(&rq->tmp_filename);
 
             if (!rq->tmp_file)
             {
-                unicode_string errorMessage = parseUtf8("Could not open temporary file: " + rq->tmp_filename);
-                deliverError(id, errorMessage.data(), errorMessage.size());
+                const char message[] = "Could not open temporary file";
+                deliverError(id, message, sizeof(message) - 1);
                 return;
             }
 
             rq->is_utf = !(rq->tmp_buffer[0] == char(0xFF) && rq->tmp_buffer[1] == char(0xFE));
-            int skip = (rq->is_utf ? 0 : 2);
+            int skip = (rq->is_utf || rq->save_to_file ? 0 : 2);
             buffer = rq->tmp_buffer.data()+skip;
             count = rq->tmp_buffer.size()-skip;
         }
+    }
+
+    if (rq->save_to_file) {
+        // Binary downloads keep the spool open until deliverResponse. No text
+        // conversion or close/reopen by pathname is needed for this callback.
+        if (rq->tmp_file) {
+            if (count && fwrite(buffer, 1, count, rq->tmp_file) != count) {
+                const char message[] = "Could not write temporary download file";
+                deliverError(id, message, sizeof(message) - 1);
+                return;
+            }
+            rq->tmp_buffer.clear();
+        }
+        return;
     }
 
     if (rq->tmp_file)
@@ -160,7 +178,10 @@ void AbstractHttpSupport::deliverError(int id, const void * buffer, size_t count
 
     HttpRequest *rq = getRequestById(id);
 
-    if (rq && !rq->error_cb.IsVoid()) {
+    if (!rq) return;
+    if (rq->save_to_file) {
+        finishDownload(*rq, true, buffer, count);
+    } else if (!rq->error_cb.IsVoid()) {
         RUNNER_VAR = getFlowRunner();
         RUNNER_DefSlots1(msg);
 
@@ -189,6 +210,333 @@ void AbstractHttpSupport::deliverStatus(int id, int status)
     getFlowRunner()->NotifyHostEvent(HostEventNetworkIO);
 }
 
+// Called under the deferred runner lock. The callback may reenter the host, or
+// quit without unwinding it. Keep only Flow roots across that call.
+void AbstractHttpSupport::finishDownload(HttpRequest &rq, bool failed, const void *message, size_t length)
+{
+    RUNNER_VAR = getFlowRunner();
+    RUNNER_DefSlots2(cb, arg);
+    cb = failed ? rq.error_cb : rq.done_cb;
+    if (failed && !cb.IsVoid())
+        arg = RUNNER->AllocateString(parseDataBytes(message, length));
+    const int id = rq.req_id;
+    active_requests.erase(id); // closes and removes the named spool
+    if (!cb.IsVoid() && !RUNNER->IsErrorReported()) {
+        if (failed) RUNNER->EvalFunction(cb, 1, arg);
+        else RUNNER->EvalFunction(cb, 0);
+    }
+    RUNNER->NotifyHostEvent(HostEventNetworkIO);
+}
+
+static bool writeDownload(const HttpRequest &rq, FILE *dest)
+{
+    FILE *source = rq.tmp_file;
+    if (source) {
+        if (fflush(source) != 0 || fseek(source, 0, SEEK_SET) != 0) return false;
+        char block[16384];
+        size_t n;
+        while ((n = fread(block, 1, sizeof(block), source)) != 0)
+            if (fwrite(block, 1, n, dest) != n) return false;
+        return !ferror(source);
+    }
+    return rq.tmp_buffer.empty() || fwrite(rq.tmp_buffer.data(), 1, rq.tmp_buffer.size(), dest) == rq.tmp_buffer.size();
+}
+
+static bool writeAndCloseDownload(const HttpRequest &rq, FILE *out, bool overwrite = false)
+{
+    bool ok = writeDownload(rq, out) && !ferror(out);
+    // The checked handle starts at offset zero, without O_TRUNC. Drop an old
+    // tail only after the response was copied and the last write succeeded.
+    if (ok && overwrite) {
+        ok = fflush(out) == 0;
+#ifdef _WIN32
+        if (ok) ok = SetEndOfFile(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(out)))) != 0;
+#else
+        off_t end = ok ? ftello(out) : -1;
+        ok = end >= 0 && ftruncate(fileno(out), end) == 0;
+#endif
+    }
+    return fclose(out) == 0 && ok;
+}
+
+#ifndef _WIN32
+static int openSearchDirectory(int base, const char *path)
+{
+#if defined(O_PATH) && !defined(FLOW_TEST_NO_SEARCH_HANDLE)
+    const int access = O_PATH;
+#elif defined(O_SEARCH) && !defined(FLOW_TEST_NO_SEARCH_HANDLE)
+    const int access = O_SEARCH;
+#else
+    const int access = O_RDONLY;
+#endif
+    const int flags = O_DIRECTORY | O_CLOEXEC;
+    int fd = openat(base, path, access | flags);
+    if (fd < 0 && access != O_RDONLY && (errno == EINVAL || errno == ENOTSUP))
+        return openat(base, path, O_RDONLY | flags); // newer SDK, older kernel
+    return fd;
+}
+
+static bool anchorDownloadPath(ScopedFd &anchor, std::string &path)
+{
+    int fd = openSearchDirectory(AT_FDCWD, ".");
+    if (fd < 0) {
+        if (errno != EACCES) return false;
+        // A relative destination can have an openable parent even when '.'
+        // itself cannot be opened for reading. Pin it while the name is short.
+        size_t leaf = path.find_last_of('/') + 1;
+        if (leaf && leaf < path.size()) {
+            fd = openSearchDirectory(AT_FDCWD, path.substr(0, leaf).c_str());
+            if (fd >= 0) {
+                anchor.reset(fd);
+                path.erase(0, leaf);
+                return true;
+            }
+        }
+        // Older kernels/SDKs may not provide search-only handles. Keep the
+        // unlistable components relative to the nearest openable ancestor.
+        std::vector<char> buf(256);
+        while (!getcwd(buf.data(), buf.size())) {
+            if (errno != ERANGE) return false;
+            buf.resize(buf.size() * 2);
+        }
+        std::string cwd = buf.data();
+        if (cwd.empty() || cwd[0] != '/') return false;
+        while (cwd.size() > 1) {
+            size_t slash = cwd.rfind('/');
+            path.insert(0, cwd.substr(slash + 1) + '/');
+            cwd.resize(slash ? slash : 1);
+            fd = openSearchDirectory(AT_FDCWD, cwd.c_str());
+            if (fd >= 0) break;
+            if (errno != EACCES && errno != ENAMETOOLONG) return false;
+        }
+        if (fd < 0) { path.insert(0, "/"); return true; } // even '/' is search-only
+    }
+    anchor.reset(fd);
+    return true;
+}
+
+// When a directory can be searched but not opened, the fallback retains an
+// ancestor. The kernel may accept each half of a pathname but not the joined
+// syscall argument. Use a private, short-lived symlink for the first half.
+// Its target starts at the *held fd*, not a mutable absolute name or cwd.
+// No helper is left on disk while the HTTP request is pending.
+template<class Use>
+static bool withDownloadPath(const HttpRequest &rq, Use use)
+{
+    const int base = rq.result_dir.get();
+    const std::string &path = rq.result_filename;
+    if (rq.result_split == path.npos) return use(base, path);
+#ifdef __linux__
+    const std::string root = "/proc/self/fd/" + std::to_string(base);
+    struct stat held, via_proc;
+    if (fstat(base, &held) || stat(root.c_str(), &via_proc) ||
+        held.st_dev != via_proc.st_dev || held.st_ino != via_proc.st_ino) return false;
+
+    if (temp_file_path.empty() || temp_file_path[0] != '/') return false;
+    // As with /tmp, only the owner should be able to rename a private entry.
+    // stat and mkdtemp need search/write access here, not directory listing.
+    struct stat tmp;
+    if (stat(temp_file_path.c_str(), &tmp) || !S_ISDIR(tmp.st_mode) ||
+        (tmp.st_uid != 0 && tmp.st_uid != geteuid()) ||
+        ((tmp.st_mode & 0022) && !(tmp.st_mode & S_ISVTX))) return false;
+
+    std::string dir = temp_file_path + "/flowtmp-path-XXXXXX";
+    const std::string target = root + "/" + path.substr(0, rq.result_split);
+    const std::string name = "p" + path.substr(rq.result_split);
+    if (!mkdtemp(&dir[0])) return false;
+    struct RemoveAt {
+        int base; const char *name; int flags;
+        ~RemoveAt() { unlinkat(base, name, flags); }
+    } remove_dir{AT_FDCWD, dir.c_str(), AT_REMOVEDIR};
+    ScopedFd scratch;
+    struct stat private_dir;
+    if (!openStageDirectory(AT_FDCWD, dir, scratch) || fstat(scratch.get(), &private_dir) ||
+        private_dir.st_uid != geteuid() || symlinkat(target.c_str(), scratch.get(), "p")) return false;
+    RemoveAt remove_link{scratch.get(), "p", 0};
+    return use(scratch.get(), name);
+#else
+    return false;
+#endif
+}
+#endif
+
+static void setDownloadDestination(HttpRequest &rq, const unicode_string &name)
+{
+    rq.save_to_file = true;
+    if (name.empty() || name.find(unicode_char(0)) != name.npos) return;
+#ifndef _WIN32
+    std::string path = encodeUtf8(name);
+    const size_t original = path.size();
+    if (name[0] != '/' && !anchorDownloadPath(rq.result_dir, path)) return;
+    rq.result_filename.swap(path);
+    struct stat st;
+    auto inspect = [&](int base, const std::string &p) {
+        rq.create_only = fstatat(base, p.c_str(), &st, AT_SYMLINK_NOFOLLOW) != 0;
+        return !rq.create_only || errno == ENOENT;
+    };
+    if (!inspect(rq.result_dir.get(), rq.result_filename)) {
+        // Only shorten the expanded fallback, never reinterpret a caller's
+        // already-invalid overlong spelling. Split inside the captured prefix.
+        const size_t size = rq.result_filename.size();
+        if (errno == ENAMETOOLONG && rq.result_dir.get() >= 0 && size > original) {
+            rq.result_split = rq.result_filename.rfind('/', std::min(size / 2, size - original - 1));
+            if (rq.result_split != std::string::npos && withDownloadPath(rq, inspect)) return;
+        }
+        rq.result_filename.clear(); // unknown is not the same as initially absent
+    }
+#else
+    // Let Win32 resolve drive-relative and rooted names against the current
+    // drive/directory. Retain the native spelling through publication.
+    std::wstring input(name.begin(), name.end());
+    // Allow an extended-length path without a second lookup against a mutable cwd.
+    std::vector<wchar_t> buffer(32768);
+    wchar_t *leaf = NULL;
+    DWORD n = GetFullPathNameW(input.c_str(), DWORD(buffer.size()), buffer.data(), &leaf);
+    if (!n || n >= buffer.size() || !leaf || wcschr(leaf, L':')) return;
+    rq.result_filename.assign(buffer.data(), n);
+    rq.create_only = GetFileAttributesW(rq.result_filename.c_str()) == INVALID_FILE_ATTRIBUTES;
+#endif
+}
+
+#ifndef _WIN32
+static bool saveDownloadAt(const HttpRequest &rq, int start, const std::string &original)
+{
+    std::string path = original;
+    int base = start;
+    ScopedFd parent;
+    struct stat st;
+    bool existing;
+    // Only the final link needs resolving for renameat; the kernel handles
+    // intermediate links and '..'. A dangling link is never a new file.
+    for (unsigned hops = 0; ; ++hops) {
+        size_t prefix = path.find_last_of('/') + 1;
+        if (prefix) {
+            if (prefix == path.size()) return false;
+            int next = openSearchDirectory(base, path.substr(0, prefix).c_str());
+            if (next >= 0) {
+                parent.reset(next);
+                base = next;
+                path.erase(0, prefix);
+                prefix = 0;
+            } else if (errno != EACCES) return false;
+        }
+        existing = fstatat(base, path.c_str(), &st, AT_SYMLINK_NOFOLLOW) == 0;
+        if (!existing) {
+            if (hops || errno != ENOENT) return false;
+            break;
+        }
+        if (rq.create_only) return false;
+        if (!S_ISLNK(st.st_mode)) break;
+        // Check the original spelling against the filesystem's own link limit,
+        // including links in parent components, before walking the leaf links.
+        if (!hops && fstatat(start, original.c_str(), &st, 0) != 0) return false;
+        if (hops == 40) return false;
+        std::vector<char> target(256);
+        ssize_t n;
+        while ((n = readlinkat(base, path.c_str(), target.data(), target.size())) == ssize_t(target.size()))
+            target.resize(target.size() * 2);
+        if (n <= 0) return false;
+        path.replace(target[0] == '/' ? 0 : prefix, path.npos, target.data(), size_t(n));
+    }
+    if (existing && !S_ISREG(st.st_mode)) {
+        if (!S_ISCHR(st.st_mode) && !S_ISFIFO(st.st_mode)) return false;
+        int fd = openat(base, path.c_str(), O_WRONLY | O_NOFOLLOW | O_CLOEXEC);
+        if (fd == -1) return false;
+        if (fstat(fd, &st) == 0 && (S_ISCHR(st.st_mode) || S_ISFIFO(st.st_mode))) {
+            if (FILE *out = fdopen(fd, "wb")) return writeAndCloseDownload(rq, out);
+        }
+        close(fd);
+        return false;
+    }
+    auto write = [&](FILE *out) { return writeDownload(rq, out); };
+    if (!existing) {
+        return replaceRegularFile(base, path, NULL, write,
+            [](int, const struct stat &) { return false; }) == StageResult::Published;
+    }
+
+    ScopedFd source(openat(base, path.c_str(), O_WRONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
+    struct stat opened;
+    if (source.get() < 0 || fstat(source.get(), &opened) || !S_ISREG(opened.st_mode) ||
+        st.st_dev != opened.st_dev || st.st_ino != opened.st_ino) return false;
+#ifdef __linux__
+    if (opened.st_nlink == 1 && canStageDownload(source.get())) {
+        auto result = replaceRegularFile(base, path, &opened, write,
+            [&](int stage, const struct stat &expected) { return prepareDownloadFile(source.get(), stage, expected); });
+        if (result != StageResult::Unavailable) return result == StageResult::Published;
+    }
+#endif
+    // Metadata, hard links or directory permissions can preclude replacing
+    // the entry without precluding an ordinary write to the file itself.
+    if (fstatat(base, path.c_str(), &st, AT_SYMLINK_NOFOLLOW) ||
+        st.st_dev != opened.st_dev || st.st_ino != opened.st_ino) return false;
+    FILE *out = fdopen(source.get(), "wb"); // fdopen does not truncate
+    if (!out) return false;
+    source.release();
+    return writeAndCloseDownload(rq, out, true);
+}
+
+static bool saveDownload(const HttpRequest &rq)
+{
+    return !rq.result_filename.empty() && withDownloadPath(rq, [&](int base, const std::string &path) {
+        return saveDownloadAt(rq, base, path);
+    });
+}
+#else
+static bool writeDownloadHandle(const HttpRequest &rq, HANDLE h, bool overwrite = false)
+{
+    int fd = _open_osfhandle(reinterpret_cast<intptr_t>(h), _O_WRONLY | _O_BINARY);
+    if (fd == -1) { CloseHandle(h); return false; }
+    if (FILE *out = _fdopen(fd, "wb")) return writeAndCloseDownload(rq, out, overwrite);
+    _close(fd);
+    return false;
+}
+
+static bool saveDownload(const HttpRequest &rq)
+{
+    const std::wstring &path = rq.result_filename;
+    if (path.empty()) return false;
+
+    // Check the existing target without truncating it. A device/pipe is a
+    // stream; a reparse point must not be replaced with a new directory entry.
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
+                           NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
+    if (h != INVALID_HANDLE_VALUE) {
+        if (rq.create_only) { CloseHandle(h); return false; }
+        DWORD type = GetFileType(h);
+        if (type == FILE_TYPE_CHAR || type == FILE_TYPE_PIPE) return writeDownloadHandle(rq, h);
+        BY_HANDLE_FILE_INFORMATION info;
+        const DWORD refused = FILE_ATTRIBUTE_ENCRYPTED | FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY |
+                              FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM;
+        if (type == FILE_TYPE_DISK && GetFileInformationByHandle(h, &info) && !(info.dwFileAttributes & refused))
+            return writeDownloadHandle(rq, h, true); // only the unnamed data stream; preserve the file object
+        CloseHandle(h);
+        return false;
+    }
+    if (GetLastError() != ERROR_FILE_NOT_FOUND) return false;
+
+    static std::atomic<unsigned> sequence(0);
+    size_t slash = path.find_last_of(L'\\');
+    if (slash == path.npos) return false;
+    const std::wstring dir = path.substr(0, slash + 1);
+    std::wstring stage;
+    for (unsigned i = 0; i < 128; ++i) {
+        stage = dir + L".flow-download-" + std::to_wstring(GetCurrentProcessId()) + L"-" + std::to_wstring(++sequence);
+        if (_wcsicmp(path.c_str(), stage.c_str()) == 0) continue;
+        h = CreateFileW(stage.c_str(), GENERIC_WRITE, 0, NULL, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) {
+            if (GetLastError() == ERROR_FILE_EXISTS) continue;
+            return false;
+        }
+        if (writeDownloadHandle(rq, h) && MoveFileExW(stage.c_str(), path.c_str(), 0)) {
+            return true;
+        }
+        DeleteFileW(stage.c_str());
+        return false;
+    }
+    return false;
+}
+#endif
+
 void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers)
 {
     RUNNER_VAR = getFlowRunner();
@@ -196,28 +544,19 @@ void AbstractHttpSupport::deliverResponse(int id, int status, HeadersMap headers
     
     HttpRequest *rq = getRequestById(id);
 
-    if (rq && rq->result_filename != "") {
-        std::vector<char> tmp_buffer;
-
-        if (rq->tmp_filename != "") {
-            FILE* tmp_file = fopen(rq->tmp_filename.c_str(), "rb");
-
-            fseek(tmp_file, 0, SEEK_END);
-            tmp_buffer.resize(ftell(tmp_file));
-            rewind(tmp_file);
-
-            fread(tmp_buffer.data(), 1, tmp_buffer.size(), tmp_file);
-            fclose(tmp_file);
+    if (rq && rq->save_to_file) {
+        if (saveDownload(*rq)) {
+#ifdef FLOW_MMAP_HEAP
+            // This erases a spelling, not a file lookup against the current cwd.
+            // Both packed readers revalidate other spellings by open-file identity.
+            RUNNER->InvalidateFileCache(rq->result_filename);
+#endif
+            finishDownload(*rq, false, NULL, 0);
         } else {
-            tmp_buffer = rq->tmp_buffer;
+            const char message[] = "Could not save downloaded file";
+            finishDownload(*rq, true, message, sizeof(message) - 1);
         }
-
-        FILE* result_file = fopen(rq->result_filename.c_str(), "wb");
-
-        fwrite(tmp_buffer.data(), 1, tmp_buffer.size(), result_file);
-
-        fclose(result_file);
-        tmp_buffer.clear();
+        return;
     }
 
     if (rq && !rq->response_cb.IsVoid()) {
@@ -593,7 +932,7 @@ StackSlot AbstractHttpSupport::downloadFileBinary(RUNNER_ARGS)
     rq.method = parseUtf8("GET");
     rq.response_enc = ResponseEncodingByte;
     rq.url = RUNNER->GetString(url);
-    rq.result_filename = encodeUtf8(RUNNER->GetString(pathToSave));
+    setDownloadDestination(rq, RUNNER->GetString(pathToSave));
     rq.done_cb = onDone;
     rq.error_cb = onError;
 
@@ -618,7 +957,7 @@ StackSlot AbstractHttpSupport::downloadFileBinaryWithHeaders(RUNNER_ARGS)
     rq.method = parseUtf8("GET");
     rq.response_enc = ResponseEncodingByte;
     rq.url = RUNNER->GetString(url);
-    rq.result_filename = encodeUtf8(RUNNER->GetString(pathToSave));
+    setDownloadDestination(rq, RUNNER->GetString(pathToSave));
     rq.done_cb = onDone;
     rq.error_cb = onError;
 	

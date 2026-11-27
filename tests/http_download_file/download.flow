@@ -1,0 +1,57 @@
+import fs/filesystem;
+import net/http;
+import net/url_parameter;
+import runtime;
+import sys/system;
+import timer;
+
+// Existing bytecode uses this native name and a separate packed-file cache.
+native legacyPackedRead : io (filename : string) -> string = Native.getFileContentBinary;
+
+main() {
+	url = getUrlParameter("url");
+	dest = getUrlParameter("dest");
+	spool = getUrlParameter("spool");
+	nextCwd = getUrlParameter("nextCwd");
+	fdMarker = getUrlParameter("fdMarker");
+	finish = \code, message -> {
+		println("download: " + message);
+		if (nextCwd != "" && !fileExists("cwd-marker")) quit(3)
+		else if (fdMarker != "" && exists(readDirectory("/proc/self/fd"), \fd -> fileExists("/proc/self/fd/" + fd + "/" + fdMarker))) quit(4)
+		else if (exists(readDirectory(spool), \name -> startsWith(name, "flowtmp"))) quit(2)
+		// Qt implements timers <= 5 ms as deferred Flow actions. Use an actual
+		// event-loop turn so the transport can deliver its remaining notifications.
+		else if (isUrlParameterTrue("deferQuit")) timer(10, \ -> quit(code))
+		else quit(code);
+	};
+	done = \ -> finish(0, "done");
+	error = \message -> finish(1, "error: " + message);
+	startBinary = \onDone -> if (isUrlParameterTrue("headers")) downloadFileBinaryWithHeaders(url, [], dest, onDone, error)
+		else downloadFileBinary(url, dest, onDone, error);
+	cacheTarget = getUrlParameter("cacheTarget");
+	if (cacheTarget != "") {
+		oldTarget = getFileContentBinary(cacheTarget);
+		oldAlias = getFileContentBinary(dest);
+		oldLegacy = legacyPackedRead(dest);
+		startBinary(\ -> {
+			newTarget = getFileContentBinary(cacheTarget);
+			newAlias = getFileContentBinary(dest);
+			legacyTarget = legacyPackedRead(cacheTarget);
+			legacyAlias = legacyPackedRead(dest);
+			gc();
+			// A relative read in the new cwd must see that directory's own file.
+			expectedAlias = if (nextCwd == "") newTarget else strRepeat("\u4343", 75000);
+			expectedTarget = if (isUrlParameterTrue("shortRefresh")) "\u4242" else strRepeat("\u4242", 75000);
+			if (newTarget == expectedTarget && newAlias == expectedAlias &&
+				legacyTarget == newTarget && legacyAlias == expectedAlias &&
+				oldTarget == strRepeat("\u4141", 75000) && oldAlias == oldTarget && oldLegacy == oldTarget) done()
+			else error("incorrect file snapshot");
+		});
+	} else if (isUrlParameterTrue("legacy404")) {
+		// A custom request has a response callback, not a separate error callback.
+		httpCustomRequest(url, GET(), [], RequestParameters([]), \status, body, __ -> {
+			if (status == 404 && body != "") done() else error("missing HTTP error response")
+		}, true);
+	} else startBinary(done);
+	if (nextCwd != "") setCurrentDirectory(nextCwd);
+}

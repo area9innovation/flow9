@@ -1139,8 +1139,10 @@ StackSlot ByteCodeRunner::AllocateConstClosure(int num_args, StackSlot value) {
 FlowPtr ByteCodeRunner::AllocateInner(unsigned size) {
     if (unsigned(size) > MAX_EPHEMERAL_ALLOC)
     {
-        if (unsigned(size) > unsigned(hp_big_pos - hp_ref_end))
+        if (unsigned(size) > unsigned(hp_big_pos - hp_ref_end)) {
             ForceGC(size, true);
+            if (IsErrorReported()) return HeapEnd;
+        }
 
         FlowPtr nhp = FlowPtrAlignDown(hp_big_pos - size, 4);
 
@@ -1165,6 +1167,7 @@ FlowPtr ByteCodeRunner::AllocateInner(unsigned size) {
 
     // Collection empties the young generation. Only promotion needs old space here.
     ForceGC(0, gcStressTestEnabled && rand()%3==0);
+    if (IsErrorReported()) return HeapEnd;
 
     FlowPtr nhp = FlowPtrAlignDown(hp - size, 4);
     if (unlikely(nhp < hpbound || nhp > hp)) {
@@ -1187,9 +1190,12 @@ StackSlot ByteCodeRunner::AllocateString(const QString &str) {
 }
 #endif
 
-/*
- * Allocate an uninitialized string of the specified length, returning a pointer to the buffer.
- */
+static unsigned stringAllocationSize(unsigned length)
+{
+    return length * FLOW_CHAR_SIZE + (length >> 16 ? sizeof(FlowStringRef) : 0);
+}
+
+// Allocate an uninitialized string and return its character buffer.
 unicode_char *ByteCodeRunner::AllocateStringBuffer(StackSlot *out, unsigned length)
 {
     assert(length > 0);
@@ -1201,14 +1207,14 @@ unicode_char *ByteCodeRunner::AllocateStringBuffer(StackSlot *out, unsigned leng
         return NULL;
     }
 
-    FlowPtr buf;
     unsigned bytes = length*FLOW_CHAR_SIZE;
+    FlowPtr buf = Allocate(stringAllocationSize(length)); // ALLOC
+    if (unlikely(IsErrorReported())) return NULL;
 
     if (length & 0xffff0000u)
     {
-        FlowPtr str = Allocate(4 + 4 + bytes); //ALLOC
-        if (unlikely(IsErrorReported())) return NULL;
-        buf = str + 8;
+        FlowPtr str = buf;
+        buf = str + sizeof(FlowStringRef);
         Memory.SetInt32(str, length & 0xffff);
         Memory.SetFlowPtr(str+4, buf);
 
@@ -1216,9 +1222,6 @@ unicode_char *ByteCodeRunner::AllocateStringBuffer(StackSlot *out, unsigned leng
     }
     else
     {
-        buf = Allocate(bytes); // ALLOC
-        if (unlikely(IsErrorReported())) return NULL;
-
         StackSlot::InternalSetString(*out, buf, length, false);
     }
 
@@ -1282,25 +1285,59 @@ StackSlot ByteCodeRunner::AllocateString(const unicode_char *str, size_t len) {
     return out;
 }
 
+#ifdef FLOW_MMAP_HEAP
+// The large-string arena is page-aligned and already reserved. Named files
+// may be shortened by an in-place writer in another runner. A read-only
+// anonymous copy keeps even substrings of the old value independent of it.
+static bool readPackedSnapshot(void *where, size_t size, FILE *file)
+{
+    return mmap(where, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == where &&
+           fread(where, 1, size, file) == size && mprotect(where, size, PROT_READ) == 0;
+}
+
+// A writable file can be updated through another name, even on a filesystem
+// with coarse timestamps. Only reuse an immutable snapshot of the same bytes.
+static bool matchesPackedFile(FILE *file, const unicode_char *snapshot, size_t bytes)
+{
+    const char *p = reinterpret_cast<const char *>(snapshot);
+    char block[16384];
+    while (bytes) {
+        const size_t n = std::min(bytes, sizeof(block));
+        if (fread(block, 1, n, file) != n || memcmp(block, p, n)) return false;
+        p += n;
+        bytes -= n;
+    }
+    return true;
+}
+#endif
+
 StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary, bool legacy_file)
 {
     StackSlot rv = StackSlot::MakeVoid();
-
-#ifdef FLOW_MMAP_HEAP
-    // Separate caches keep legacy write semantics off ordinary strings, and
-    // let reads of one file through both readers each reuse their mapping.
-    auto &cache = legacy_file ? LegacyMappedFiles : MappedFiles;
-    auto cached = cache.find(filename);
-    if (!temporary && !legacy_file && cached != cache.end())
-        return cached->second;
-#endif
 
     FILE *file = fopen(filename.c_str(), "rb");
     if (!file)
         return StackSlot::MakeVoid();
 
-    int64_t size = ReadFileLength(file);
+#ifdef FLOW_MMAP_HEAP
+    // Both readers may have cached other spellings of an updated file.
+    struct stat st;
+    bool have_id = !temporary && fstat(fileno(file), &st) == 0 && S_ISREG(st.st_mode);
+    auto &cache = legacy_file ? LegacyMappedFiles : MappedFiles;
+    auto cached = cache.find(filename);
+    if (!temporary && cached != cache.end()) {
+        const auto &area = MappedAreas.at(GetStringAddr(cached->second));
+        if (have_id && area->file_device == uint64_t(st.st_dev) &&
+            area->file_inode == uint64_t(st.st_ino) && area->file_size == st.st_size &&
+            matchesPackedFile(file, GetStringPtr(cached->second), size_t(st.st_size))) {
+            fclose(file);
+            return cached->second;
+        }
+        cache.erase(cached);
+    }
+#endif
 
+    int64_t size = ReadFileLength(file);
     if (size == 0)
     {
         rv = StackSlot::MakeEmptyString();
@@ -1311,26 +1348,46 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
         size_t bytes = length * FLOW_CHAR_SIZE;
 
 #ifdef FLOW_MMAP_HEAP
-        // A legacy copy must read the current source, even when a file at the
-        // same path was mapped earlier. Old string values retain the old mapping.
-        struct stat st;
-        bool have_id = legacy_file && bytes >= MIN_MMAP_SIZE && fstat(fileno(file), &st) == 0;
-        if (have_id && !temporary && cached != cache.end()) {
-            FlowPtr addr = GetStringAddr(cached->second);
-            auto old = LegacyFileBytes.find(addr);
-            const auto &area = MappedAreas.at(addr);
-            if (old != LegacyFileBytes.end() && old->second == size_t(size) &&
-                area->file_device == uint64_t(st.st_dev) && area->file_inode == uint64_t(st.st_ino)) {
-                fclose(file);
-                return cached->second;
-            }
-        }
         if (bytes >= MIN_MMAP_SIZE && MapStringPtr >= MapAreaBase &&
             bytes <= FlowPtrToInt(MapStringPtr) - FlowPtrToInt(MapAreaBase))
         {
             FlowPtr map_ptr = FlowPtrAlignDown(MapStringPtr - bytes, Memory.PageSize());
 
-            if (map_ptr >= MapAreaBase && Memory.MapFile(map_ptr, size, file))
+            bool loaded = false;
+            bool useArena = map_ptr >= MapAreaBase;
+            // The arena lives until runner reset. Don't retain a private RAM
+            // copy of every file ever read: spill into ordinary collectible
+            // strings past the cache budget. Keep the arena option for a
+            // value that would not fit in the managed heap, even after GC.
+            size_t budget = std::min(size_t(FILE_MAP_MEMORY_SIZE), size_t(MAX_HEAP_SIZE / 4));
+            size_t used = align_down(MAX_MEMORY_SIZE, Memory.PageSize()) - FlowPtrToInt(map_ptr);
+            const unsigned request = stringAllocationSize(unsigned(length));
+            if (useArena && !temporary && used > budget && request <= MAX_HEAP_SIZE / 2) {
+                if (request <= MAX_EPHEMERAL_ALLOC) {
+                    // Allocate handles young space (including promotion) itself.
+                    useArena = request > EPHEMERAL_HEAP_SIZE;
+                } else {
+                    const size_t required = align_up(request, 4);
+                    if (required > unsigned(hp_big_pos - hp_ref_end)) ForceGC(request, true);
+                    if (IsErrorReported()) { fclose(file); return StackSlot::MakeVoid(); }
+                    useArena = required > unsigned(hp_big_pos - hp_ref_end);
+                }
+            }
+            if (useArena) {
+                if (temporary) {
+                    loaded = Memory.MapFile(map_ptr, size, file);
+                } else {
+                    loaded = readPackedSnapshot(Memory.GetRawPointer(map_ptr, bytes, true), size_t(size), file);
+                    if (!loaded) {
+                        Memory.DecommitRange(map_ptr, MapStringPtr);
+                        if (fseek(file, 0, SEEK_SET) != 0) {
+                            fclose(file);
+                            return StackSlot::MakeVoid();
+                        }
+                    }
+                }
+            }
+            if (loaded)
             {
                 if (FlowPtr *ref = AllocateStringRef(&rv, length)) {
                     *ref = map_ptr;
@@ -1338,11 +1395,12 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
                     if (have_id) {
                         area->file_device = st.st_dev;
                         area->file_inode = st.st_ino;
+                        area->file_size = size;
                     }
                     MappedAreas[map_ptr] = area;
                     MapStringPtr = map_ptr;
 
-                    if (!temporary) {
+                    if (have_id) {
                         cache[filename] = rv;
                         area->filename = filename;
                     }
@@ -1769,6 +1827,9 @@ void ByteCodeRunner::enableGCStressTest()
 // Error reporting
 void ByteCodeRunner::DoReportError(RuntimeError code) {
     if (IsErrorReported()) return;
+    // HeapFull must block GC before the debugger can stop on the error.
+    // Other errors keep their existing debugger and Flow crash-handler order.
+    if (code == HeapFull) LastError = code;
 
     stringstream info_str;
     info_str << "Error during last opcode [0x" << hex << FlowPtrToInt(LastInstructionPtr)
@@ -3726,6 +3787,7 @@ void ByteCodeRunner::FreezeNativeFunctions(bool compact)
 
 void ByteCodeRunner::ForceGC(unsigned ensure_old_space, bool full)
 {
+    if (IsErrorReported()) return;
     if (NativeValueBudget < 0) {
 #ifdef DEBUG_FLOW
         flow_err << "Full GC forced by native budget." << endl;
@@ -3752,8 +3814,10 @@ void ByteCodeRunner::ForceGC(unsigned ensure_old_space, bool full)
 
     if (!fast_ok)
     {
-        if (!gc.Collect(ensure_old_space))
+        if (!gc.Collect(ensure_old_space)) {
+            ReportError(HeapFull, "Cannot allocate memory: live objects exceed the old-generation capacity.");
             return;
+        }
 
         // Heuristically force full gc when too many new natives are allocated
         NativeValueBudget = gc.ComputeNativeBudget();
