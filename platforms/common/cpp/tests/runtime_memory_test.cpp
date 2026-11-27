@@ -216,28 +216,116 @@ static unsigned heapSize(ByteCodeRunner &runner) {
 }
 
 #ifdef FLOW_MMAP_HEAP
-static void testNamedSnapshotBudget(unsigned initial, unsigned cap) {
+static void writeSnapshotFile(const std::string &bytes) {
+    FILE *f = fopen("snapshot.dat", "wb");
+    require(f && fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size() && !fclose(f), "write snapshot fixture");
+}
+
+static StackSlot readSnapshot(ByteCodeRunner &runner, bool legacy) {
+    StackSlot path = runner.AllocateString("snapshot.dat");
+    LocalRootDefinition root(&runner, 1, &path);
+    return legacy ? ByteCodeRunner::getFileContentBinary(&runner, &path) : ByteCodeRunner::readPackedFile(&runner, &path);
+}
+
+static void checkSnapshot(ByteCodeRunner &runner, const StackSlot &value, const std::string &bytes) {
+    require(value.IsString() && !runner.IsErrorReported() &&
+            size_t(runner.GetStringSize(value)) == (bytes.size() + 1) / 2, "snapshot length after GC");
+    const char *p = reinterpret_cast<const char *>(runner.GetStringPtr(value));
+    require(!memcmp(p, bytes.data(), bytes.size()) && (!(bytes.size() % 2) || !p[bytes.size()]),
+            "snapshot retains original bytes and odd-length padding");
+}
+
+static void testNamedSnapshotBudget(unsigned initial, unsigned cap, bool legacy) {
     const unsigned mib = 1024 * 1024;
     MIN_HEAP_SIZE = initial * mib;
     MAX_HEAP_SIZE = cap * mib;
     EPHEMERAL_HEAP_SIZE = mib;
     ByteCodeRunner runner("valid.flowbc");
     require(heapSize(runner) == MIN_HEAP_SIZE, "snapshot test starts at the configured minimum");
+    StackSlot keep = runner.AllocateString("live across growth");
+    LocalRootDefinition survivor(&runner, 1, &keep);
     for (unsigned n : {MAX_HEAP_SIZE / 4 + mib + 1, MAX_HEAP_SIZE / 2 + mib + 1}) {
         std::string bytes(n, 'p');
-        FILE *f = fopen("snapshot.dat", "wb");
-        require(f && fwrite(bytes.data(), 1, n, f) == n && !fclose(f), "prepare large snapshot");
-        StackSlot old = runner.LoadFileAsString("snapshot.dat");
+        writeSnapshotFile(bytes);
+        StackSlot old = readSnapshot(runner, legacy);
         LocalRootDefinition root(&runner, 1, &old);
         require(old.IsString() && !runner.IsErrorReported(), "read file beyond private cache budget");
         require(runner.IsMappedArea(runner.GetStringAddr(old)) == (n > MAX_HEAP_SIZE / 2),
                 "collectible snapshot when it fits; large-string arena otherwise");
-        f = fopen("snapshot.dat", "wb");
-        require(f && fputs("new", f) >= 0 && !fclose(f), "update the underlying file");
+        require(heapSize(runner) == cap * mib, "heap grew enough for the first managed snapshot");
+        writeSnapshotFile("new");
         runner.ForceGC(0, true);
-        const char *p = reinterpret_cast<const char *>(runner.GetStringPtr(old));
-        require(!memcmp(p, bytes.data(), n) && !p[n], "retained odd-length snapshot after shortening and GC");
+        checkSnapshot(runner, old, bytes);
+        require(runner.GetString(keep) == parseUtf8("live across growth"), "root retained across heap growth");
     }
+}
+
+static void testSnapshotWithLiveData() {
+    const unsigned mib = 1024 * 1024;
+    MIN_HEAP_SIZE = MAX_HEAP_SIZE = 16 * mib;
+    EPHEMERAL_HEAP_SIZE = mib;
+    ByteCodeRunner runner("valid.flowbc");
+    StackSlot roots[3] = {StackSlot::MakeVoid(), StackSlot::MakeVoid(), StackSlot::MakeVoid()};
+    LocalRootDefinition frame(&runner, 3, roots);
+    roots[0] = runner.AllocateArray(2);
+    const unicode_string live(3 * mib / 2, 'r');
+    StackSlot text = runner.AllocateString(live);
+    runner.SetArraySlot(roots[0], 0, text);
+    runner.SetArraySlot(roots[0], 1, StackSlot::MakeInt(42));
+    // 7 MiB of old space: either value fits, but not the 3 MiB root and
+    // the 5 MiB snapshot together. Both readers must be able to continue.
+    const std::string bytes(5 * mib + 1, 's');
+    writeSnapshotFile(bytes);
+    for (int i = 1; i <= 2; ++i) {
+        roots[i] = readSnapshot(runner, i == 2);
+        require(!runner.IsErrorReported() && roots[i].IsString() && runner.IsMappedArea(runner.GetStringAddr(roots[i])),
+                "use arena when an optional old-space reservation cannot fit");
+    }
+    writeSnapshotFile("new");
+    for (int i = 0; i < 3; ++i) {
+        runner.ForceGC(0, true);
+        require(!runner.IsErrorReported() && runner.GetArraySize(roots[0]) == 2 &&
+                runner.GetString(runner.GetArraySlot(roots[0], 0)) == live &&
+                runner.GetArraySlot(roots[0], 1).GetInt() == 42, "root graph intact after full collections");
+        checkSnapshot(runner, roots[1], bytes);
+        checkSnapshot(runner, roots[2], bytes);
+    }
+}
+
+static void testYoungSnapshot() {
+    const unsigned mib = 1024 * 1024;
+    const unsigned savedLimit = MAX_EPHEMERAL_ALLOC;
+    MAX_EPHEMERAL_ALLOC = mib;
+    MIN_HEAP_SIZE = 8 * mib;
+    MAX_HEAP_SIZE = 32 * mib;
+    EPHEMERAL_HEAP_SIZE = 4 * mib;
+    ByteCodeRunner runner("valid.flowbc");
+    StackSlot roots[3] = {StackSlot::MakeVoid(), StackSlot::MakeVoid(), StackSlot::MakeVoid()};
+    LocalRootDefinition frame(&runner, 3, roots);
+    // Initially all usable space is young. Fill the private cache budget.
+    writeSnapshotFile(std::string(8 * mib, 'a'));
+    roots[0] = readSnapshot(runner, false);
+    require(roots[0].IsString() && runner.IsMappedArea(runner.GetStringAddr(roots[0])), "fill snapshot arena budget");
+    const std::string bytes(256 * 1024 + 1, 'y');
+    writeSnapshotFile(bytes);
+    for (int i = 1; i <= 2; ++i) {
+        roots[i] = readSnapshot(runner, i == 2);
+        require(roots[i].IsString() && !runner.IsMappedArea(runner.GetStringAddr(roots[i])) &&
+                heapSize(runner) == 8 * mib, "young snapshot uses managed space without growing the heap");
+    }
+    // Padding the last UTF-16 unit gives exactly the young allocation limit;
+    // adding the long-string header makes this an old-generation allocation.
+    const std::string boundary(MAX_EPHEMERAL_ALLOC - 1, 'h');
+    writeSnapshotFile(boundary);
+    roots[0] = readSnapshot(runner, false);
+    require(roots[0].IsString() && !runner.IsMappedArea(runner.GetStringAddr(roots[0])) &&
+            heapSize(runner) == 16 * mib, "string header crosses the generation boundary");
+    writeSnapshotFile("new");
+    runner.ForceGC(0, true);
+    checkSnapshot(runner, roots[0], boundary);
+    checkSnapshot(runner, roots[1], bytes);
+    checkSnapshot(runner, roots[2], bytes);
+    MAX_EPHEMERAL_ALLOC = savedLimit;
 }
 #endif
 
@@ -309,6 +397,9 @@ static void testAllocationResults() {
         runner.RegisterRoot(runner.AllocateArray((EPHEMERAL_HEAP_SIZE - bytes - 4) / STACK_SLOT_SIZE));
         require(!runner.IsErrorReported(), "set up rooted array within the heap cap");
     };
+    leaveFree(40);
+    runner.ForceGC(0, true);
+    require(runner.IsErrorReported(), "failure to promote the live set itself is a runtime error");
     leaveFree(40); // The three-element list and its first name fit; the second name does not.
     StackSlot names = runner.AllocateStringArray({"a", "second-filename", "third"});
     require(names.IsVoid() && runner.GetLastErrorMsg().find("Cannot allocate memory") == 0,
@@ -399,8 +490,12 @@ int main() {
     testRunner();
     testLegacyFileValues();
 #ifdef FLOW_MMAP_HEAP
-    testNamedSnapshotBudget(16, 16);
-    testNamedSnapshotBudget(8, 32);
+    for (bool legacy : {false, true}) {
+        testNamedSnapshotBudget(16, 16, legacy);
+        testNamedSnapshotBudget(8, 32, legacy);
+    }
+    testSnapshotWithLiveData();
+    testYoungSnapshot();
 #endif
     testGrowth(256, 384, 128, 262144);
     testGrowth(8, 40, 2, 2 * 1024 * 1024);

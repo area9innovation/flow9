@@ -1264,6 +1264,8 @@ public:
     void PrintCallStack(ostream &out, bool with_args = false);
     void PrintCallStackLine(ostream &out, const FlowStackFrame &frame, bool with_args);
 
+    // A full GC tries to leave ensure_old_space bytes free. Check the actual
+    // space afterwards; failure to collect the live set is a runtime error.
     void ForceGC(unsigned ensure_old_space = 0, bool full = false);
     void PrintDataStack();
 
