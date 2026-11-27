@@ -84,6 +84,14 @@ Those are for work on flow9 itself.
    > **WARNING:** Without `min_version`, mise before 2026.10.6 treats `include` as an
    > unknown key and ignores it without an error. You then get none of the tools.
 
+   `mise-shared.toml` has a `min_version` too. mise checks both, and the higher version is
+   in force. When flow9 raises its own, you get the same "version X is required" message
+   at your next pull of flow9, with no change to your `mise.toml`. The message names your
+   `mise.toml` as the file with the error; the version in it tells you which file asks.
+
+   The `min_version` in `mise-shared.toml` does not replace yours. A mise that is too old
+   for `include` never reads `mise-shared.toml`.
+
 2. **Keep the flow9 checkout at `../flow9`.** A symlink with that name works.
 
    > **WARNING:** While `../flow9/mise-shared.toml` does not exist, every mise command in
@@ -208,6 +216,15 @@ next pull of flow9. The rules below keep those projects working.
 
    A tool's `postinstall` sees the `[env]` of `mise-shared.toml`. So
    `bash "$FLOW/mise-shared-tasks/haxelib-patch"` works from every project.
+
+4. **Raise `min_version` in `mise-shared.toml` when the file starts to use a feature of a
+   newer mise.** Every project that includes the file then stops with "version X is
+   required" until its mise is new enough. To announce a raise before you enforce it, use
+   `min_version = { hard = "<current>", soft = "<next>" }`: mise prints "version X is
+   recommended" and continues.
+
+   Keep `min_version` in flow9's `mise.toml` as well, for the same reason as in any
+   project: it is the only line that a mise without `include` reads.
 
 ### Add a task to mise-shared-tasks
 
