@@ -154,13 +154,58 @@ counted as covered — a later slice takes them whole:
 `lib/formats/xml.flow` (covered in slice 1; its escaping helpers were read
 again here and it stays covered).
 
+### 2026-11-27 — slice 5: the rest of `lib/formats/**` on the flow side, and the Java binary and protocol decoders
+
+This slice closes area 1 for `lib/formats/**`: what was left there is the DOM
+dialect and its lowering to HTML, the typed layer of the HTML parser, the WASM
+encoder and the generated URI mnemonics. Only test files remain under
+`lib/formats/`. The slice then starts on the Java runtime, taking the string
+and UTF-8 decoders in `Native.java`, the FastCGI protocol reader, and the file
+and archive natives.
+
+- `lib/formats/dom/assign.flow`
+- `lib/formats/dom/css.flow`
+- `lib/formats/dom/dom.flow`
+- `lib/formats/dom/element.flow`
+- `lib/formats/dom/event_handlers.flow`
+- `lib/formats/dom/mathml.flow`
+- `lib/formats/dom/render.flow`
+- `lib/formats/dom/svg.flow`
+- `lib/formats/dom/svgcss.flow`
+- `lib/formats/dom/xml.flow`
+- `lib/formats/dom/conversion/dom2element.flow`
+- `lib/formats/dom/conversion/event_handler2elementevent.flow`
+- `lib/formats/dom/conversion/svg2element.flow`
+- `lib/formats/dom/conversion/svgcss2string.flow`
+- `lib/formats/html/parser/html_parse_typed.flow`
+- `lib/formats/html/parser/html_types.flow`
+- `lib/formats/html/parser/html_types2dsl.flow`
+- `lib/formats/uri2/uri2_ast_mnemonics.flow`
+- `lib/formats/wasm/wasm_encode.flow`
+- `lib/formats/wasm/wasm_types.flow`
+- `platforms/java/com/area9innovation/flow/FastCgi.java`
+- `platforms/java/com/area9innovation/flow/FastCgiMessage.java`
+- `platforms/java/com/area9innovation/flow/FlowFileSystem.java`
+- `platforms/java/com/area9innovation/flow/FlowHash.java`
+- `platforms/java/com/area9innovation/flow/Native.java`
+
+Read in part, only where the files above led into them, and so **not**
+counted as covered — a later slice takes them whole:
+`lib/tools/dsl/dsl_util.flow`, `lib/formats/dom/conversion/css2string.flow`
+and `lib/formats/dom/conversion/xml2string.flow` (both covered in slice 4;
+their escaping and emission were read again here and they stay covered),
+`lib/formats/xml.flow` (covered in slice 1, same).
+
 ## Next
 
-91 of roughly 350 files in the listed surface are covered. Area 2 is done, and
-area 1 is done for `lib/formats/**`.
+116 of roughly 350 files in the listed surface are covered. Areas 1 and 2 are
+done: area 1 holds nothing further under `lib/formats/` but test files, and the
+Java string and UTF-8 decoders it reaches are read.
 
-Remaining in area 1: `lib/formats/dom/**` beyond the three conversion files
-read here, `lib/formats/html/parser/html_parse_typed.flow` and the typed-HTML
-helpers, `lib/formats/wasm/**`, `lib/formats/uri2/uri2_ast_mnemonics.flow`,
-and the UTF-8 and binary decoders in `platforms/java`. Then area 3, the
-browser runtime under `platforms/js/**`.
+Remaining: area 3, the browser runtime under `platforms/js/**` — `Native.hx`,
+`HttpSupport.hx`, the DOMPurify use, postMessage, URL and cookie handling and
+WebClip — and then the rest of area 4, the server natives and libraries in
+`platforms/java` (http, websocket, `Database.java`, `FlowJwt`, `FlowCrypto`,
+`FlowPassword`) and in `lib/server/**`, `lib/net/**`, `lib/fs/**`,
+`lib/sys/process.flow`, `lib/jwt.flow`, `lib/crypto_aes.flow`,
+`lib/password.flow` and `lib/webauthn`. Area 5 last.
