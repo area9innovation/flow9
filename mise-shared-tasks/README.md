@@ -155,7 +155,8 @@ a haxelib that starts, and the libraries installed. flow9 provides a task for ea
    needs, not only the ones your project uses.
 
    > **WARNING:** A `.haxelib` folder in the current directory or any parent wins over
-   > `HAXELIB_PATH`, without a message. Delete such a folder from your project.
+   > `HAXELIB_PATH`, and haxe gives no message. Delete such a folder from your project.
+   > `haxelib-setup` prints a warning when it finds one above the folder you run it from.
 
    > **WARNING:** While `flow9/.haxelib` is missing, every haxelib command fails with
    > "Repository ... does not exist. Please run `haxelib setup` again". Do not run
