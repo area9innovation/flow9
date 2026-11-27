@@ -1,0 +1,59 @@
+#!/usr/bin/env bash
+#MISE description="Install the Haxe libraries listed in flow9's mise-shared-tasks/haxelib.txt"
+#
+# The libraries go to .haxelib/ in the flow9 checkout this script is in, also
+# when a project that includes flow9's mise-shared-tasks runs it. mise-shared.toml
+# points HAXELIB_PATH at the same folder.
+#
+# A rerun with an unchanged list does nothing: the script keeps a copy of the
+# list it installed and compares. It does not use mise's sources/outputs, since
+# mise resolves those against the project the task is run from, not against
+# flow9. To force a reinstall, delete .haxelib/.
+#
+# haxelib prefers a .haxelib folder in the current directory or a parent of it
+# to HAXELIB_PATH. So the script installs from inside the flow9 checkout, and
+# warns when the folder it was started from has such a folder: builds run from
+# there would use those libraries, not the ones installed here.
+
+set -euo pipefail
+IFS=$'\n\t'
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIST="$SCRIPT_DIR/haxelib.txt"
+
+export HAXELIB_PATH="$(dirname "$SCRIPT_DIR")/.haxelib"
+INSTALLED="$HAXELIB_PATH/.installed-haxelib.txt"
+
+dir="$PWD"
+while true; do
+  if [[ -d "$dir/.haxelib" && ! "$dir/.haxelib" -ef "$HAXELIB_PATH" ]]; then
+    echo "WARNING: $dir/.haxelib wins over $HAXELIB_PATH for haxe and haxelib run from $PWD. Delete it to use the libraries from haxelib.txt." >&2
+    break
+  fi
+  [[ "$dir" == "/" ]] && break
+  dir="$(dirname "$dir")"
+done
+
+if cmp -s "$LIST" "$INSTALLED"; then
+  echo "Haxe libraries in $HAXELIB_PATH match haxelib.txt, nothing to do"
+  exit 0
+fi
+
+# haxelib does not create the folder, and fails without it.
+mkdir -p "$HAXELIB_PATH"
+# A failed run must not look complete.
+rm -f "$INSTALLED"
+# So that haxelib picks this folder, whatever the caller's folder has.
+cd "$(dirname "$SCRIPT_DIR")"
+
+while IFS=' ' read -r lib version; do
+  [[ -z "$lib" || "$lib" =~ ^[[:space:]]*# ]] && continue
+
+  echo "Installing $lib version $version..."
+  if ! haxelib install --quiet "$lib" "$version" </dev/null; then
+    echo "Failed to install $lib version $version" >&2
+    exit 1
+  fi
+done <"$LIST"
+
+cp "$LIST" "$INSTALLED"

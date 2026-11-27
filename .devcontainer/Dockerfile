@@ -40,8 +40,9 @@ RUN apt-get install -y \
 # Add applications for testing the GUI setup (For example xeyes)
 RUN apt-get install -y x11-apps
 
-# Haxe and Neko are only needed for the first generation compiler (bin/flow.n).
-# Ubuntu 24.04 packages both, so no PPA is required.
+# Haxe compiles the JavaScript targets of flowc and the first generation
+# compiler (bin/flow.n); haxelib needs Neko. Ubuntu 24.04 packages both, so no
+# PPA is required.
 RUN apt-get install -y haxe neko
 
 # Configure some haxe paths in the share folder.
@@ -49,10 +50,14 @@ ENV HAXEPATH=/usr/share/haxe
 ENV HAXE_STD_PATH=$HAXEPATH/std
 ENV HAXELIB_PATH=$HAXEPATH/lib
 
-# Installing haxelib in a share folder
+# Installing haxelib in a share folder. The libraries and versions are those in
+# mise-shared-tasks/haxelib.txt - keep the two in step. The file itself is out
+# of reach here: the build context is the .devcontainer folder.
 RUN haxelib setup $HAXELIB_PATH \
-	&& haxelib install format 3.4.2 \
 	&& haxelib install pixijs 4.8.4 \
-	&& haxelib install threejs 91.0.1
+	&& haxelib install threejs 91.0.1 \
+	&& haxelib install hxnodejs 12.2.0 \
+	&& haxelib install node-express 0.0.5 \
+	&& haxelib install format 3.4.2
 
 RUN echo "\necho \"Welcome to Flow9 DevContainer. See the doc/devcontainer.md for more information.\"" >> /home/vscode/.bashrc

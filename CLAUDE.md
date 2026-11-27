@@ -15,8 +15,8 @@ hands someone an attack.
   compiler) and `lib/material/material.flow` (the UI library and most of `lib/`).
 - The JavaScript targets (`js=`, `es6=`, `nodejs=1`, `html=`, `ts=`) run Haxe.
   `mise install` provides it and `mise run haxelib-setup` installs its libraries
-  into `.haxelib/`, which haxelib reads only from the repository root: compile
-  these targets from there, as `mise exec -- bin/flowc1 …`.
+  into `.haxelib/`. mise points `HAXELIB_PATH` at that folder, so compile these
+  targets through mise, as `mise exec -- bin/flowc1 …`.
 - The native runner (`bin/flowcpp`) needs `bin/setup-linux`: Qt 6, git LFS and
   the asmjit submodule. Most checks do not need it.
 - `tools/flowc/flowc.jar` is rebuilt with `bin/build-flowc` and committed by a

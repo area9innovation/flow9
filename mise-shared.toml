@@ -1,0 +1,42 @@
+# The flow toolchain: what it takes to run flowc1 and to build every target it has.
+# flow9's own mise.toml includes this file, and so can a project that uses flow9:
+#
+#   min_version = "2026.10.6"
+#   include = ["../flow9/mise-shared.toml"]
+#
+# mise accepts [env], [tools], [vars] and [hooks] in an included file, but not
+# [tasks], [settings] or another include. Inside an included file
+# {{ config_root }} is the root of the *including* checkout, so every path into
+# flow9 goes through $FLOW. See mise-shared-tasks/README.md.
+
+[env]
+# This checkout when it is flow9 (it has bin/flowc1), otherwise the sibling
+# ../flow9 of the project that includes this file.
+FLOW = "{% if config_root ~ '/bin/flowc1' is file %}{{ config_root }}{% else %}{{ (config_root ~ '/../flow9') | canonicalize }}{% endif %}"
+# The Haxe libraries are installed next to the compiler that asks for them, one
+# set per flow9 checkout, by `mise run haxelib-setup`. flowc decides which
+# libraries a build needs, so a project that needs other libraries most likely
+# needs another flow9 checkout as well. If one shared set gets in the way, that
+# is the assumption to revisit. A .haxelib folder in the current directory or a
+# parent of it wins over this variable.
+HAXELIB_PATH = "{{ env.FLOW }}/.haxelib"
+_.path = ["{{ env.FLOW }}/bin"]
+
+[tools]
+# flowc.jar is committed and run on whatever JDK each checkout has - CI agents,
+# developers, projects pinning their own java - so it must load on the oldest of
+# them, Java 21 (bin/check_java_version.java). A newer JDK builds a jar that must
+# not be pushed; raise this together with that check.
+java = "temurin-21"
+# Haxe compiles the JavaScript targets (js=, es6=, nodejs=1, html=, ts=) and the
+# runtime tests in tests/js/binflow_buffer. haxelib is a neko executable, so neko
+# comes with it. The backends are named in full: mise keeps the backend a tool was
+# first installed with, and the layout of the install differs between them. neko
+# versions are written with dashes.
+"github:HaxeFoundation/neko" = { version = "2-4-1" }
+# haxelib does not find libneko on its own; mise-shared-tasks/haxelib-patch wraps it.
+# `when = "always"` reruns the patch on every `mise install`, so a neko bump does
+# not leave haxelib pointing at the old one. Called directly rather than through
+# `mise run`, because haxe is still mid-install at that point. $FLOW, because
+# $MISE_CONFIG_ROOT is the including project.
+"github:HaxeFoundation/haxe" = { version = "4.3.6", depends = ["github:HaxeFoundation/neko"], postinstall = { when = "always", run = 'bash "$FLOW/mise-shared-tasks/haxelib-patch"' } }
