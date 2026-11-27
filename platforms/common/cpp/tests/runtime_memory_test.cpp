@@ -215,6 +215,30 @@ static unsigned heapSize(ByteCodeRunner &runner) {
     return FlowPtrToInt(runner.GetHeapLimits(true).Start) - FlowPtrToInt(runner.GetHeapLimits(false).Bound);
 }
 
+#ifdef FLOW_MMAP_HEAP
+static void testNamedSnapshotBudget() {
+    const unsigned mib = 1024 * 1024;
+    MIN_HEAP_SIZE = MAX_HEAP_SIZE = 16 * mib;
+    EPHEMERAL_HEAP_SIZE = mib;
+    ByteCodeRunner runner("valid.flowbc");
+    for (unsigned n : {5 * mib + 1, 9 * mib + 1}) {
+        std::string bytes(n, 'p');
+        FILE *f = fopen("snapshot.dat", "wb");
+        require(f && fwrite(bytes.data(), 1, n, f) == n && !fclose(f), "prepare large snapshot");
+        StackSlot old = runner.LoadFileAsString("snapshot.dat");
+        LocalRootDefinition root(&runner, 1, &old);
+        require(old.IsString() && !runner.IsErrorReported(), "read file beyond private cache budget");
+        require(runner.IsMappedArea(runner.GetStringAddr(old)) == (n > MAX_HEAP_SIZE / 2),
+                "collectible snapshot when it fits; large-string arena otherwise");
+        f = fopen("snapshot.dat", "wb");
+        require(f && fputs("new", f) >= 0 && !fclose(f), "update the underlying file");
+        runner.ForceGC(0, true);
+        const char *p = reinterpret_cast<const char *>(runner.GetStringPtr(old));
+        require(!memcmp(p, bytes.data(), n) && !p[n], "retained odd-length snapshot after shortening and GC");
+    }
+}
+#endif
+
 static void testGrowth(unsigned initial, unsigned cap, unsigned young, unsigned count) {
     const unsigned mib = 1024 * 1024;
     MIN_HEAP_SIZE = initial * mib;
@@ -372,6 +396,9 @@ int main() {
     testMemory();
     testRunner();
     testLegacyFileValues();
+#ifdef FLOW_MMAP_HEAP
+    testNamedSnapshotBudget();
+#endif
     testGrowth(256, 384, 128, 262144);
     testGrowth(8, 40, 2, 2 * 1024 * 1024);
     testYoungAllocation();

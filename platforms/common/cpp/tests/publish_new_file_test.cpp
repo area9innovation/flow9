@@ -5,9 +5,10 @@
 int main()
 {
     bool inner = false;
-    bool outer = replaceRegularFile("result", [&](FILE *out) {
-        inner = replaceRegularFile("result", [](FILE *peer) { return fputs("first", peer) >= 0; });
+    auto prepare = [](int, const struct stat &) { return false; }; // no existing entry
+    auto outer = replaceRegularFile(AT_FDCWD, "result", NULL, [&](FILE *out) {
+        inner = replaceRegularFile(AT_FDCWD, "result", NULL, [](FILE *peer) { return fputs("first", peer) >= 0; }, prepare) == StageResult::Published;
         return fputs("second", out) >= 0;
-    });
-    return inner && !outer ? 0 : 1;
+    }, prepare);
+    return inner && outer == StageResult::Failed ? 0 : 1;
 }

@@ -90,42 +90,42 @@ static bool openStageDirectory(int base, const std::string &dir, ScopedFd &direc
     return ready;
 }
 
-// existing describes the regular file the caller inspected. A null pointer
-// means create only, even if another writer publishes while the stage is open.
+enum class StageResult { Published, Unavailable, Failed };
+
+// Unavailable: staging or metadata preservation was not possible. A payload
+// write/flush/close failure is terminal; never retry it against the original.
 template<class Write, class Prepare>
-static bool replaceRegularFile(int base, const std::string &dest, const struct stat *existing, Write write, Prepare prepare)
+static StageResult replaceRegularFile(int base, const std::string &dest, const struct stat *existing, Write write, Prepare prepare)
 {
     // Let open apply the ordinary creation mode and umask inside a private stage.
     std::string dir = dest.substr(0, dest.find_last_of('/') + 1);
-    if (!makeStageDirectory(base, dir)) return false;
+    if (!makeStageDirectory(base, dir)) return StageResult::Unavailable;
     ScopedFd directory;
     bool ready = openStageDirectory(base, dir, directory);
     int fd = ready ? openat(directory.get(), "data", O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, existing ? 0600 : 0666) : -1;
-    bool ok = false;
+    StageResult result = StageResult::Unavailable;
     if (fd >= 0) {
         if (FILE *out = fdopen(fd, "wb")) {
-            ok = (!existing || prepare(fd, *existing)) && write(out) && !ferror(out) && fflush(out) == 0;
-            if (fclose(out) != 0) ok = false;
+            bool prepared = !existing || prepare(fd, *existing);
+            bool written = prepared && write(out) && !ferror(out) && fflush(out) == 0;
+            if (fclose(out) != 0) written = false;
+            if (prepared) result = StageResult::Failed;
+            if (written) {
+                if (!existing) {
+                    if (publishNewFile(directory.get(), "data", base, dest.c_str())) result = StageResult::Published;
+                } else if (renameat(directory.get(), "data", base, dest.c_str()) == 0) {
+                    result = StageResult::Published;
+                } else if (errno == EACCES || errno == EPERM || errno == EBUSY || errno == ENOTSUP) {
+                    result = StageResult::Unavailable;
+                }
+            }
         } else {
             close(fd);
         }
-        if (ok) ok = existing ? renameat(directory.get(), "data", base, dest.c_str()) == 0 :
-                                publishNewFile(directory.get(), "data", base, dest.c_str());
-        if (!ok) unlinkat(directory.get(), "data", 0);
+        if (result != StageResult::Published) unlinkat(directory.get(), "data", 0);
     }
     unlinkat(base, dir.c_str(), AT_REMOVEDIR);
-    return ok;
-}
-
-template<class Write>
-static bool replaceRegularFile(const std::string &dest, Write write)
-{
-    struct stat st;
-    bool existing = stat(dest.c_str(), &st) == 0;
-    if (existing ? !S_ISREG(st.st_mode) : errno != ENOENT) return false;
-    return replaceRegularFile(AT_FDCWD, dest, existing ? &st : NULL, write, [](int fd, const struct stat &st) {
-        return fchmod(fd, st.st_mode & 0777) == 0;
-    });
+    return result;
 }
 
 #endif

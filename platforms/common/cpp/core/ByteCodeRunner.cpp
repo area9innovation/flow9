@@ -1282,6 +1282,32 @@ StackSlot ByteCodeRunner::AllocateString(const unicode_char *str, size_t len) {
     return out;
 }
 
+#ifdef FLOW_MMAP_HEAP
+// The large-string arena is page-aligned and already reserved. Named files
+// may be shortened by an in-place writer in another runner. A read-only
+// anonymous copy keeps even substrings of the old value independent of it.
+static bool readPackedSnapshot(void *where, size_t size, FILE *file)
+{
+    return mmap(where, size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1, 0) == where &&
+           fread(where, 1, size, file) == size && mprotect(where, size, PROT_READ) == 0;
+}
+
+// A writable file can be updated through another name, even on a filesystem
+// with coarse timestamps. Only reuse an immutable snapshot of the same bytes.
+static bool matchesPackedFile(FILE *file, const unicode_char *snapshot, size_t bytes)
+{
+    const char *p = reinterpret_cast<const char *>(snapshot);
+    char block[16384];
+    while (bytes) {
+        const size_t n = std::min(bytes, sizeof(block));
+        if (fread(block, 1, n, file) != n || memcmp(block, p, n)) return false;
+        p += n;
+        bytes -= n;
+    }
+    return true;
+}
+#endif
+
 StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary, bool legacy_file)
 {
     StackSlot rv = StackSlot::MakeVoid();
@@ -1291,8 +1317,7 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
         return StackSlot::MakeVoid();
 
 #ifdef FLOW_MMAP_HEAP
-    // A staged write replaces a directory entry. Its other spellings may still
-    // be cached; compare the open file, without disturbing live old strings.
+    // Both readers may have cached other spellings of an updated file.
     struct stat st;
     bool have_id = !temporary && fstat(fileno(file), &st) == 0 && S_ISREG(st.st_mode);
     auto &cache = legacy_file ? LegacyMappedFiles : MappedFiles;
@@ -1300,7 +1325,8 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
     if (!temporary && cached != cache.end()) {
         const auto &area = MappedAreas.at(GetStringAddr(cached->second));
         if (have_id && area->file_device == uint64_t(st.st_dev) &&
-            area->file_inode == uint64_t(st.st_ino) && area->file_size == st.st_size) {
+            area->file_inode == uint64_t(st.st_ino) && area->file_size == st.st_size &&
+            matchesPackedFile(file, GetStringPtr(cached->second), size_t(st.st_size))) {
             fclose(file);
             return cached->second;
         }
@@ -1324,7 +1350,34 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
         {
             FlowPtr map_ptr = FlowPtrAlignDown(MapStringPtr - bytes, Memory.PageSize());
 
-            if (map_ptr >= MapAreaBase && Memory.MapFile(map_ptr, size, file))
+            bool loaded = false;
+            bool useArena = map_ptr >= MapAreaBase;
+            // The arena lives until runner reset. Don't retain a private RAM
+            // copy of every file ever read: spill into ordinary collectible
+            // strings past the cache budget. Keep the arena option for a
+            // value that would not fit in the managed heap, even after GC.
+            size_t budget = std::min(size_t(FILE_MAP_MEMORY_SIZE), size_t(MAX_HEAP_SIZE / 4));
+            size_t used = align_down(MAX_MEMORY_SIZE, Memory.PageSize()) - FlowPtrToInt(map_ptr);
+            if (useArena && !temporary && used > budget && bytes + 8 <= MAX_HEAP_SIZE / 2) {
+                if (bytes + 8 > unsigned(hp_big_pos - hp_ref_end)) ForceGC(0, true);
+                if (IsErrorReported()) { fclose(file); return StackSlot::MakeVoid(); }
+                useArena = bytes + 8 > unsigned(hp_big_pos - hp_ref_end);
+            }
+            if (useArena) {
+                if (temporary) {
+                    loaded = Memory.MapFile(map_ptr, size, file);
+                } else {
+                    loaded = readPackedSnapshot(Memory.GetRawPointer(map_ptr, bytes, true), size_t(size), file);
+                    if (!loaded) {
+                        Memory.DecommitRange(map_ptr, MapStringPtr);
+                        if (fseek(file, 0, SEEK_SET) != 0) {
+                            fclose(file);
+                            return StackSlot::MakeVoid();
+                        }
+                    }
+                }
+            }
+            if (loaded)
             {
                 if (FlowPtr *ref = AllocateStringRef(&rv, length)) {
                     *ref = map_ptr;

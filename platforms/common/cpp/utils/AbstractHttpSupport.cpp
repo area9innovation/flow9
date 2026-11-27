@@ -10,7 +10,6 @@
 #include "DownloadFilePermissions.h"
 #else
 #include <windows.h>
-#include <ktmw32.h>
 #include <io.h>
 #include <fcntl.h>
 #include <atomic>
@@ -243,9 +242,20 @@ static bool writeDownload(const HttpRequest &rq, FILE *dest)
     return rq.tmp_buffer.empty() || fwrite(rq.tmp_buffer.data(), 1, rq.tmp_buffer.size(), dest) == rq.tmp_buffer.size();
 }
 
-static bool writeAndCloseDownload(const HttpRequest &rq, FILE *out)
+static bool writeAndCloseDownload(const HttpRequest &rq, FILE *out, bool overwrite = false)
 {
     bool ok = writeDownload(rq, out) && !ferror(out);
+    // The checked handle starts at offset zero, without O_TRUNC. Drop an old
+    // tail only after the response was copied and the last write succeeded.
+    if (ok && overwrite) {
+        ok = fflush(out) == 0;
+#ifdef _WIN32
+        if (ok) ok = SetEndOfFile(reinterpret_cast<HANDLE>(_get_osfhandle(_fileno(out)))) != 0;
+#else
+        off_t end = ok ? ftello(out) : -1;
+        ok = end >= 0 && ftruncate(fileno(out), end) == 0;
+#endif
+    }
     return fclose(out) == 0 && ok;
 }
 
@@ -438,15 +448,31 @@ static bool saveDownloadAt(const HttpRequest &rq, int start, const std::string &
         close(fd);
         return false;
     }
-    return replaceRegularFile(base, path, existing ? &st : NULL, [&](FILE *out) { return writeDownload(rq, out); },
-        [&](int stage, const struct stat &expected) {
-            // Authorize the update and inspect metadata; never read or truncate the original payload.
-            int source = openat(base, path.c_str(), O_WRONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
-            if (source < 0) return false;
-            bool ok = prepareDownloadFile(source, stage, expected);
-            close(source);
-            return ok;
-        });
+    auto write = [&](FILE *out) { return writeDownload(rq, out); };
+    if (!existing) {
+        return replaceRegularFile(base, path, NULL, write,
+            [](int, const struct stat &) { return false; }) == StageResult::Published;
+    }
+
+    ScopedFd source(openat(base, path.c_str(), O_WRONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC));
+    struct stat opened;
+    if (source.get() < 0 || fstat(source.get(), &opened) || !S_ISREG(opened.st_mode) ||
+        st.st_dev != opened.st_dev || st.st_ino != opened.st_ino) return false;
+#ifdef __linux__
+    if (opened.st_nlink == 1 && canStageDownload(source.get())) {
+        auto result = replaceRegularFile(base, path, &opened, write,
+            [&](int stage, const struct stat &expected) { return prepareDownloadFile(source.get(), stage, expected); });
+        if (result != StageResult::Unavailable) return result == StageResult::Published;
+    }
+#endif
+    // Metadata, hard links or directory permissions can preclude replacing
+    // the entry without precluding an ordinary write to the file itself.
+    if (fstatat(base, path.c_str(), &st, AT_SYMLINK_NOFOLLOW) ||
+        st.st_dev != opened.st_dev || st.st_ino != opened.st_ino) return false;
+    FILE *out = fdopen(source.get(), "wb"); // fdopen does not truncate
+    if (!out) return false;
+    source.release();
+    return writeAndCloseDownload(rq, out, true);
 }
 
 static bool saveDownload(const HttpRequest &rq)
@@ -456,68 +482,13 @@ static bool saveDownload(const HttpRequest &rq)
     });
 }
 #else
-static bool writeDownloadHandle(const HttpRequest &rq, HANDLE h)
+static bool writeDownloadHandle(const HttpRequest &rq, HANDLE h, bool overwrite = false)
 {
     int fd = _open_osfhandle(reinterpret_cast<intptr_t>(h), _O_WRONLY | _O_BINARY);
     if (fd == -1) { CloseHandle(h); return false; }
-    if (FILE *out = _fdopen(fd, "wb")) return writeAndCloseDownload(rq, out);
+    if (FILE *out = _fdopen(fd, "wb")) return writeAndCloseDownload(rq, out, overwrite);
     _close(fd);
     return false;
-}
-
-// Query the open file, not a second pathname. A buffer large enough for just
-// the unnamed data stream suffices: more streams (or an unknown answer) veto
-// replacement. MoveFileEx does not merge streams like ReplaceFile does.
-static bool onlyDefaultStream(HANDLE h)
-{
-    const wchar_t unnamed[] = L"::$DATA";
-    alignas(FILE_STREAM_INFO) unsigned char buf[sizeof(FILE_STREAM_INFO) + sizeof(unnamed)] = {};
-    if (!GetFileInformationByHandleEx(h, FileStreamInfo, buf, sizeof(buf))) return false;
-    const FILE_STREAM_INFO *s = reinterpret_cast<const FILE_STREAM_INFO*>(buf);
-    return !s->NextEntryOffset && s->StreamNameLength == sizeof(unnamed) - sizeof(wchar_t) &&
-           !memcmp(s->StreamName, unnamed, s->StreamNameLength);
-}
-
-static bool supportedDownloadFile(HANDLE h, BY_HANDLE_FILE_INFORMATION &info, DWORD &flags)
-{
-    return GetFileType(h) == FILE_TYPE_DISK && GetFileInformationByHandle(h, &info) &&
-        !(info.dwFileAttributes & ~(FILE_ATTRIBUTE_NORMAL | FILE_ATTRIBUTE_ARCHIVE)) &&
-        GetVolumeInformationByHandleW(h, NULL, 0, NULL, NULL, &flags, NULL, 0) &&
-        (!(flags & FILE_NAMED_STREAMS) || onlyDefaultStream(h));
-}
-
-// A caller may be allowed to write a file but not to read its audit policy.
-// Update the existing NTFS object in a transaction: neither the DACL nor the
-// SACL has to be read or recreated. TxF is optional; never fall back to a
-// partial-descriptor copy or a nontransactional truncate.
-static bool updateAclDownload(const HttpRequest &rq, const std::wstring &path, const BY_HANDLE_FILE_INFORMATION &expected)
-{
-    HMODULE ktm = LoadLibraryExW(L"KtmW32.dll", NULL, LOAD_LIBRARY_SEARCH_SYSTEM32);
-    if (!ktm) return false;
-    auto create = reinterpret_cast<decltype(&CreateTransaction)>(GetProcAddress(ktm, "CreateTransaction"));
-    auto commit = reinterpret_cast<decltype(&CommitTransaction)>(GetProcAddress(ktm, "CommitTransaction"));
-    auto openTx = reinterpret_cast<decltype(&CreateFileTransactedW)>(GetProcAddress(GetModuleHandleW(L"kernel32.dll"), "CreateFileTransactedW"));
-    HANDLE tx = create && commit && openTx ? create(NULL, NULL, 0, 0, 0, 0, NULL) : INVALID_HANDLE_VALUE;
-    bool ok = false;
-    if (tx != INVALID_HANDLE_VALUE) {
-        HANDLE h = openTx(path.c_str(), GENERIC_WRITE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ, NULL,
-                          OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL, tx, NULL, NULL);
-        if (h != INVALID_HANDLE_VALUE) {
-            BY_HANDLE_FILE_INFORMATION info;
-            DWORD flags;
-            // Do not change other hard links. Recheck on the handle actually
-            // used to write; it starts at offset zero and is not truncated yet.
-            if (supportedDownloadFile(h, info, flags) && info.nNumberOfLinks == 1 &&
-                info.dwVolumeSerialNumber == expected.dwVolumeSerialNumber &&
-                info.nFileIndexHigh == expected.nFileIndexHigh && info.nFileIndexLow == expected.nFileIndexLow &&
-                SetEndOfFile(h)) {
-                ok = writeDownloadHandle(rq, h) && commit(tx); // writer closes h before commit
-            } else CloseHandle(h);
-        }
-        CloseHandle(tx); // closing the last handle rolls back an uncommitted transaction
-    }
-    FreeLibrary(ktm);
-    return ok;
 }
 
 static bool saveDownload(const HttpRequest &rq)
@@ -529,22 +500,19 @@ static bool saveDownload(const HttpRequest &rq)
     // stream; a reparse point must not be replaced with a new directory entry.
     HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE | FILE_READ_ATTRIBUTES, FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
                            NULL, OPEN_EXISTING, FILE_FLAG_OPEN_REPARSE_POINT, NULL);
-    bool existing = h != INVALID_HANDLE_VALUE;
-    if (!existing) {
-        if (GetLastError() != ERROR_FILE_NOT_FOUND) return false;
-    } else {
+    if (h != INVALID_HANDLE_VALUE) {
+        if (rq.create_only) { CloseHandle(h); return false; }
         DWORD type = GetFileType(h);
         if (type == FILE_TYPE_CHAR || type == FILE_TYPE_PIPE) return writeDownloadHandle(rq, h);
-        if (rq.create_only) { CloseHandle(h); return false; }
         BY_HANDLE_FILE_INFORMATION info;
-        DWORD flags = 0;
-        // In particular, never write plaintext staging data for an EFS file.
-        bool regular = supportedDownloadFile(h, info, flags);
+        const DWORD refused = FILE_ATTRIBUTE_ENCRYPTED | FILE_ATTRIBUTE_REPARSE_POINT | FILE_ATTRIBUTE_DIRECTORY |
+                              FILE_ATTRIBUTE_HIDDEN | FILE_ATTRIBUTE_READONLY | FILE_ATTRIBUTE_SYSTEM;
+        if (type == FILE_TYPE_DISK && GetFileInformationByHandle(h, &info) && !(info.dwFileAttributes & refused))
+            return writeDownloadHandle(rq, h, true); // only the unnamed data stream; preserve the file object
         CloseHandle(h);
-        if (!regular) return false;
-        if (flags & FILE_PERSISTENT_ACLS)
-            return (flags & FILE_SUPPORTS_TRANSACTIONS) && updateAclDownload(rq, path, info);
+        return false;
     }
+    if (GetLastError() != ERROR_FILE_NOT_FOUND) return false;
 
     static std::atomic<unsigned> sequence(0);
     size_t slash = path.find_last_of(L'\\');
@@ -559,7 +527,7 @@ static bool saveDownload(const HttpRequest &rq)
             if (GetLastError() == ERROR_FILE_EXISTS) continue;
             return false;
         }
-        if (writeDownloadHandle(rq, h) && MoveFileExW(stage.c_str(), path.c_str(), existing ? MOVEFILE_REPLACE_EXISTING : 0)) {
+        if (writeDownloadHandle(rq, h) && MoveFileExW(stage.c_str(), path.c_str(), 0)) {
             return true;
         }
         DeleteFileW(stage.c_str());

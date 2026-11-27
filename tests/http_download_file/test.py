@@ -1,6 +1,6 @@
 """Run with python3 and a Qt runner built from these sources (optionally FLOWCPP).
-Use an xattr-capable filesystem and setfacl on Linux. The default Windows suite needs local
-transaction-capable NTFS; --windows-no-txf-dir DIR tests an unsupported ACL-bearing volume separately.
+Use an xattr-capable filesystem and setfacl on Linux. The default Windows fixtures need NTFS
+with compression and streams; --windows-volume DIR tests an ordinary refresh on another volume.
 On Linux, build with qmake DEFINES+=FLOW_TEST_NO_SEARCH_HANDLE and pass --no-search-handle
 to also check the refusal when the long-path fallback has no writable temporary directory.
 """
@@ -22,13 +22,13 @@ parser.add_argument('--jit', action='store_true', help='use the default JIT inst
 parser.add_argument('--no-search-handle', action='store_true', help='expect a Linux runner built with FLOW_TEST_NO_SEARCH_HANDLE (run unprivileged with procfs)')
 windows = parser.add_mutually_exclusive_group()
 windows.add_argument('--windows-audit', action='store_true', help='also check an explicit audit rule (requires SACL access on the disposable NTFS fixture)')
-windows.add_argument('--windows-no-txf-dir', type=Path, metavar='DIR',
-                     help='only test create/refused refresh in a writable directory on an ACL-bearing SMB share, ReFS or other volume without usable TxF')
+windows.add_argument('--windows-volume', '--windows-no-txf-dir', type=Path, metavar='DIR',
+                     help='only test create and refresh in a writable directory, e.g. on SMB or ReFS')
 args = parser.parse_args()
 if args.no_search_handle and (not sys.platform.startswith('linux') or os.geteuid() == 0 or not Path('/proc/self/fd').is_dir()):
     parser.error('--no-search-handle needs an unprivileged Linux process with procfs')
-if args.windows_no_txf_dir and os.name != 'nt':
-    parser.error('--windows-no-txf-dir requires Windows')
+if args.windows_volume and os.name != 'nt':
+    parser.error('--windows-volume requires Windows')
 root = Path(__file__).resolve().parents[2]
 with tempfile.TemporaryDirectory() as tmp:
     work = Path(tmp)
@@ -53,12 +53,12 @@ with tempfile.TemporaryDirectory() as tmp:
     server = ThreadingHTTPServer(('127.0.0.1', 0), partial(Handler, directory=work))
     Thread(target=server.serve_forever, daemon=True).start()
 
-    def download(src, dest, headers=False, error=False, limit=False, defer_quit=False, legacy404=False, cache_target='', next_cwd='', cwd=work, fd_marker=''):
+    def download(src, dest, headers=False, error=False, limit=False, defer_quit=False, legacy404=False, cache_target='', next_cwd='', cwd=work, fd_marker='', short_refresh=False):
         cmd = [runner, '--batch', *([] if args.jit else ['--gc-stress-test']), bytecode, '--',
                f'url=http://127.0.0.1:{server.server_port}/{src.name}',
                f'dest={dest}', f'headers={int(headers)}', f'spool={spool}',
                f'deferQuit={int(defer_quit)}', f'legacy404={int(legacy404)}', f'cacheTarget={cache_target}', f'nextCwd={next_cwd}',
-               f'fdMarker={fd_marker}']
+               f'fdMarker={fd_marker}', f'shortRefresh={int(short_refresh)}']
         if limit:
             # Limit ordinary files in the runner child only. Large responses hit
             # the HTTP spool limit; small ones hit the destination stage limit.
@@ -81,20 +81,18 @@ with tempfile.TemporaryDirectory() as tmp:
 
     src, dest = work / 'source', out / 'result'
     save_error = 'Could not save downloaded file'
-    if args.windows_no_txf_dir:
-        with tempfile.TemporaryDirectory(dir=args.windows_no_txf_dir.resolve()) as folder:
+    if args.windows_volume:
+        with tempfile.TemporaryDirectory(dir=args.windows_volume.resolve()) as folder:
             target = Path(folder) / 'result'
             src.write_bytes(b'first download')
             download(src, target)
             assert target.read_bytes() == b'first download'
-            with target.open('r+b') as writable:  # Ordinary write access is not the reason for refusal.
-                writable.write(b'first download')
             src.write_bytes(b'refresh')
-            download(src, target, headers=True, error=save_error)
-            assert target.read_bytes() == b'first download' and set(Path(folder).iterdir()) == {target}
+            download(src, target, headers=True)
+            assert target.read_bytes() == b'refresh' and set(Path(folder).iterdir()) == {target}
         server.shutdown()
         server.server_close()
-        print('Windows create/refused refresh test passed')
+        print('Windows create and refresh test passed')
         sys.exit(0)
 
     other = work / 'other-cwd'
@@ -186,11 +184,17 @@ with tempfile.TemporaryDirectory() as tmp:
                         assert target.read_bytes() == src.read_bytes() and not (other / long_leaf).exists()
                         (other / long_leaf).write_bytes(b'C' * 150000)
                         src.write_bytes(b'B' * 150000)
+                        before = target.stat()
                         download(src, long_leaf, headers=headers, cache_target=target, **location)
+                        staged = not os.path.samestat(before, target.stat())
                         assert target.read_bytes() == src.read_bytes() and (other / long_leaf).read_bytes() == b'C' * 150000
                         src.write_bytes(b'x' * 4096)
                         download(src, long_leaf, headers=headers, limit=True, error=save_error, defer_quit=True, **location)
-                        assert target.read_bytes() == b'B' * 150000
+                        old = target.read_bytes()
+                        if staged:
+                            assert old == b'B' * 150000
+                        else:
+                            assert old[1024:] == b'B' * (150000 - 1024)
                         target.unlink()
                         (other / long_leaf).unlink()
 
@@ -240,8 +244,17 @@ with tempfile.TemporaryDirectory() as tmp:
 
     for i, data in enumerate([b'', b'\x00\xffA', b'\xff\xfe' + bytes(range(256)) * 4096 + b'!']):
         src.write_bytes(data)
+        before = dest.stat() if i else None
         download(src, dest, headers=bool(i % 2))
         assert dest.read_bytes() == data
+        if i:
+            staged = not os.path.samestat(before, dest.stat())
+            if sys.platform == 'darwin' or os.name == 'nt':
+                assert not staged
+            elif sys.platform.startswith('linux') and shutil.which('stat'):
+                fs_type = subprocess.check_output(['stat', '-f', '-c', '%t', str(dest)], text=True).strip()
+                if fs_type in ('ef53', '1021994'):
+                    assert staged, 'ordinary single-link file should use staged rollback'
     delayed = work / 'while-missing'
     delayed.write_bytes(b'response')
     peer = out / 'peer'
@@ -274,7 +287,12 @@ with tempfile.TemporaryDirectory() as tmp:
         src.write_bytes(bytes(range(256)) * 128)
         for target in (dest, out / 'new'):
             download(src, target, error=save_error, limit=True)
-            assert dest.read_bytes() == data and set(out.iterdir()) == {dest}
+            assert set(out.iterdir()) == {dest}
+            if staged or target != dest:
+                assert dest.read_bytes() == data
+            else:
+                assert dest.read_bytes()[1024:] == data[1024:]
+                dest.write_bytes(data)
         link = out / 'link'
         link.symlink_to(dest.name)
         download(src, link)
@@ -283,6 +301,34 @@ with tempfile.TemporaryDirectory() as tmp:
         src.write_bytes(b'B' * 150000)
         download(src, link, cache_target=dest)
         assert link.is_symlink() and dest.read_bytes() == src.read_bytes()
+
+        # In-place writes update all hard links. Retained packed strings are
+        # snapshots even when the new file is shorter than the old mapping.
+        hard = out / 'hard'
+        os.link(dest, hard)
+        for short_refresh in (False, True):
+            dest.write_bytes(b'A' * 150000)
+            src.write_bytes(b'BB' if short_refresh else b'B' * 150000)
+            download(src, hard, headers=short_refresh, cache_target=dest, short_refresh=short_refresh)
+            assert hard.samefile(dest) and dest.read_bytes() == src.read_bytes()
+        src.write_bytes(b'')
+        download(src, hard)
+        assert hard.samefile(dest) and dest.read_bytes() == b''
+        hard.unlink()
+        src.write_bytes(b'ordinary writable file')
+
+        if os.geteuid() != 0:
+            with tempfile.TemporaryDirectory(dir=out) as nested:
+                parent = Path(nested)
+                writable = parent / 'writable'
+                writable.write_bytes(b'previous')
+                before = writable.stat()
+                parent.chmod(0o500)
+                try:
+                    download(src, writable)
+                    assert os.path.samestat(before, writable.stat()) and writable.read_bytes() == src.read_bytes()
+                finally:
+                    parent.chmod(0o700)
     if sys.platform.startswith('linux'):
         with tempfile.TemporaryDirectory(dir=out) as nested:
             shared = Path(nested)
@@ -294,6 +340,11 @@ with tempfile.TemporaryDirectory() as tmp:
                 control.touch()
                 download(src, created)
                 assert created.read_bytes() == src.read_bytes() and control.stat().st_gid == created.stat().st_gid == other
+                os.chown(control, -1, os.getegid())  # stage would inherit a different group
+                before = control.stat()
+                download(src, control)
+                assert os.path.samestat(before, control.stat()) and control.stat().st_gid == before.st_gid
+                assert control.read_bytes() == src.read_bytes()
             else:
                 print('Skipping distinct setgid group case: no supplementary group')
 
@@ -304,16 +355,30 @@ with tempfile.TemporaryDirectory() as tmp:
             assert stat.S_IMODE(write_only.stat().st_mode) == 0o200
             write_only.chmod(0o600)
             assert write_only.read_bytes() == src.read_bytes()
+            if shutil.which('chattr') and shutil.which('lsattr'):
+                flagged = shared / 'nodump'
+                flagged.write_bytes(b'old')
+                flags = subprocess.run(['lsattr', '-d', flagged], capture_output=True, text=True)
+                if (flags.returncode == 0 and 'd' not in flags.stdout.split()[0] and
+                        subprocess.run(['chattr', '+d', flagged], capture_output=True).returncode == 0):
+                    before = flagged.stat()
+                    download(src, flagged)
+                    assert 'd' in subprocess.check_output(['lsattr', '-d', flagged], text=True).split()[0]
+                    assert os.path.samestat(before, flagged.stat()) and flagged.read_bytes() == src.read_bytes()
         if shutil.which('setfacl'):
             subprocess.run(['setfacl', '-m', f'u:{os.getuid()}:rw-,m::r--', dest], check=True)
             acl = os.getxattr(dest, 'system.posix_acl_access')
             src.write_bytes(b'updated with ACL')
+            before = dest.stat()
             download(src, dest)
+            acl_staged = not os.path.samestat(before, dest.stat())
             assert dest.read_bytes() == src.read_bytes() and os.getxattr(dest, 'system.posix_acl_access') == acl
             previous = dest.read_bytes()
             src.write_bytes(b'x' * 4096)
             download(src, dest, error=save_error, limit=True)
-            assert dest.read_bytes() == previous and os.getxattr(dest, 'system.posix_acl_access') == acl
+            if acl_staged:
+                assert dest.read_bytes() == previous
+            assert os.getxattr(dest, 'system.posix_acl_access') == acl
             # The stage may inherit an ACL that the original file never had.
             with tempfile.TemporaryDirectory(dir=out) as nested:
                 plain = Path(nested) / 'plain'
@@ -327,10 +392,16 @@ with tempfile.TemporaryDirectory() as tmp:
         else:
             print('Skipping named ACL case: setfacl not installed')
         os.setxattr(dest, 'user.flow-test', b'keep')
-        previous = dest.read_bytes()
-        src.write_bytes(b'different')
-        download(src, dest, error=save_error)
-        assert dest.read_bytes() == previous and os.getxattr(dest, 'user.flow-test') == b'keep'
+        before = dest.stat()
+        src.write_bytes(b'updated in place')
+        download(src, dest)
+        assert dest.read_bytes() == src.read_bytes() and os.path.samestat(before, dest.stat())
+        src.write_bytes(b'x' * 4096)
+        download(src, dest, error=save_error, limit=True, defer_quit=True)
+        assert os.path.samestat(before, dest.stat()) and os.getxattr(dest, 'user.flow-test') == b'keep'
+        actual = dest.read_bytes()
+        written = len(actual) - len(actual.lstrip(b'x'))
+        assert written <= 1024 and actual == b'x' * written + b'updated in place'[written:]
         assert set(out.iterdir()) == {dest, link}
     if os.name == 'nt':
         # No privilege is needed for this positive control: updating the same
@@ -339,11 +410,26 @@ with tempfile.TemporaryDirectory() as tmp:
         src.write_bytes(b'new payload')
         download(src, dest)
         assert dest.read_bytes() == src.read_bytes() and os.path.samestat(before, dest.stat())
+        for cmd, flag in [(['attrib', '+I'], stat.FILE_ATTRIBUTE_NOT_CONTENT_INDEXED),
+                          (['compact', '/C'], stat.FILE_ATTRIBUTE_COMPRESSED)]:
+            with tempfile.TemporaryDirectory(dir=out) as nested:
+                f = Path(nested) / 'existing'
+                f.write_bytes(b'old content' * 8192)
+                subprocess.run([*cmd, str(f)], check=True)
+                before = f.stat()
+                assert before.st_file_attributes & flag
+                download(src, f, headers=True)
+                assert f.read_bytes() == src.read_bytes() and os.path.samestat(before, f.stat())
+                assert f.stat().st_file_attributes & flag
+
         alias = out / 'hardlink'
         os.link(dest, alias)
-        src.write_bytes(b'not for the other link')
-        download(src, dest, error=save_error)
-        assert dest.samefile(alias) and alias.read_bytes() == b'new payload'
+        src.write_bytes(b'updated through either link')
+        download(src, dest)
+        assert dest.samefile(alias) and alias.read_bytes() == src.read_bytes()
+        src.write_bytes(b'')
+        download(src, alias, headers=True)
+        assert dest.samefile(alias) and dest.read_bytes() == b''
         alias.unlink()
 
         if args.windows_audit:
@@ -351,17 +437,42 @@ with tempfile.TemporaryDirectory() as tmp:
                      str(root / 'tests/http_download_file/test_audit.ps1'), str(dest)]
             expected = subprocess.check_output([*audit, '-Install'], text=True).strip()
             assert expected.startswith('S:')
+            src.write_bytes(b'updated with audit rule')
             download(src, dest)
             assert dest.read_bytes() == src.read_bytes() and subprocess.check_output(audit, text=True).strip() == expected
         # Run on NTFS. The secondary stream belongs to the existing destination.
-        stream = Path(str(dest) + ':notes')
-        stream.write_bytes(b'keep stream')
-        previous = dest.read_bytes()
+        stream = Path(str(dest) + ':Zone.Identifier')
+        zone = b'[ZoneTransfer]\r\nZoneId=3\r\n'
+        stream.write_bytes(zone)
         src.write_bytes(b'different')
-        download(src, dest, error=save_error)
+        download(src, dest)
+        assert dest.read_bytes() == src.read_bytes() and stream.read_bytes() == zone
         download(src, stream, error=save_error)
-        assert dest.read_bytes() == previous and stream.read_bytes() == b'keep stream'
+        assert dest.read_bytes() == src.read_bytes() and stream.read_bytes() == zone
         stream.unlink()
+        previous = dest.read_bytes()
+        src.write_bytes(b'not written')
+        for flag in ('H', 'R'):
+            subprocess.run(['attrib', '+' + flag, str(dest)], check=True)
+            try:
+                download(src, dest, error=save_error)
+                assert dest.read_bytes() == previous
+            finally:
+                subprocess.run(['attrib', '-' + flag, str(dest)], check=True)
+        symlink = out / 'reparse'
+        try:
+            symlink.symlink_to(dest)
+        except OSError as exc:
+            if exc.winerror != 1314: raise
+            print('Skipping file reparse point: symbolic-link privilege unavailable')
+        else:
+            download(src, symlink, error=save_error)
+            assert symlink.is_symlink() and dest.read_bytes() == previous
+            symlink.unlink()
+            symlink.symlink_to(out / 'absent')
+            download(src, symlink, error=save_error)
+            assert symlink.is_symlink() and not (out / 'absent').exists()
+            symlink.unlink()
         import ctypes
         if ctypes.windll.advapi32.EncryptFileW(str(dest)):
             download(src, dest, error=save_error)
