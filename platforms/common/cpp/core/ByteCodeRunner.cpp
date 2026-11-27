@@ -1359,7 +1359,8 @@ StackSlot ByteCodeRunner::LoadFileAsString(std::string filename, bool temporary,
             size_t budget = std::min(size_t(FILE_MAP_MEMORY_SIZE), size_t(MAX_HEAP_SIZE / 4));
             size_t used = align_down(MAX_MEMORY_SIZE, Memory.PageSize()) - FlowPtrToInt(map_ptr);
             if (useArena && !temporary && used > budget && bytes + 8 <= MAX_HEAP_SIZE / 2) {
-                if (bytes + 8 > unsigned(hp_big_pos - hp_ref_end)) ForceGC(0, true);
+                // Request room for the pending string so GC can grow the heap as in AllocateInner.
+                if (bytes + 8 > unsigned(hp_big_pos - hp_ref_end)) ForceGC(unsigned(bytes + 8), true);
                 if (IsErrorReported()) { fclose(file); return StackSlot::MakeVoid(); }
                 useArena = bytes + 8 > unsigned(hp_big_pos - hp_ref_end);
             }

@@ -216,12 +216,14 @@ static unsigned heapSize(ByteCodeRunner &runner) {
 }
 
 #ifdef FLOW_MMAP_HEAP
-static void testNamedSnapshotBudget() {
+static void testNamedSnapshotBudget(unsigned initial, unsigned cap) {
     const unsigned mib = 1024 * 1024;
-    MIN_HEAP_SIZE = MAX_HEAP_SIZE = 16 * mib;
+    MIN_HEAP_SIZE = initial * mib;
+    MAX_HEAP_SIZE = cap * mib;
     EPHEMERAL_HEAP_SIZE = mib;
     ByteCodeRunner runner("valid.flowbc");
-    for (unsigned n : {5 * mib + 1, 9 * mib + 1}) {
+    require(heapSize(runner) == MIN_HEAP_SIZE, "snapshot test starts at the configured minimum");
+    for (unsigned n : {MAX_HEAP_SIZE / 4 + mib + 1, MAX_HEAP_SIZE / 2 + mib + 1}) {
         std::string bytes(n, 'p');
         FILE *f = fopen("snapshot.dat", "wb");
         require(f && fwrite(bytes.data(), 1, n, f) == n && !fclose(f), "prepare large snapshot");
@@ -397,7 +399,8 @@ int main() {
     testRunner();
     testLegacyFileValues();
 #ifdef FLOW_MMAP_HEAP
-    testNamedSnapshotBudget();
+    testNamedSnapshotBudget(16, 16);
+    testNamedSnapshotBudget(8, 32);
 #endif
     testGrowth(256, 384, 128, 262144);
     testGrowth(8, 40, 2, 2 * 1024 * 1024);
