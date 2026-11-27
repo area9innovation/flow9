@@ -3,6 +3,7 @@
 
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
 #include <sstream>
 #ifndef _WIN32
 #include <sys/stat.h>
@@ -385,9 +386,34 @@ static void testYoungAllocation() {
     }
 }
 
+#ifdef FLOW_DEBUGGER
+class ErrorNotificationProbe : public FlowDebuggerBase {
+public:
+    using FlowDebuggerBase::FlowDebuggerBase;
+    int notifications = 0;
+    RuntimeError code = NoError;
+    bool latched = false;
+    std::string message;
+    void onError(RuntimeError err, FlowPtr) override {
+        ++notifications;
+        code = err;
+        latched = getFlowRunner()->IsErrorReported();
+        message = getFlowRunner()->GetLastErrorMsg();
+    }
+    void onBreakpointTrap(FlowPtr) override {}
+    void onInsnTrap(FlowPtr) override {}
+    void onCallTrap(FlowPtr, bool) override {}
+    void onReturnTrap(FlowPtr) override {}
+    void onAsyncInterrupt(FlowPtr) override {}
+};
+#endif
+
 static void testAllocationResults() {
     EPHEMERAL_HEAP_SIZE = 1024 * 1024;
     MIN_HEAP_SIZE = MAX_HEAP_SIZE = 2 * EPHEMERAL_HEAP_SIZE;
+#ifdef FLOW_DEBUGGER
+    std::unique_ptr<ErrorNotificationProbe> debugger; // Must outlive the attached runner.
+#endif
     ByteCodeRunner runner;
     std::ostringstream errors;
     runner.flow_err.rdbuf(errors.rdbuf());
@@ -398,8 +424,23 @@ static void testAllocationResults() {
         require(!runner.IsErrorReported(), "set up rooted array within the heap cap");
     };
     leaveFree(40);
+#ifdef FLOW_DEBUGGER
+    debugger.reset(new ErrorNotificationProbe(&runner));
+#endif
     runner.ForceGC(0, true);
     require(runner.IsErrorReported(), "failure to promote the live set itself is a runtime error");
+#ifdef FLOW_DEBUGGER
+    require(debugger->notifications == 1 && debugger->code == HeapFull && debugger->latched &&
+            debugger->message == "Cannot allocate memory: live objects exceed the old-generation capacity.",
+            "debugger receives the first HeapFull with the GC guard active and original diagnostic");
+    runner.Init("valid.flowbc");
+    require(!runner.IsErrorReported() && runner.GetLastErrorMsg().empty() && runner.GetLastErrorInfo().empty(),
+            "reinitialization clears the terminal error and its diagnostic");
+    runner.ReportError(InvalidArgument, "argument diagnostic");
+    require(debugger->notifications == 2 && debugger->code == InvalidArgument && !debugger->latched &&
+            debugger->message == "argument diagnostic" && runner.IsErrorReported(),
+            "ordinary error retains its pre-latch debugger notification");
+#endif
     leaveFree(40); // The three-element list and its first name fit; the second name does not.
     StackSlot names = runner.AllocateStringArray({"a", "second-filename", "third"});
     require(names.IsVoid() && runner.GetLastErrorMsg().find("Cannot allocate memory") == 0,

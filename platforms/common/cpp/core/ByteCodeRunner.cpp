@@ -1827,6 +1827,9 @@ void ByteCodeRunner::enableGCStressTest()
 // Error reporting
 void ByteCodeRunner::DoReportError(RuntimeError code) {
     if (IsErrorReported()) return;
+    // HeapFull must block GC before the debugger can stop on the error.
+    // Other errors keep their existing debugger and Flow crash-handler order.
+    if (code == HeapFull) LastError = code;
 
     stringstream info_str;
     info_str << "Error during last opcode [0x" << hex << FlowPtrToInt(LastInstructionPtr)
